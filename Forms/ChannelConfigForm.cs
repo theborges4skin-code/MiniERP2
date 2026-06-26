@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Text.Json;
 using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
 using MiniERP2.Utils;
+using OfficeOpenXml;
 
 namespace MiniERP2.Forms;
 
@@ -14,6 +16,7 @@ public class ChannelConfigForm : Form
 {
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly ChannelConfigService _channelConfigService = new();
+    private readonly CourierRepository _courierRepository = new();
 
     private List<SalesChannel> _channels = new();
     private List<ChannelConfig> _channelConfigs = new();
@@ -23,6 +26,7 @@ public class ChannelConfigForm : Form
     private TreeView _channelTreeView = new();
     private DataGridView _orderMappingGrid = new();
     private DataGridView _settlementMappingGrid = new();
+    private DataGridView _courierOverrideGrid = new();
 
     private static readonly StdField[] OrderMappingFields =
     [
@@ -94,6 +98,7 @@ public class ChannelConfigForm : Form
         rightTabControl.TabPages.Add(CreateBasicInfoTab());
         rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
         rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
+        rightTabControl.TabPages.Add(CreateCourierOverrideTab());
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightTabControl, 1, 0);
@@ -125,24 +130,113 @@ public class ChannelConfigForm : Form
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnHelp = new Button { Text = "도움말", Size = new Size(80, 25) };
         btnHelp.Click += (s, e) => { using var dialog = new FieldMappingHelpDialog(); dialog.ShowDialog(this); };
+        var btnLoadSample = new Button { Text = "샘플 파일 불러오기", AutoSize = true };
         toolbar.Controls.Add(btnHelp);
+        toolbar.Controls.Add(btnLoadSample);
 
-        grid.Dock = DockStyle.Fill;
         grid.AutoGenerateColumns = false;
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
         grid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 150, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 150 },
-            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 80 },
-            new DataGridViewTextBoxColumn { Name = "Column", HeaderText = "열(헤더 텍스트)", DataPropertyName = "Column", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+            new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 110 },
+            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 60 },
+            new DataGridViewTextBoxColumn { Name = "Column", HeaderText = "열(헤더 텍스트)", DataPropertyName = "Column", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "FixedValue", HeaderText = "고정값(선택)", DataPropertyName = "FixedValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
         grid.CellValueChanged += (s, e) => OnFieldMappingGridCellChanged(grid, e);
 
+        // 우측에 샘플 엑셀의 시트/헤더 행을 직접 보면서 "열"에 입력할 헤더 텍스트를 확인할 수 있는 미리보기 패널
+        var splitContainer = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 620 };
+        grid.Dock = DockStyle.Fill;
+        splitContainer.Panel1.Controls.Add(grid);
+        splitContainer.Panel2.Controls.Add(CreateSamplePreviewPanel(btnLoadSample));
+
         layout.Controls.Add(toolbar, 0, 0);
-        layout.Controls.Add(grid, 0, 1);
+        layout.Controls.Add(splitContainer, 0, 1);
         tabPage.Controls.Add(layout);
         return tabPage;
+    }
+
+    /// <summary>
+    /// 샘플 엑셀 파일을 불러와 시트/헤더 행을 선택하면 그 행의 헤더 텍스트 목록을 보여주는 미리보기 패널입니다.
+    /// 사용자는 이 목록을 보고 그대로 "열" 칸에 입력하면 됩니다.
+    /// </summary>
+    private Control CreateSamplePreviewPanel(Button btnLoadSample)
+    {
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, Padding = new Padding(8) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var titleLabel = new Label { Text = "엑셀 헤더 미리보기", AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
+
+        var sheetPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        sheetPanel.Controls.Add(new Label { Text = "시트:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
+        var sheetCombo = new ComboBox { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
+        sheetPanel.Controls.Add(sheetCombo);
+
+        var headerRowPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        headerRowPanel.Controls.Add(new Label { Text = "헤더 행:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
+        var headerRowInput = new NumericUpDown { Minimum = 1, Maximum = 1000, Value = 1, Width = 60 };
+        headerRowPanel.Controls.Add(headerRowInput);
+
+        var previewList = new ListBox { Dock = DockStyle.Fill };
+
+        layout.Controls.Add(titleLabel, 0, 0);
+        layout.Controls.Add(sheetPanel, 0, 1);
+        layout.Controls.Add(headerRowPanel, 0, 2);
+        layout.Controls.Add(previewList, 0, 3);
+
+        ExcelPackage? samplePackage = null;
+
+        void RefreshPreviewList()
+        {
+            previewList.Items.Clear();
+            if (samplePackage == null || sheetCombo.SelectedItem is not string sheetName) return;
+
+            var sheet = samplePackage.Workbook.Worksheets[sheetName];
+            var headerRow = (int)headerRowInput.Value;
+            if (sheet?.Dimension == null || headerRow > sheet.Dimension.End.Row) return;
+
+            for (int col = 1; col <= sheet.Dimension.End.Column; col++)
+            {
+                var header = sheet.Cells[headerRow, col].Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(header))
+                {
+                    previewList.Items.Add(header);
+                }
+            }
+        }
+
+        sheetCombo.SelectedIndexChanged += (s, e) => RefreshPreviewList();
+        headerRowInput.ValueChanged += (s, e) => RefreshPreviewList();
+
+        btnLoadSample.Click += (s, e) =>
+        {
+            using var ofd = new OpenFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*", Title = "샘플 파일을 선택하세요" };
+            if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+            try
+            {
+                ExcelLicense.Ensure();
+                samplePackage?.Dispose();
+                samplePackage = new ExcelPackage(new FileInfo(ofd.FileName));
+
+                sheetCombo.Items.Clear();
+                sheetCombo.Items.AddRange(samplePackage.Workbook.Worksheets.Select(w => w.Name).Cast<object>().ToArray());
+                if (sheetCombo.Items.Count > 0) sheetCombo.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
+
+        Disposed += (s, e) => samplePackage?.Dispose();
+
+        return layout;
     }
 
     private void OnFieldMappingGridCellChanged(DataGridView grid, DataGridViewCellEventArgs e)
@@ -151,8 +245,9 @@ public class ChannelConfigForm : Form
         if (grid.Rows[e.RowIndex].DataBoundItem is not FieldMappingRow row) return;
 
         var dict = grid == _orderMappingGrid ? _currentConfig.OrderFieldMappings : _currentConfig.SettlementFieldMappings;
+        var inUse = !string.IsNullOrWhiteSpace(row.Column) || !string.IsNullOrWhiteSpace(row.FixedValue);
 
-        if (string.IsNullOrWhiteSpace(row.Column))
+        if (!inUse)
         {
             dict.Remove(row.StdField);
         }
@@ -163,6 +258,7 @@ public class ChannelConfigForm : Form
                 SheetName = row.SheetName,
                 HeaderRow = row.HeaderRow <= 0 ? 1 : row.HeaderRow,
                 Column = row.Column,
+                FixedValue = row.FixedValue,
             };
         }
     }
@@ -172,6 +268,7 @@ public class ChannelConfigForm : Form
         _currentConfig = config;
         _orderMappingGrid.DataSource = BuildFieldMappingRows(OrderMappingFields, config.OrderFieldMappings);
         _settlementMappingGrid.DataSource = BuildFieldMappingRows(SettlementMappingFields, config.SettlementFieldMappings);
+        LoadCourierOverrideGrid(config);
     }
 
     private void ClearFieldMappingGrids()
@@ -179,6 +276,124 @@ public class ChannelConfigForm : Form
         _currentConfig = null;
         _orderMappingGrid.DataSource = null;
         _settlementMappingGrid.DataSource = null;
+        _courierOverrideGrid.DataSource = null;
+    }
+
+    private TabPage CreateCourierOverrideTab()
+    {
+        var tabPage = new TabPage("택배사 출력 고정값");
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        toolbar.Controls.Add(new Label
+        {
+            Text = "같은 택배사를 쓰더라도 이 채널에서는 특정 헤더에 항상 아래 고정값을 출력합니다(예: 도착지 코드).",
+            AutoSize = true,
+            Padding = new Padding(0, 6, 0, 0),
+        });
+
+        _courierOverrideGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = true,
+            AllowUserToDeleteRows = true,
+        };
+
+        var courierColumn = new DataGridViewComboBoxColumn { Name = "CourierName", HeaderText = "택배사", DataPropertyName = "CourierName", Width = 180, FlatStyle = FlatStyle.Flat };
+        var headerColumn = new DataGridViewComboBoxColumn { Name = "Header", HeaderText = "헤더", DataPropertyName = "Header", Width = 180, FlatStyle = FlatStyle.Flat };
+        var fixedValueColumn = new DataGridViewTextBoxColumn { Name = "FixedValue", HeaderText = "고정값", DataPropertyName = "FixedValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
+
+        courierColumn.Items.AddRange(_courierRepository.GetAll().Select(c => c.CourierName).Cast<object>().ToArray());
+        headerColumn.Items.AddRange(GetAllKnownCourierHeaders().Cast<object>().ToArray());
+
+        _courierOverrideGrid.Columns.Add(courierColumn);
+        _courierOverrideGrid.Columns.Add(headerColumn);
+        _courierOverrideGrid.Columns.Add(fixedValueColumn);
+
+        // 드롭다운 후보 외에 직접 입력도 허용한다.
+        _courierOverrideGrid.EditingControlShowing += (s, e) =>
+        {
+            if (_courierOverrideGrid.CurrentCell?.OwningColumn is DataGridViewComboBoxColumn && e.Control is ComboBox comboBox)
+            {
+                comboBox.DropDownStyle = ComboBoxStyle.DropDown;
+            }
+        };
+        _courierOverrideGrid.CellValueChanged += (s, e) => SyncCourierOverrides();
+        _courierOverrideGrid.RowsAdded += (s, e) => SyncCourierOverrides();
+        _courierOverrideGrid.RowsRemoved += (s, e) => SyncCourierOverrides();
+
+        layout.Controls.Add(toolbar, 0, 0);
+        layout.Controls.Add(_courierOverrideGrid, 0, 1);
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private List<string> GetAllKnownCourierHeaders()
+    {
+        var headers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var courier in _courierRepository.GetAll())
+        {
+            try
+            {
+                var mapping = JsonSerializer.Deserialize<Dictionary<string, string>>(courier.HeaderMappingJson);
+                if (mapping != null)
+                {
+                    foreach (var header in mapping.Keys) headers.Add(header);
+                }
+            }
+            catch (JsonException)
+            {
+                // 손상된 데이터는 건너뜀
+            }
+        }
+        return headers.ToList();
+    }
+
+    private void LoadCourierOverrideGrid(ChannelConfig config)
+    {
+        var rows = config.CourierHeaderOverrides
+            .Select(o => new CourierOverrideRow { CourierName = o.CourierName, Header = o.Header, FixedValue = o.FixedValue })
+            .ToList();
+
+        // DataGridViewComboBoxColumn은 Items에 없는 값을 표시하면 예외를 던지므로,
+        // 저장된 값을 먼저 Items에 채워둔다(CourierConfigForm과 동일한 안전장치).
+        EnsureComboItemsInclude(_courierOverrideGrid, "CourierName", rows.Select(r => r.CourierName));
+        EnsureComboItemsInclude(_courierOverrideGrid, "Header", rows.Select(r => r.Header));
+
+        _courierOverrideGrid.DataSource = new BindingList<CourierOverrideRow>(rows);
+    }
+
+    private void SyncCourierOverrides()
+    {
+        if (_currentConfig == null) return;
+
+        _currentConfig.CourierHeaderOverrides = (_courierOverrideGrid.DataSource as BindingList<CourierOverrideRow>)?
+            .Where(r => !string.IsNullOrWhiteSpace(r.CourierName) && !string.IsNullOrWhiteSpace(r.Header))
+            .Select(r => new CourierHeaderOverride { CourierName = r.CourierName, Header = r.Header, FixedValue = r.FixedValue ?? string.Empty })
+            .ToList() ?? [];
+    }
+
+    private static void EnsureComboItemsInclude(DataGridView grid, string columnName, IEnumerable<string> values)
+    {
+        if (grid.Columns[columnName] is not DataGridViewComboBoxColumn column) return;
+
+        var existing = new HashSet<string>(column.Items.Cast<string>(), StringComparer.OrdinalIgnoreCase);
+        foreach (var value in values)
+        {
+            if (string.IsNullOrEmpty(value) || !existing.Add(value)) continue;
+            column.Items.Add(value);
+        }
+    }
+
+    private class CourierOverrideRow
+    {
+        public string CourierName { get; set; } = string.Empty;
+        public string Header { get; set; } = string.Empty;
+        public string FixedValue { get; set; } = string.Empty;
     }
 
     private static BindingList<FieldMappingRow> BuildFieldMappingRows(StdField[] fields, Dictionary<StdField, FieldMapping> dict)
@@ -194,6 +409,7 @@ public class ChannelConfigForm : Form
                 SheetName = mapping?.SheetName,
                 HeaderRow = mapping?.HeaderRow ?? 1,
                 Column = mapping?.Column,
+                FixedValue = mapping?.FixedValue,
             });
         }
         return new BindingList<FieldMappingRow>(rows);
@@ -221,6 +437,7 @@ public class ChannelConfigForm : Form
         public string? SheetName { get; set; }
         public int HeaderRow { get; set; } = 1;
         public string? Column { get; set; }
+        public string? FixedValue { get; set; }
     }
 
     private void LoadData()

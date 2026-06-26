@@ -51,14 +51,17 @@ public class MasterSkuForm : Form
 
         var btnRefresh = new Button { Text = "새로고침", Size = new Size(100, 30) };
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
+        var btnImport = new Button { Text = "엑셀 가져오기", Size = new Size(110, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
 
         btnRefresh.Click += OnRefreshClick;
         btnSave.Click += OnSaveClick;
+        btnImport.Click += OnImportClick;
         btnExport.Click += OnExportClick;
 
         toolStrip.Controls.Add(btnRefresh);
         toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(btnImport);
         toolStrip.Controls.Add(btnExport);
 
         // 데이터 그리드
@@ -220,29 +223,78 @@ public class MasterSkuForm : Form
     private void OnDragDrop(object? sender, DragEventArgs e)
     {
         var files = (string[])e.Data!.GetData(DataFormats.FileDrop)!;
-        var filePath = files[0];
+        ImportFromFile(files[0]);
+    }
 
+    private void OnImportClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Title = "가져올 마스터SKU 엑셀 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("MasterSkuImport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        _settingsService.SetLastFolder("MasterSkuImport", Path.GetDirectoryName(ofd.FileName)!);
+        ImportFromFile(ofd.FileName);
+    }
+
+    /// <summary>
+    /// 엑셀 파일의 헤더를 먼저 읽어 사용자가 보면서 SKU/상품명/원가 열을 직접 선택하게 한 뒤 가져옵니다.
+    /// </summary>
+    private void ImportFromFile(string filePath)
+    {
         try
         {
             ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
-            if (worksheet == null)
+            if (worksheet?.Dimension == null)
             {
                 MessageBox.Show("엑셀 파일에 워크시트가 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
+            var headers = new List<string>();
+            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[1, col].Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(header)) headers.Add(header);
+            }
+
+            if (headers.Count == 0)
+            {
+                MessageBox.Show("1행에서 헤더를 찾을 수 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            using var mappingDialog = new MasterSkuImportMappingDialog(headers);
+            if (mappingDialog.ShowDialog(this) != DialogResult.OK) return;
+
+            var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[1, col].Value?.ToString();
+                if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
+                {
+                    headerToIndexMap[header] = col;
+                }
+            }
+
+            var skuCol = headerToIndexMap[mappingDialog.SkuColumn];
+            var itemNameCol = headerToIndexMap[mappingDialog.ItemNameColumn];
+            var costPriceCol = headerToIndexMap[mappingDialog.CostPriceColumn];
+
             var itemsToImport = new List<ItemModel>();
-            // 2번째 행부터 (헤더 제외)
             for (int row = 2; row <= worksheet.Dimension.End.Row; row++)
             {
-                var sku = worksheet.Cells[row, 1].Value?.ToString();
+                var sku = worksheet.Cells[row, skuCol].Value?.ToString();
                 if (string.IsNullOrWhiteSpace(sku)) continue;
 
-                var itemName = worksheet.Cells[row, 2].Value?.ToString() ?? string.Empty;
-                if (!decimal.TryParse(worksheet.Cells[row, 3].Value?.ToString(), out var costPrice))
+                var itemName = worksheet.Cells[row, itemNameCol].Value?.ToString() ?? string.Empty;
+                if (!decimal.TryParse(worksheet.Cells[row, costPriceCol].Value?.ToString(), out var costPrice))
                 {
                     costPrice = 0; // 파싱 실패 시 0으로 처리
                 }

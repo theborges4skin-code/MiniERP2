@@ -18,4 +18,9 @@ public class FieldMapping
     [DisplayName("열 이름 또는 주소")]
     [Description("데이터가 있는 열의 이름(예: 상품명) 또는 주소(예: C)입니다.")]
     public string? Column { get; set; }
+
+    [Category("고정값")]
+    [DisplayName("고정값")]
+    [Description("엑셀에서 읽지 않고 항상 이 값을 사용합니다. 비워두면 '열'에서 읽어옵니다. (예: 고정거래처의 수취인/주소)")]
+    public string? FixedValue { get; set; }
 }

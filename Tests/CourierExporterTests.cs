@@ -54,4 +54,33 @@ public class CourierExporterTests
         Assert.AreEqual("김철수", sheet.Cells[3, 1].Value);
         Assert.AreEqual("T002", sheet.Cells[3, 3].Value);
     }
+
+    [TestMethod]
+    public async Task ExportAsync_WithChannelOverride_UsesFixedValueInsteadOfOrderData()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "받는분": "Recipient", "도착지코드": "Recipient" }"""
+        };
+        var orders = new List<OfsOrderItem> { new() { ChannelCode = "PARTNER", Recipient = "홍길동" } };
+        var channelConfigs = new Dictionary<string, ChannelConfig>
+        {
+            ["PARTNER"] = new ChannelConfig
+            {
+                ChannelCode = "PARTNER",
+                CourierHeaderOverrides = [new CourierHeaderOverride { CourierName = "테스트택배", Header = "도착지코드", FixedValue = "DEPOT-01" }],
+            },
+        };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath, channelConfigs);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.AreEqual("홍길동", sheet.Cells[2, 1].Value); // 받는분: 고정값 없음 -> 주문 데이터 그대로
+        Assert.AreEqual("DEPOT-01", sheet.Cells[2, 2].Value); // 도착지코드: 채널별 고정값 적용
+    }
 }

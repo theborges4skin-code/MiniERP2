@@ -58,10 +58,16 @@ public class OrderLoader
             }
 
             // 표준 필드를 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
+            // 고정값이 설정된 필드는 엑셀에서 읽지 않고 항상 그 값을 사용합니다(예: 고정거래처의 수취인/주소).
             var stdFieldToIndexMap = new Dictionary<StdField, int>();
+            var fixedValues = new Dictionary<StdField, string>();
             foreach (var (stdField, mapping) in channelConfig.OrderFieldMappings)
             {
-                if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
+                if (!string.IsNullOrEmpty(mapping.FixedValue))
+                {
+                    fixedValues[stdField] = mapping.FixedValue;
+                }
+                else if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
                 {
                     stdFieldToIndexMap[stdField] = index;
                 }
@@ -74,13 +80,13 @@ public class OrderLoader
                 {
                     // 각 속성에 대해 매핑된 열 인덱스를 사용하여 값을 가져옵니다.
                     ChannelCode = channelConfig.ChannelCode,
-                    OrderNo = GetValue(worksheet, row, stdFieldToIndexMap, StdField.ProductNo),
-                    ProductName = GetValue(worksheet, row, stdFieldToIndexMap, StdField.ProductName),
-                    OptionName = GetValue(worksheet, row, stdFieldToIndexMap, StdField.OptionName),
-                    Quantity = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, StdField.Quantity), out var qty) ? qty : 0,
-                    Recipient = GetValue(worksheet, row, stdFieldToIndexMap, StdField.Recipient),
-                    Phone = GetValue(worksheet, row, stdFieldToIndexMap, StdField.Phone),
-                    Address = GetValue(worksheet, row, stdFieldToIndexMap, StdField.Address),
+                    OrderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductNo),
+                    ProductName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName),
+                    OptionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName),
+                    Quantity = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qty) ? qty : 0,
+                    Recipient = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
+                    Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
+                    Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
                     Status = "로드 완료"
                 };
 
@@ -93,8 +99,10 @@ public class OrderLoader
         return items;
     }
 
-    private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, StdField field)
+    private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
     {
+        if (fixedValues.TryGetValue(field, out var fixedValue)) return fixedValue;
+
         return map.TryGetValue(field, out var colIndex)
             ? worksheet.Cells[row, colIndex].Value?.ToString()
             : null;

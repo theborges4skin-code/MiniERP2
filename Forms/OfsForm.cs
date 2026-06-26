@@ -235,7 +235,8 @@ public class OfsForm : Form
 
         try
         {
-            await _courierExporter.ExportAsync(ordersToExport, courier, filePath);
+            var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+            await _courierExporter.ExportAsync(ordersToExport, courier, filePath, channelConfigsByCode);
             _statusLabel.Text = $"{ordersToExport.Count}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
             ExportHelper.ShowPostExportDialog(this, filePath);
         }

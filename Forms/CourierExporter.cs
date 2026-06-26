@@ -16,7 +16,11 @@ public class CourierExporter
     /// <param name="orders">내보낼 주문 항목 목록입니다.</param>
     /// <param name="courier">택배사 마스터 정보입니다.</param>
     /// <param name="filePath">저장할 파일의 전체 경로입니다.</param>
-    public async Task ExportAsync(IEnumerable<OfsOrderItem> orders, CourierMaster courier, string filePath)
+    /// <param name="channelConfigsByCode">
+    /// 채널코드별 ChannelConfig. 주문의 채널에 이 택배사/헤더에 대한 고정값 설정이 있으면
+    /// 주문 데이터 대신 그 고정값을 출력합니다(예: 채널별 고정 도착지 코드). 생략 시 고정값을 적용하지 않습니다.
+    /// </param>
+    public async Task ExportAsync(IEnumerable<OfsOrderItem> orders, CourierMaster courier, string filePath, IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode = null)
     {
         await Task.Run(() =>
         {
@@ -42,6 +46,14 @@ public class CourierExporter
                 for (int col = 0; col < headers.Count; col++)
                 {
                     var header = headers[col];
+
+                    var fixedValue = GetFixedOverride(channelConfigsByCode, order.ChannelCode, courier.CourierName, header);
+                    if (fixedValue != null)
+                    {
+                        worksheet.Cells[row, col + 1].Value = fixedValue;
+                        continue;
+                    }
+
                     if (headerMapping.TryGetValue(header, out var propertyName))
                     {
                         // 리플렉션을 사용하여 OfsOrderItem의 속성 값을 가져옵니다.
@@ -58,5 +70,15 @@ public class CourierExporter
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
             package.SaveAs(new FileInfo(filePath));
         });
+    }
+
+    private static string? GetFixedOverride(IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode, string? channelCode, string courierName, string header)
+    {
+        if (channelConfigsByCode == null || string.IsNullOrEmpty(channelCode)) return null;
+        if (!channelConfigsByCode.TryGetValue(channelCode, out var config)) return null;
+
+        return config.CourierHeaderOverrides
+            .FirstOrDefault(o => o.CourierName == courierName && o.Header == header)
+            ?.FixedValue;
     }
 }

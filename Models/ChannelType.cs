@@ -9,4 +9,6 @@ public enum ChannelType
     CoupangGrowth,
     AmazonUs,
     AmazonJp,
+    Partner,
+    Other,
 }

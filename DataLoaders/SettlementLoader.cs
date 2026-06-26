@@ -57,9 +57,14 @@ public class SettlementLoader
             }
 
             var stdFieldToIndexMap = new Dictionary<StdField, int>();
+            var fixedValues = new Dictionary<StdField, string>();
             foreach (var (stdField, mapping) in channelConfig.SettlementFieldMappings)
             {
-                if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
+                if (!string.IsNullOrEmpty(mapping.FixedValue))
+                {
+                    fixedValues[stdField] = mapping.FixedValue;
+                }
+                else if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
                 {
                     stdFieldToIndexMap[stdField] = index;
                 }
@@ -105,12 +110,12 @@ public class SettlementLoader
 
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
-                var productName = GetValue(worksheet, row, stdFieldToIndexMap, StdField.ProductName);
-                var optionName = GetValue(worksheet, row, stdFieldToIndexMap, StdField.OptionName);
-                var qty = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, StdField.Quantity), out var qtyValue) ? qtyValue : 0;
-                var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
-                var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
-                var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
+                var productName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName);
+                var optionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName);
+                var qty = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qtyValue) ? qtyValue : 0;
+                var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
+                var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
+                var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
 
                 if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName)) continue;
 
@@ -173,8 +178,10 @@ public class SettlementLoader
         data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, channelConfig.ExchangeRate);
     }
 
-    private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, StdField field)
+    private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
     {
+        if (fixedValues.TryGetValue(field, out var fixedValue)) return fixedValue;
+
         return map.TryGetValue(field, out var colIndex)
             ? worksheet.Cells[row, colIndex].Value?.ToString()
             : null;
