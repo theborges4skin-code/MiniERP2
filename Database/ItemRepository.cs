@@ -8,34 +8,75 @@ public class ItemRepository
     public void Upsert(ItemModel item)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
-
-        var existing = GetBySku(connection, item.Sku);
-        if (existing is not null && existing.CostPrice != item.CostPrice)
+        using var transaction = connection.BeginTransaction();
+        try
         {
-            using var historyCommand = connection.CreateCommand();
-            historyCommand.CommandText = """
-                INSERT INTO ItemCostHistory (Sku, OldCost, NewCost, ChangedAt)
-                VALUES ($sku, $oldCost, $newCost, $changedAt)
-                """;
-            historyCommand.Parameters.AddWithValue("$sku", item.Sku);
-            historyCommand.Parameters.AddWithValue("$oldCost", existing.CostPrice);
-            historyCommand.Parameters.AddWithValue("$newCost", item.CostPrice);
-            historyCommand.Parameters.AddWithValue("$changedAt", DateTime.UtcNow.ToString("O"));
-            historyCommand.ExecuteNonQuery();
-        }
+            var existing = GetBySku(connection, item.Sku);
+            if (existing is not null && existing.CostPrice != item.CostPrice)
+            {
+                using var historyCommand = connection.CreateCommand();
+                historyCommand.Transaction = transaction;
+                historyCommand.CommandText = """
+                    INSERT INTO ItemCostHistory (Sku, OldCost, NewCost, ChangedAt)
+                    VALUES ($sku, $oldCost, $newCost, $changedAt)
+                    """;
+                historyCommand.Parameters.AddWithValue("$sku", item.Sku);
+                historyCommand.Parameters.AddWithValue("$oldCost", existing.CostPrice);
+                historyCommand.Parameters.AddWithValue("$newCost", item.CostPrice);
+                historyCommand.Parameters.AddWithValue("$changedAt", DateTime.UtcNow);
+                historyCommand.ExecuteNonQuery();
+            }
 
-        using var upsertCommand = connection.CreateCommand();
-        upsertCommand.CommandText = """
-            INSERT INTO ItemTable (Sku, ItemName, CostPrice)
-            VALUES ($sku, $itemName, $costPrice)
-            ON CONFLICT(Sku) DO UPDATE SET
-                ItemName = excluded.ItemName,
-                CostPrice = excluded.CostPrice
-            """;
-        upsertCommand.Parameters.AddWithValue("$sku", item.Sku);
-        upsertCommand.Parameters.AddWithValue("$itemName", item.ItemName);
-        upsertCommand.Parameters.AddWithValue("$costPrice", item.CostPrice);
-        upsertCommand.ExecuteNonQuery();
+            using var upsertCommand = connection.CreateCommand();
+            upsertCommand.Transaction = transaction;
+            upsertCommand.CommandText = """
+                INSERT INTO ItemTable (Sku, ItemName, CostPrice)
+                VALUES ($sku, $itemName, $costPrice)
+                ON CONFLICT(Sku) DO UPDATE SET
+                    ItemName = excluded.ItemName,
+                    CostPrice = excluded.CostPrice
+                """;
+            upsertCommand.Parameters.AddWithValue("$sku", item.Sku);
+            upsertCommand.Parameters.AddWithValue("$itemName", item.ItemName);
+            upsertCommand.Parameters.AddWithValue("$costPrice", item.CostPrice);
+            upsertCommand.ExecuteNonQuery();
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    public void Delete(string sku)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            // 1. 원가 변경 이력을 먼저 삭제합니다.
+            using var historyCommand = connection.CreateCommand();
+            historyCommand.Transaction = transaction;
+            historyCommand.CommandText = "DELETE FROM ItemCostHistory WHERE Sku = $sku";
+            historyCommand.Parameters.AddWithValue("$sku", sku);
+            historyCommand.ExecuteNonQuery();
+
+            // 2. 마스터 품목을 삭제합니다.
+            using var deleteCommand = connection.CreateCommand();
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM ItemTable WHERE Sku = $sku";
+            deleteCommand.Parameters.AddWithValue("$sku", sku);
+            deleteCommand.ExecuteNonQuery();
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
     }
 
     public ItemModel? GetBySku(string sku)
@@ -79,9 +120,9 @@ public class ItemRepository
             {
                 Id = reader.GetInt64(0),
                 Sku = reader.GetString(1),
-                OldCost = (decimal)reader.GetDouble(2),
-                NewCost = (decimal)reader.GetDouble(3),
-                ChangedAt = DateTime.Parse(reader.GetString(4)),
+                OldCost = reader.GetDecimal(2),
+                NewCost = reader.GetDecimal(3),
+                ChangedAt = reader.GetDateTime(4),
             });
         }
         return history;
@@ -101,6 +142,6 @@ public class ItemRepository
     {
         Sku = reader.GetString(0),
         ItemName = reader.GetString(1),
-        CostPrice = (decimal)reader.GetDouble(2),
+        CostPrice = reader.GetDecimal(2),
     };
 }

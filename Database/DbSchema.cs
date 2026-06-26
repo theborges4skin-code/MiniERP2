@@ -45,7 +45,10 @@ public static class DbSchema
 
             CREATE TABLE IF NOT EXISTS SalesChannelTable (
                 ChannelCode TEXT PRIMARY KEY,
-                ChannelName TEXT NOT NULL
+                ChannelName TEXT NOT NULL,
+                GroupName TEXT,
+                IsFavorite INTEGER NOT NULL DEFAULT 0,
+                DisplayOrder INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS SettlementData (
