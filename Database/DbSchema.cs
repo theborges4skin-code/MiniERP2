@@ -120,6 +120,19 @@ public static class DbSchema
             """;
         command.ExecuteNonQuery();
 
+        // 이중 출고 방지(Upsert)를 위한 유니크 인덱스. 기존 DB에 이미 중복 데이터가 있으면
+        // 인덱스 생성이 실패할 수 있으므로(과거 버그로 쌓인 중복 데이터), 앱 시작을 막지 않도록 무시한다.
+        try
+        {
+            using var indexCommand = connection.CreateCommand();
+            indexCommand.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_OutboundDetailTable_OrderNo_MskuCode ON OutboundDetailTable (OrderNo, MskuCode)";
+            indexCommand.ExecuteNonQuery();
+        }
+        catch (SqliteException)
+        {
+            // 기존 중복 데이터로 인덱스 생성이 실패해도 무시하고 계속 진행한다.
+        }
+
         // CREATE TABLE IF NOT EXISTS는 이미 존재하는 테이블에 새 컬럼을 추가해주지 않으므로,
         // 이전 버전의 DB 파일에서도 신규 컬럼이 누락되지 않도록 직접 보강한다.
         EnsureColumn(connection, "ItemTable", "Reserve1", "TEXT");

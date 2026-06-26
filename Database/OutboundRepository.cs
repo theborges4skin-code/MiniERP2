@@ -21,6 +21,11 @@ public class OutboundRepository
         command.CommandText = """
             INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt)
             VALUES ($channelCode, $orderNo, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt)
+            ON CONFLICT(OrderNo, MskuCode) DO UPDATE SET
+                ChannelCode = excluded.ChannelCode,
+                TrackingNo = excluded.TrackingNo,
+                Qty = excluded.Qty,
+                SupplyPrice = excluded.SupplyPrice
             """;
 
         foreach (var detail in details)
