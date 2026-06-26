@@ -1,6 +1,7 @@
 using MiniERP2.Database;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 using OfficeOpenXml;
 
 namespace MiniERP2.DataLoaders;
@@ -24,7 +25,7 @@ public class SettlementLoader
 
         await Task.Run(() =>
         {
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
 
             var firstValidMapping = channelConfig.FieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));

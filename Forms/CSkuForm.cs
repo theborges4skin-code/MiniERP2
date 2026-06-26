@@ -191,7 +191,7 @@ public class CSkuForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
@@ -261,7 +261,7 @@ public class CSkuForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
 
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("ChannelSKU");

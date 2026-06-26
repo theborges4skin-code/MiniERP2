@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 using OfficeOpenXml;
 
 namespace MiniERP2.Exporters;
@@ -24,7 +25,7 @@ public class CourierExporter
 
             var headers = headerMapping.Keys.ToList();
 
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("Sheet1");
 

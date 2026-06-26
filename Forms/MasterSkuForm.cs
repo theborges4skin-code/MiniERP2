@@ -224,7 +224,7 @@ public class MasterSkuForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
@@ -297,7 +297,7 @@ public class MasterSkuForm : Form
         try
         {
             // EPPlus 라이선스 설정 (비상업적 용도)
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
 
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("MasterSKU");

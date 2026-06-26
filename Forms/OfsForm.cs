@@ -185,9 +185,10 @@ public class OfsForm : Form
 
     private async void OnExportClick(object? sender, EventArgs e)
     {
-        if (_orders.Count == 0)
+        var ordersToExport = _orders.Where(o => !string.IsNullOrWhiteSpace(o.MappedSku)).ToList();
+        if (ordersToExport.Count == 0)
         {
-            MessageBox.Show("내보낼 주문 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("내보낼 (매핑 성공된) 주문이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -214,17 +215,23 @@ public class OfsForm : Form
         var filePath = sfd.FileName;
         _settingsService.SetLastFolder("OfsExport", Path.GetDirectoryName(filePath)!);
 
-        // 3. (TODO) CourierExporter를 사용하여 파일 생성
+        Cursor = Cursors.WaitCursor;
+        _statusLabel.Text = $"'{courier.CourierName}' 양식으로 내보내는 중...";
+
         try
         {
-            // 이 부분에 실제 엑셀 파일을 생성하는 CourierExporter 로직이 들어갑니다.
-            // 현재는 임시 파일을 생성하여 후처리 과정을 시연합니다.
-            File.WriteAllText(filePath, "택배사 양식 엑셀 파일 내용 (구현 예정)");
+            await _courierExporter.ExportAsync(ordersToExport, courier, filePath);
+            _statusLabel.Text = $"{ordersToExport.Count}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ex.Message}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.Text = "내보내기 오류 발생";
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
         }
     }
 

@@ -221,7 +221,7 @@ public class SettlementForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage();
             var sheet = package.Workbook.Worksheets.Add("이익분석");
 
@@ -391,7 +391,7 @@ public class SettlementForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage();
             var sheet = package.Workbook.Worksheets.Add("출고내역");
 
@@ -436,7 +436,7 @@ public class SettlementForm : Form
         {
             _settingsService.SetLastFolder("StatementLoad", Path.GetDirectoryName(ofd.FileName)!);
 
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(ofd.FileName));
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
             if (worksheet?.Dimension == null)

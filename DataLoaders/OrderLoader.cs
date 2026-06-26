@@ -1,5 +1,6 @@
 using MiniERP2.Models;
 using MiniERP2.Mapping;
+using MiniERP2.Utils;
 using OfficeOpenXml;
 
 namespace MiniERP2.DataLoaders;
@@ -22,7 +23,7 @@ public class OrderLoader
 
         await Task.Run(() =>
         {
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
 
             // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.

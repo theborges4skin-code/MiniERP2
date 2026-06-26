@@ -2,6 +2,7 @@ using System.ComponentModel;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 using OfficeOpenXml;
 
 namespace MiniERP2.Forms;
@@ -221,7 +222,7 @@ public class MappingForm : Form
 
         try
         {
-            ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
