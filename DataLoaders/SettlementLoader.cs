@@ -65,6 +65,44 @@ public class SettlementLoader
                 }
             }
 
+            // 기획서 5.4절: 보조소스(GrowthAuxSource) JOIN 준비.
+            // 보조 시트별로 (대상 표준필드 -> 키값맵)을 만들고, 메인 시트에서 같은 이름의 키 컬럼을 찾아둔다.
+            var auxValueMaps = new Dictionary<StdField, Dictionary<string, decimal>>();
+            var auxMainKeyColumns = new Dictionary<StdField, int>();
+
+            foreach (var auxSource in channelConfig.GrowthAuxSources.Where(a => a.Enabled))
+            {
+                if (string.IsNullOrEmpty(auxSource.SheetName) || string.IsNullOrEmpty(auxSource.KeyHeader) || string.IsNullOrEmpty(auxSource.ValueHeader)) continue;
+                if (!headerToIndexMap.TryGetValue(auxSource.KeyHeader, out var mainKeyCol)) continue; // 메인 시트에 동일 키 컬럼이 없으면 JOIN 불가
+
+                var auxSheet = package.Workbook.Worksheets[auxSource.SheetName];
+                if (auxSheet?.Dimension == null) continue;
+
+                var auxHeaderToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int col = 1; col <= auxSheet.Dimension.End.Column; col++)
+                {
+                    var header = auxSheet.Cells[auxSource.HeaderRow, col].Value?.ToString();
+                    if (!string.IsNullOrEmpty(header) && !auxHeaderToIndex.ContainsKey(header))
+                    {
+                        auxHeaderToIndex[header] = col;
+                    }
+                }
+
+                if (!auxHeaderToIndex.TryGetValue(auxSource.KeyHeader, out var auxKeyCol) || !auxHeaderToIndex.TryGetValue(auxSource.ValueHeader, out var auxValueCol)) continue;
+
+                var pairs = new List<(string Key, decimal Value)>();
+                for (int auxRow = auxSource.HeaderRow + 1; auxRow <= auxSheet.Dimension.End.Row; auxRow++)
+                {
+                    var key = auxSheet.Cells[auxRow, auxKeyCol].Value?.ToString();
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    var value = decimal.TryParse(auxSheet.Cells[auxRow, auxValueCol].Value?.ToString(), out var parsedValue) ? parsedValue : 0m;
+                    pairs.Add((key, value));
+                }
+
+                auxValueMaps[auxSource.TargetStdField] = GrowthAuxJoinEngine.BuildValueMap(pairs);
+                auxMainKeyColumns[auxSource.TargetStdField] = mainKeyCol;
+            }
+
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
                 var productName = GetValue(worksheet, row, stdFieldToIndexMap, StdField.ProductName);
@@ -86,6 +124,15 @@ public class SettlementLoader
                     Shipping = shipping,
                     Fee = fee,
                 };
+
+                foreach (var (targetStdField, valueMap) in auxValueMaps)
+                {
+                    var joinKey = worksheet.Cells[row, auxMainKeyColumns[targetStdField]].Value?.ToString();
+                    if (!string.IsNullOrWhiteSpace(joinKey) && valueMap.TryGetValue(joinKey, out var joinedValue))
+                    {
+                        GrowthAuxJoinEngine.Apply(settlementData, targetStdField, joinedValue);
+                    }
+                }
 
                 ApplyMappingAndProfit(settlementData, skuMapper, itemRepository, channelConfig);
                 rows.Add(settlementData);
