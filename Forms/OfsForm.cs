@@ -24,6 +24,7 @@ public class OfsForm : Form
     private readonly OutboundRepository _outboundRepository = new();
     private readonly CourierExporter _courierExporter = new();
     private readonly OrderLoader _orderLoader = new();
+    private readonly ItemRepository _itemRepository = new();
 
     private ExcelLikeDataGridView _ordersGrid = new();
     private StatusStrip _statusStrip = new();
@@ -50,6 +51,7 @@ public class OfsForm : Form
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnLoadOrders = new Button { Text = "발주 파일 로드", Size = new Size(120, 30) };
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
+        var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
         var btnSave = new Button { Text = "저장 (출고 확정)", Size = new Size(130, 30) };
         var btnExport = new Button { Text = "택배사 양식으로 내보내기", Size = new Size(180, 30) };
 
@@ -57,9 +59,11 @@ public class OfsForm : Form
         btnExport.Click += OnExportClick;
         btnSave.Click += OnSaveClick;
         btnAddManualOrder.Click += OnAddManualOrderClick;
+        btnMappingAssistant.Click += OnMappingAssistantClick;
 
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
+        toolStrip.Controls.Add(btnMappingAssistant);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
 
@@ -184,7 +188,7 @@ public class OfsForm : Form
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
 
             var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
-            if (unmappedCount > 0)
+            if (unmappedCount > 0 && EnsureMasterDbNotEmpty())
             {
                 MessageBox.Show($"미매핑건 {unmappedCount}건 있음. 매핑창이 열립니다.", "미매핑 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
@@ -219,6 +223,41 @@ public class OfsForm : Form
         if (!configForm.Visible) configForm.Show();
         configForm.BringToFront();
         configForm.SelectChannelByCode(channel.ChannelCode);
+    }
+
+    /// <summary>
+    /// 마스터DB(마스터SKU)가 비어있으면 매핑 작업이 무의미하므로 안내 후 마스터SKU 관리창을 열어준다.
+    /// </summary>
+    private bool EnsureMasterDbNotEmpty()
+    {
+        if (_itemRepository.GetAll().Count > 0) return true;
+
+        MessageBox.Show(
+            "마스터DB(마스터SKU)가 비어있어 매핑할 수 없습니다.\n마스터SKU 관리창에서 먼저 품목을 등록해주세요.",
+            "마스터DB 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+        var masterSkuForm = Application.OpenForms.OfType<MasterSkuForm>().FirstOrDefault() ?? new MasterSkuForm();
+        if (!masterSkuForm.Visible) masterSkuForm.Show();
+        masterSkuForm.BringToFront();
+        return false;
+    }
+
+    private void OnMappingAssistantClick(object? sender, EventArgs e)
+    {
+        if (_ordersGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
+        {
+            MessageBox.Show("매핑할 주문 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!EnsureMasterDbNotEmpty()) return;
+
+        using var dialog = new OrderSkuMappingDialog(item, item.ChannelCode);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        item.MappedSku = dialog.ResultMappedSku;
+        item.Status = dialog.ResultStatus;
+        _ordersGrid.Invalidate();
     }
 
     private async void OnExportClick(object? sender, EventArgs e)

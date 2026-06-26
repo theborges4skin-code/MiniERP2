@@ -11,7 +11,10 @@ public static class DbSchema
             CREATE TABLE IF NOT EXISTS ItemTable (
                 Sku TEXT PRIMARY KEY,
                 ItemName TEXT NOT NULL,
-                CostPrice REAL NOT NULL
+                CostPrice REAL NOT NULL,
+                Reserve1 TEXT,
+                Reserve2 TEXT,
+                Reserve3 TEXT
             );
 
             CREATE TABLE IF NOT EXISTS ItemCostHistory (

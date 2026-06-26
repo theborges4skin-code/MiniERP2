@@ -58,6 +58,20 @@ public class ItemRepositoryTests
     }
 
     [TestMethod]
+    public void Upsert_WithReserveFields_RoundTrips()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "SKU-RES", ItemName = "예비필드상품", CostPrice = 500m, Reserve1 = "규격A", Reserve2 = "제조사B", Reserve3 = null });
+
+        var saved = repository.GetBySku("SKU-RES");
+
+        Assert.IsNotNull(saved);
+        Assert.AreEqual("규격A", saved.Reserve1);
+        Assert.AreEqual("제조사B", saved.Reserve2);
+        Assert.IsNull(saved.Reserve3);
+    }
+
+    [TestMethod]
     public void GetAll_ReturnsAllSavedItems()
     {
         var repository = new ItemRepository();

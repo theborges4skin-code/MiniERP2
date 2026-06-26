@@ -77,8 +77,11 @@ public class MasterSkuForm : Form
 
         _itemsGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "Sku", HeaderText = "SKU", DataPropertyName = "Sku", Width = 150 },
-            new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 300 },
-            new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "원가", DataPropertyName = "CostPrice", Width = 120 }
+            new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 250 },
+            new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "원가", DataPropertyName = "CostPrice", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "Reserve1", HeaderText = "예비1", DataPropertyName = "Reserve1", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "Reserve2", HeaderText = "예비2", DataPropertyName = "Reserve2", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "Reserve3", HeaderText = "예비3", DataPropertyName = "Reserve3", Width = 120 }
         );
 
         SetupContextMenu();
@@ -241,7 +244,8 @@ public class MasterSkuForm : Form
     }
 
     /// <summary>
-    /// 엑셀 파일의 헤더를 먼저 읽어 사용자가 보면서 SKU/상품명/원가 열을 직접 선택하게 한 뒤 가져옵니다.
+    /// 엑셀 파일의 시트/헤더 행을 먼저 보여주고, 사용자가 보면서 SKU/상품명/원가 및
+    /// 예비필드 3개가 어느 열인지 직접 선택하게 한 뒤 가져옵니다.
     /// </summary>
     private void ImportFromFile(string filePath)
     {
@@ -249,34 +253,17 @@ public class MasterSkuForm : Form
         {
             ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
-            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
-            if (worksheet?.Dimension == null)
-            {
-                MessageBox.Show("엑셀 파일에 워크시트가 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            var headers = new List<string>();
-            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
-            {
-                var header = worksheet.Cells[1, col].Value?.ToString();
-                if (!string.IsNullOrWhiteSpace(header)) headers.Add(header);
-            }
-
-            if (headers.Count == 0)
-            {
-                MessageBox.Show("1행에서 헤더를 찾을 수 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            using var mappingDialog = new MasterSkuImportMappingDialog(headers);
+            using var mappingDialog = new MasterSkuImportMappingDialog(package);
             if (mappingDialog.ShowDialog(this) != DialogResult.OK) return;
+
+            var worksheet = package.Workbook.Worksheets[mappingDialog.SheetName];
+            var headerRow = mappingDialog.HeaderRow;
 
             var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
             {
-                var header = worksheet.Cells[1, col].Value?.ToString();
+                var header = worksheet.Cells[headerRow, col].Value?.ToString();
                 if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
                 {
                     headerToIndexMap[header] = col;
@@ -286,9 +273,12 @@ public class MasterSkuForm : Form
             var skuCol = headerToIndexMap[mappingDialog.SkuColumn];
             var itemNameCol = headerToIndexMap[mappingDialog.ItemNameColumn];
             var costPriceCol = headerToIndexMap[mappingDialog.CostPriceColumn];
+            var reserve1Col = mappingDialog.Reserve1Column is { } r1 ? headerToIndexMap.GetValueOrDefault(r1) : 0;
+            var reserve2Col = mappingDialog.Reserve2Column is { } r2 ? headerToIndexMap.GetValueOrDefault(r2) : 0;
+            var reserve3Col = mappingDialog.Reserve3Column is { } r3 ? headerToIndexMap.GetValueOrDefault(r3) : 0;
 
             var itemsToImport = new List<ItemModel>();
-            for (int row = 2; row <= worksheet.Dimension.End.Row; row++)
+            for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
                 var sku = worksheet.Cells[row, skuCol].Value?.ToString();
                 if (string.IsNullOrWhiteSpace(sku)) continue;
@@ -299,7 +289,15 @@ public class MasterSkuForm : Form
                     costPrice = 0; // 파싱 실패 시 0으로 처리
                 }
 
-                itemsToImport.Add(new ItemModel { Sku = sku, ItemName = itemName, CostPrice = costPrice });
+                itemsToImport.Add(new ItemModel
+                {
+                    Sku = sku,
+                    ItemName = itemName,
+                    CostPrice = costPrice,
+                    Reserve1 = reserve1Col > 0 ? worksheet.Cells[row, reserve1Col].Value?.ToString() : null,
+                    Reserve2 = reserve2Col > 0 ? worksheet.Cells[row, reserve2Col].Value?.ToString() : null,
+                    Reserve3 = reserve3Col > 0 ? worksheet.Cells[row, reserve3Col].Value?.ToString() : null,
+                });
             }
 
             if (itemsToImport.Count == 0)
@@ -372,6 +370,9 @@ public class MasterSkuForm : Form
                 worksheet.Cells[rowIndex + 2, 1].Value = item.Sku;
                 worksheet.Cells[rowIndex + 2, 2].Value = item.ItemName;
                 worksheet.Cells[rowIndex + 2, 3].Value = item.CostPrice;
+                worksheet.Cells[rowIndex + 2, 4].Value = item.Reserve1;
+                worksheet.Cells[rowIndex + 2, 5].Value = item.Reserve2;
+                worksheet.Cells[rowIndex + 2, 6].Value = item.Reserve3;
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
