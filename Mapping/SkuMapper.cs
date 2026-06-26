@@ -16,13 +16,18 @@ public class SkuMapper
 
     private readonly Dictionary<MappingRuleType, List<MappingRule>> _rules;
     private readonly Dictionary<long, List<MappingConditionDetail>> _conditionDetailsByRuleId;
+    private readonly Dictionary<string, ChannelSkuModel> _channelSkusByMsku;
 
     /// <summary>
     /// 지정된 채널의 모든 매핑 규칙을 로드하여 SkuMapper를 초기화합니다.
     /// </summary>
     /// <param name="mappingRepository">매핑 규칙을 가져올 Repository</param>
     /// <param name="channelCode">매핑할 채널 코드</param>
-    public SkuMapper(MappingRepository mappingRepository, string channelCode)
+    /// <param name="channelSkuRepository">
+    /// 채널별 SKU 설정(송장표시명 등)을 가져올 Repository. 생략하면 InvoiceLabel을 채우지 않는다
+    /// (기존 호출부와의 호환을 위해 선택 인자로 둠).
+    /// </param>
+    public SkuMapper(MappingRepository mappingRepository, string channelCode, ChannelSkuRepository? channelSkuRepository = null)
     {
         _rules = new Dictionary<MappingRuleType, List<MappingRule>>
         {
@@ -32,6 +37,9 @@ public class SkuMapper
             [MappingRuleType.Condition] = mappingRepository.GetRules(MappingRuleType.Condition, channelCode)
         };
         _conditionDetailsByRuleId = mappingRepository.GetConditionDetailsByChannel(channelCode);
+        _channelSkusByMsku = (channelSkuRepository ?? new ChannelSkuRepository())
+            .GetAllByChannel(channelCode)
+            .ToDictionary(c => c.Msku, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -81,6 +89,23 @@ public class SkuMapper
         {
             item.Status = "매핑 실패";
         }
+
+        item.InvoiceLabel = BuildInvoiceLabel(item);
+    }
+
+    /// <summary>
+    /// 택배사 출력양식의 "품목"란에 쓸 간결한 표시 문자열을 만든다. 채널-SKU(CSKU)에 송장표시명이
+    /// 설정되어 있으면 그 이름과 수량을 조합해 반환하고, 설정이 없으면 null을 반환해 호출 측(택배사
+    /// 양식 설정)이 원본 상품명 등 다른 속성을 그대로 쓸 수 있게 한다. 발주서마다 상품명/옵션명
+    /// 구조가 제각각이라도, 송장에는 채널별로 정해둔 간결한 이름만 나가게 하기 위한 것이다.
+    /// </summary>
+    private string? BuildInvoiceLabel(OfsOrderItem item)
+    {
+        if (string.IsNullOrEmpty(item.MappedSku)) return null;
+        if (!_channelSkusByMsku.TryGetValue(item.MappedSku, out var csku)) return null;
+        if (string.IsNullOrWhiteSpace(csku.InvoiceDisplayName)) return null;
+
+        return $"{csku.InvoiceDisplayName} {item.Quantity}개";
     }
 
     private bool TryMap(string key, MappingRuleType ruleType, bool exactMatch, out string? targetSku)

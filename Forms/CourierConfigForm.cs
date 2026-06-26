@@ -32,6 +32,7 @@ public class CourierConfigForm : Form
         ("Phone", "연락처"),
         ("Address", "주소"),
         ("DeliveryMessage", "배송메세지"),
+        ("InvoiceLabel", "송장표시 품목명(CSKU 송장표시명+수량 자동조합, 설정 없으면 빈값)"),
         ("MappedSku", "매핑된 SKU"),
         ("Status", "처리 상태"),
         ("TrackingNo", "운송장번호"),

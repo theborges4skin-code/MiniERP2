@@ -31,14 +31,16 @@ public class ChannelSkuRepository
             using var upsertCommand = connection.CreateCommand();
             upsertCommand.Transaction = transaction;
             upsertCommand.CommandText = """
-                INSERT INTO ChannelSkuTable (ChannelCode, Msku, SupplyPrice)
-                VALUES ($channelCode, $msku, $supplyPrice)
+                INSERT INTO ChannelSkuTable (ChannelCode, Msku, SupplyPrice, InvoiceDisplayName)
+                VALUES ($channelCode, $msku, $supplyPrice, $invoiceDisplayName)
                 ON CONFLICT(ChannelCode, Msku) DO UPDATE SET
-                    SupplyPrice = excluded.SupplyPrice
+                    SupplyPrice = excluded.SupplyPrice,
+                    InvoiceDisplayName = excluded.InvoiceDisplayName
                 """;
             upsertCommand.Parameters.AddWithValue("$channelCode", csku.ChannelCode);
             upsertCommand.Parameters.AddWithValue("$msku", csku.Msku);
             upsertCommand.Parameters.AddWithValue("$supplyPrice", csku.SupplyPrice);
+            upsertCommand.Parameters.AddWithValue("$invoiceDisplayName", csku.InvoiceDisplayName ?? (object)DBNull.Value);
             upsertCommand.ExecuteNonQuery();
 
             transaction.Commit();
@@ -92,8 +94,8 @@ public class ChannelSkuRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ChannelCode, Msku, SupplyPrice 
-            FROM ChannelSkuTable 
+            SELECT ChannelCode, Msku, SupplyPrice, InvoiceDisplayName
+            FROM ChannelSkuTable
             WHERE Msku = $msku
             """;
         command.Parameters.AddWithValue("$msku", msku);
@@ -137,10 +139,30 @@ public class ChannelSkuRepository
         return history;
     }
 
+    /// <summary>
+    /// 지정된 채널의 모든 CSKU(채널별 SKU 설정: 납품가/송장표시명)를 한 번에 가져옵니다.
+    /// SkuMapper가 매핑 시마다 따로 조회하지 않도록 채널 단위로 묶어서 제공합니다.
+    /// </summary>
+    public List<ChannelSkuModel> GetAllByChannel(string channelCode)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ChannelCode, Msku, SupplyPrice, InvoiceDisplayName FROM ChannelSkuTable WHERE ChannelCode = $channelCode";
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+
+        var cskus = new List<ChannelSkuModel>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cskus.Add(ReadChannelSku(reader));
+        }
+        return cskus;
+    }
+
     private static ChannelSkuModel? GetByChannelAndMsku(SqliteConnection connection, string channelCode, string msku)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ChannelCode, Msku, SupplyPrice FROM ChannelSkuTable WHERE ChannelCode = $channelCode AND Msku = $msku";
+        command.CommandText = "SELECT ChannelCode, Msku, SupplyPrice, InvoiceDisplayName FROM ChannelSkuTable WHERE ChannelCode = $channelCode AND Msku = $msku";
         command.Parameters.AddWithValue("$channelCode", channelCode);
         command.Parameters.AddWithValue("$msku", msku);
 
@@ -153,5 +175,6 @@ public class ChannelSkuRepository
         ChannelCode = reader.GetString(0),
         Msku = reader.GetString(1),
         SupplyPrice = reader.GetDecimal(2),
+        InvoiceDisplayName = reader.IsDBNull(3) ? null : reader.GetString(3),
     };
 }

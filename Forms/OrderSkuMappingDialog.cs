@@ -14,6 +14,7 @@ public class OrderSkuMappingDialog : Form
 {
     private readonly ItemRepository _itemRepository = new();
     private readonly ChannelSkuRepository _channelSkuRepository = new();
+    private readonly MappingRepository _mappingRepository = new();
     private readonly OfsOrderItem _orderItem;
     private readonly string? _channelCode;
 
@@ -22,6 +23,8 @@ public class OrderSkuMappingDialog : Form
     private TextBox _txtSupplyPrice = new();
     private RadioButton _radioVatIncluded = new();
     private RadioButton _radioVatExcluded = new();
+    private TextBox _txtInvoiceDisplayName = new();
+    private CheckBox _chkSaveAsExactRule = new();
 
     public string? ResultMappedSku { get; private set; }
     public string? ResultStatus { get; private set; }
@@ -37,14 +40,16 @@ public class OrderSkuMappingDialog : Form
     private void InitializeComponent()
     {
         Text = "SKU 매핑 도우미";
-        Size = new Size(640, 560);
+        Size = new Size(680, 620);
         StartPosition = FormStartPosition.CenterParent;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, Padding = new Padding(10) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 7, Padding = new Padding(10) };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
 
         var infoPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
@@ -72,6 +77,7 @@ public class OrderSkuMappingDialog : Form
             new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 250 },
             new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "제조원가(VAT포함)", DataPropertyName = "CostPrice", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
+        _candidateGrid.SelectionChanged += (s, e) => PrefillFromExistingChannelSku();
 
         var pricePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         pricePanel.Controls.Add(new Label { Text = "납품단가(선택):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
@@ -81,6 +87,15 @@ public class OrderSkuMappingDialog : Form
         _radioVatExcluded = new RadioButton { Text = "VAT별도", AutoSize = true, Padding = new Padding(5, 4, 0, 0) };
         pricePanel.Controls.Add(_radioVatIncluded);
         pricePanel.Controls.Add(_radioVatExcluded);
+
+        var invoiceNamePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        invoiceNamePanel.Controls.Add(new Label { Text = "송장표시명(선택, 채널별):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+        _txtInvoiceDisplayName = new TextBox { Width = 350 };
+        invoiceNamePanel.Controls.Add(_txtInvoiceDisplayName);
+
+        var exactRulePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        _chkSaveAsExactRule = new CheckBox { Text = "다음에도 같은 상품명/옵션명은 자동으로 이 SKU로 매핑(1:1 규칙으로 저장)", AutoSize = true, Checked = true };
+        exactRulePanel.Controls.Add(_chkSaveAsExactRule);
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnClose = new Button { Text = "닫기", Width = 80 };
@@ -97,10 +112,32 @@ public class OrderSkuMappingDialog : Form
         layout.Controls.Add(searchPanel, 0, 1);
         layout.Controls.Add(_candidateGrid, 0, 2);
         layout.Controls.Add(pricePanel, 0, 3);
-        layout.Controls.Add(buttonPanel, 0, 4);
+        layout.Controls.Add(invoiceNamePanel, 0, 4);
+        layout.Controls.Add(exactRulePanel, 0, 5);
+        layout.Controls.Add(buttonPanel, 0, 6);
 
         Controls.Add(layout);
         CancelButton = btnClose;
+    }
+
+    /// <summary>
+    /// 후보 목록에서 SKU를 선택하면, 그 채널에 이미 저장된 CSKU(납품가/송장표시명)가 있을 경우
+    /// 미리 채워 보여줍니다. 매번 빈 칸에서 다시 입력하지 않고 기존 설정을 바로 확인/수정할 수 있게 합니다.
+    /// </summary>
+    private void PrefillFromExistingChannelSku()
+    {
+        _txtSupplyPrice.Text = string.Empty;
+        _txtInvoiceDisplayName.Text = string.Empty;
+        _radioVatIncluded.Checked = true;
+
+        if (string.IsNullOrEmpty(_channelCode)) return;
+        if (_candidateGrid.CurrentRow?.DataBoundItem is not ItemModel selected) return;
+
+        var existing = _channelSkuRepository.GetByChannelAndMsku(_channelCode, selected.Sku);
+        if (existing == null) return;
+
+        _txtSupplyPrice.Text = existing.SupplyPrice.ToString();
+        _txtInvoiceDisplayName.Text = existing.InvoiceDisplayName ?? string.Empty;
     }
 
     private void RunSearch()
@@ -123,7 +160,8 @@ public class OrderSkuMappingDialog : Form
             return;
         }
 
-        SaveSupplyPriceIfEntered(selected.Sku);
+        SaveChannelSkuInfoIfEntered(selected.Sku);
+        SaveAsExactRuleIfChecked(selected.Sku);
 
         ResultMappedSku = selected.Sku;
         ResultStatus = "수동 매핑";
@@ -148,7 +186,8 @@ public class OrderSkuMappingDialog : Form
             CostPrice = 0m,
         });
 
-        SaveSupplyPriceIfEntered(tempSku);
+        SaveChannelSkuInfoIfEntered(tempSku);
+        SaveAsExactRuleIfChecked(tempSku);
 
         ResultMappedSku = tempSku;
         ResultStatus = "임시 매핑";
@@ -157,20 +196,48 @@ public class OrderSkuMappingDialog : Form
     }
 
     /// <summary>
-    /// 납품단가가 입력된 경우, VAT별도로 선택했으면 1.1을 곱해 VAT포함 기준으로 변환한 뒤
-    /// 채널-SKU 납품가로 저장합니다(마스터DB 제조원가와 동일하게 VAT포함 기준으로 통일).
+    /// 납품단가/송장표시명 중 하나라도 입력된 경우 채널-SKU(CSKU) 설정으로 저장합니다.
+    /// 납품단가는 VAT별도로 선택했으면 1.1을 곱해 VAT포함 기준으로 변환합니다
+    /// (마스터DB 제조원가와 동일하게 VAT포함 기준으로 통일).
     /// </summary>
-    private void SaveSupplyPriceIfEntered(string msku)
+    private void SaveChannelSkuInfoIfEntered(string msku)
     {
-        if (string.IsNullOrWhiteSpace(_txtSupplyPrice.Text)) return;
-        if (!decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice)) return;
+        var hasPrice = decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice);
+        var invoiceDisplayName = string.IsNullOrWhiteSpace(_txtInvoiceDisplayName.Text) ? null : _txtInvoiceDisplayName.Text.Trim();
+
+        if (!hasPrice && invoiceDisplayName == null) return;
         if (string.IsNullOrEmpty(_channelCode))
         {
-            MessageBox.Show("채널 정보가 없어 납품단가를 저장하지 못했습니다. SKU 매핑만 적용됩니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("채널 정보가 없어 채널별 SKU 설정(납품단가/송장표시명)을 저장하지 못했습니다. SKU 매핑만 적용됩니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        var vatIncludedPrice = _radioVatExcluded.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice;
-        _channelSkuRepository.Upsert(new ChannelSkuModel { ChannelCode = _channelCode, Msku = msku, SupplyPrice = vatIncludedPrice });
+        var existing = _channelSkuRepository.GetByChannelAndMsku(_channelCode, msku);
+        var supplyPrice = hasPrice
+            ? (_radioVatExcluded.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
+            : existing?.SupplyPrice ?? 0m;
+
+        _channelSkuRepository.Upsert(new ChannelSkuModel
+        {
+            ChannelCode = _channelCode,
+            Msku = msku,
+            SupplyPrice = supplyPrice,
+            InvoiceDisplayName = invoiceDisplayName ?? existing?.InvoiceDisplayName,
+        });
+    }
+
+    /// <summary>
+    /// 체크박스가 켜져 있으면 이 주문의 (상품명+옵션명) 키를 1:1 매핑 규칙으로 저장해,
+    /// 같은 조합의 다음 주문은 이 도우미를 다시 열지 않고도 자동으로 매핑되게 합니다.
+    /// </summary>
+    private void SaveAsExactRuleIfChecked(string targetSku)
+    {
+        if (!_chkSaveAsExactRule.Checked) return;
+        if (string.IsNullOrEmpty(_channelCode)) return;
+
+        var key = (_orderItem.ProductName ?? string.Empty) + (_orderItem.OptionName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        _mappingRepository.UpsertExactRule(_channelCode, key, targetSku);
     }
 }

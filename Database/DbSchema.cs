@@ -148,6 +148,7 @@ public static class DbSchema
         EnsureColumn(connection, "ItemTable", "Reserve2", "TEXT");
         EnsureColumn(connection, "ItemTable", "Reserve3", "TEXT");
         EnsureColumn(connection, "ItemTable", "ProductGroup", "TEXT");
+        EnsureColumn(connection, "ChannelSkuTable", "InvoiceDisplayName", "TEXT");
     }
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)

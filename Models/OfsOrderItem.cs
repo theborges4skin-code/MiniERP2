@@ -19,4 +19,11 @@ public class OfsOrderItem
     public string? MappedSku { get; set; }
     public string? Status { get; set; }
     public string? TrackingNo { get; set; }
+
+    /// <summary>
+    /// 택배사 출력양식(송장)에 쓸 간결한 품목 표시 문자열입니다(SkuMapper가 매핑 시 채워줌).
+    /// 매핑된 SKU의 채널별 송장표시명이 설정되어 있을 때만 값이 채워지며, 그 외에는 null입니다
+    /// (이 경우 택배사 양식 설정에서 ProductName 등 다른 속성을 직접 선택해 사용하면 됩니다).
+    /// </summary>
+    public string? InvoiceLabel { get; set; }
 }

@@ -200,6 +200,46 @@ public class MappingRepository
     }
 
     /// <summary>
+    /// 1:1 매핑 규칙을 추가하거나(같은 채널+키가 없으면) 기존 규칙의 TargetSku를 갱신합니다.
+    /// SKU 매핑 도우미에서 사용자가 한 번 매핑을 선택하면 같은 상품명/옵션명 조합이 다음
+    /// 발주서에서도 자동으로 매핑되도록, 매번 다시 골라야 하는 수고를 없애기 위함입니다.
+    /// </summary>
+    public void UpsertExactRule(string channelCode, string key, string targetSku)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var findCommand = connection.CreateCommand();
+        findCommand.Transaction = transaction;
+        findCommand.CommandText = "SELECT Id FROM RuleExact WHERE ChannelCode = $channelCode AND Key = $key";
+        findCommand.Parameters.AddWithValue("$channelCode", channelCode);
+        findCommand.Parameters.AddWithValue("$key", key);
+        var existingId = findCommand.ExecuteScalar();
+
+        if (existingId != null)
+        {
+            using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = "UPDATE RuleExact SET TargetSku = $targetSku WHERE Id = $id";
+            updateCommand.Parameters.AddWithValue("$targetSku", targetSku);
+            updateCommand.Parameters.AddWithValue("$id", existingId);
+            updateCommand.ExecuteNonQuery();
+        }
+        else
+        {
+            using var insertCommand = connection.CreateCommand();
+            insertCommand.Transaction = transaction;
+            insertCommand.CommandText = "INSERT INTO RuleExact (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
+            insertCommand.Parameters.AddWithValue("$channelCode", channelCode);
+            insertCommand.Parameters.AddWithValue("$key", key);
+            insertCommand.Parameters.AddWithValue("$targetSku", targetSku);
+            insertCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    /// <summary>
     /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku)만 갱신합니다. 상세조건은 건드리지 않습니다.
     /// </summary>
     public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku)
