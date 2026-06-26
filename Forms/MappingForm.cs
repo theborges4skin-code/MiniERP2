@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using MiniERP2.Controls;
 using MiniERP2.Database;
+using MiniERP2.Mapping;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -18,6 +19,8 @@ public class MappingForm : Form
     private ComboBox _channelComboBox = new();
     private TabControl _ruleTabControl = new();
     private readonly HashSet<TabPage> _dirtyTabs = new();
+    private readonly Dictionary<MappingRuleType, HashSet<string>> _conflictingKeysByType = new();
+    private DataGridView _conflictGrid = new();
 
     public MappingForm()
     {
@@ -75,11 +78,35 @@ public class MappingForm : Form
         tabControl.TabPages.Add(CreateRuleTabPage("1:1 매핑", MappingRuleType.Exact));
         tabControl.TabPages.Add(CreateRuleTabPage("임시 매핑", MappingRuleType.Temp));
         tabControl.TabPages.Add(CreateRuleTabPage("조건부 매핑", MappingRuleType.Condition));
+        tabControl.TabPages.Add(CreateConflictTabPage());
 
         tabControl.Selecting += OnTabSelecting;
-        // TODO: 기획서 5.3절 '매핑 충돌' 감지 및 표시 탭 추가
 
         return tabControl;
+    }
+
+    private TabPage CreateConflictTabPage()
+    {
+        var tabPage = new TabPage("충돌 감지");
+
+        _conflictGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            DefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.MistyRose },
+        };
+        _conflictGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "RuleTypeName", HeaderText = "규칙 유형", DataPropertyName = "RuleTypeName", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "KeyA", HeaderText = "키 A", DataPropertyName = "KeyA", Width = 200 },
+            new DataGridViewTextBoxColumn { Name = "TargetSkuA", HeaderText = "SKU A", DataPropertyName = "TargetSkuA", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "KeyB", HeaderText = "키 B", DataPropertyName = "KeyB", Width = 200 },
+            new DataGridViewTextBoxColumn { Name = "TargetSkuB", HeaderText = "SKU B", DataPropertyName = "TargetSkuB", Width = 120 }
+        );
+
+        tabPage.Controls.Add(_conflictGrid);
+        return tabPage;
     }
 
     private TabPage CreateRuleTabPage(string title, MappingRuleType ruleType)
@@ -100,12 +127,69 @@ public class MappingForm : Form
         );
 
         // 데이터 변경 시 'dirty' 상태로 만들기 위한 이벤트 핸들러 연결
-        grid.CellValueChanged += (s, e) => MarkTabAsDirty(tabPage);
-        grid.RowsAdded += (s, e) => MarkTabAsDirty(tabPage);
-        grid.RowsRemoved += (s, e) => MarkTabAsDirty(tabPage);
+        grid.CellValueChanged += (s, e) => { MarkTabAsDirty(tabPage); RefreshConflicts(); };
+        grid.RowsAdded += (s, e) => { MarkTabAsDirty(tabPage); RefreshConflicts(); };
+        grid.RowsRemoved += (s, e) => { MarkTabAsDirty(tabPage); RefreshConflicts(); };
+
+        // 충돌 규칙이 있는 행을 강조 표시
+        grid.RowPrePaint += (s, e) => OnRuleGridRowPrePaint(grid, ruleType, e);
 
         tabPage.Controls.Add(grid);
         return tabPage;
+    }
+
+    private void OnRuleGridRowPrePaint(ExcelLikeDataGridView grid, MappingRuleType ruleType, DataGridViewRowPrePaintEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= grid.Rows.Count || grid.Rows[e.RowIndex].IsNewRow) return;
+
+        var row = grid.Rows[e.RowIndex];
+        if (row.DataBoundItem is not MappingRule rule) return;
+
+        var isConflicting = _conflictingKeysByType.TryGetValue(ruleType, out var keys) && keys.Contains(rule.Key);
+        row.DefaultCellStyle.BackColor = isConflicting ? Color.MistyRose : grid.DefaultCellStyle.BackColor;
+    }
+
+    /// <summary>
+    /// 현재 채널에 로드된 4종 규칙 전체를 대상으로 충돌을 다시 감지하고,
+    /// 규칙 그리드 강조 및 '충돌 감지' 탭 요약을 갱신합니다.
+    /// </summary>
+    private void RefreshConflicts()
+    {
+        _conflictingKeysByType.Clear();
+        var allConflicts = new List<MappingConflict>();
+
+        foreach (TabPage tabPage in _ruleTabControl.TabPages)
+        {
+            if (tabPage.Controls.Count == 0 || tabPage.Controls[0] is not ExcelLikeDataGridView grid || grid.Tag is not MappingRuleType ruleType) continue;
+
+            var rules = (grid.DataSource as BindingList<MappingRule>)?.ToList() ?? new List<MappingRule>();
+            var conflicts = MappingConflictDetector.Detect(ruleType, rules);
+            if (conflicts.Count > 0)
+            {
+                _conflictingKeysByType[ruleType] = MappingConflictDetector.GetConflictingKeys(conflicts);
+                allConflicts.AddRange(conflicts);
+            }
+
+            grid.Invalidate();
+        }
+
+        _conflictGrid.DataSource = new BindingList<ConflictRow>(allConflicts.Select(c => new ConflictRow(c)).ToList());
+    }
+
+    private record ConflictRow(MappingConflict Conflict)
+    {
+        public string RuleTypeName => Conflict.RuleType switch
+        {
+            MappingRuleType.Exception => "예외 처리",
+            MappingRuleType.Exact => "1:1 매핑",
+            MappingRuleType.Temp => "임시 매핑",
+            MappingRuleType.Condition => "조건부 매핑",
+            _ => Conflict.RuleType.ToString(),
+        };
+        public string KeyA => Conflict.KeyA;
+        public string TargetSkuA => Conflict.TargetSkuA;
+        public string KeyB => Conflict.KeyB;
+        public string TargetSkuB => Conflict.TargetSkuB;
     }
 
     private void LoadChannels()
@@ -135,6 +219,8 @@ public class MappingForm : Form
             var rules = _mappingRepository.GetRules(ruleType, selectedChannel);
             grid.DataSource = new BindingList<MappingRule>(rules);
         }
+
+        RefreshConflicts();
     }
 
     private async void OnSaveClick(object? sender, EventArgs e)
@@ -263,6 +349,7 @@ public class MappingForm : Form
                 {
                     grid.DataSource = new BindingList<MappingRule>(rulesToImport);
                     MarkTabAsDirty(activeTab);
+                    RefreshConflicts();
                 }
             }
         }
