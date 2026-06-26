@@ -51,6 +51,8 @@ public class LegacyMigrationServiceTests
             CREATE TABLE RuleExactTable (ChannelCode TEXT, LegacyKey TEXT, TargetSku TEXT);
             CREATE TABLE RuleExceptionTable (ChannelCode TEXT, LegacyKey TEXT, TargetSku TEXT);
             CREATE TABLE RuleTempSkuTable (TempSku TEXT, ItemGroup TEXT, ItemName TEXT, CostPrice REAL);
+            CREATE TABLE RuleConditionTable (RuleId TEXT, ChannelCode TEXT, TargetSku TEXT);
+            CREATE TABLE RuleConditionDetailTable (Id INTEGER PRIMARY KEY AUTOINCREMENT, RuleId TEXT, HeaderName TEXT, Operator TEXT, TargetValue TEXT, Logic TEXT);
 
             INSERT INTO SalesChannelTable VALUES (
                 'CH01', '쿠팡그로스', '온라인', '4. 쿠팡(그로스)', 1.0, 2,
@@ -74,6 +76,14 @@ public class LegacyMigrationServiceTests
             INSERT INTO RuleExceptionTable VALUES ('CH01', 'CH01::<기본배송료>__', '[EXCLUDED]');
 
             INSERT INTO RuleTempSkuTable VALUES ('TEMP_LEGACY_1', '21.원료', '임시상품', 2000);
+
+            INSERT INTO RuleConditionTable VALUES ('COND_001', 'CH01', 'SKU-COND');
+            INSERT INTO RuleConditionDetailTable (RuleId, HeaderName, Operator, TargetValue, Logic) VALUES
+                ('COND_001', '옵션명', 'contains', '500ml 3개', 'AND'),
+                ('COND_001', '옵션명', 'not_contains', '면도', 'AND');
+            INSERT INTO RuleConditionTable VALUES ('COND_002', 'CH01', 'SKU-NOFIELD');
+            INSERT INTO RuleConditionDetailTable (RuleId, HeaderName, Operator, TargetValue, Logic) VALUES
+                ('COND_002', '알수없는헤더', 'contains', 'x', 'AND');
             """;
         command.ExecuteNonQuery();
     }
@@ -140,5 +150,42 @@ public class LegacyMigrationServiceTests
 
         var exceptionRules = new MappingRepository().GetRules(MappingRuleType.Exception, "CH01");
         Assert.IsTrue(exceptionRules.Any(r => r.Key == "<기본배송료>__" && r.TargetSku == "[EXCLUDED]"));
+    }
+
+    [TestMethod]
+    public void Migrate_ImportsMultiConditionRule_AndSkipsRuleWithNoTranslatableHeader()
+    {
+        var service = new LegacyMigrationService();
+        var result = service.Migrate(_legacyDbPath);
+
+        // COND_001은 두 조건 모두 번역 가능해 이관되고, COND_002는 헤더를 번역할 수 없어 건너뛰어야 한다.
+        Assert.AreEqual(1, result.ConditionRulesImported);
+
+        var mappingRepository = new MappingRepository();
+        var conditionRules = mappingRepository.GetRules(MappingRuleType.Condition, "CH01");
+        var importedRule = conditionRules.Single(r => r.TargetSku == "SKU-COND");
+
+        var details = mappingRepository.GetConditionDetails(importedRule.Id);
+        Assert.HasCount(2, details);
+        Assert.IsTrue(details.Any(d => d.HeaderField == StdField.OptionName && d.Operator == ConditionOperator.Contains && d.TargetValue == "500ml 3개"));
+        Assert.IsTrue(details.Any(d => d.HeaderField == StdField.OptionName && d.Operator == ConditionOperator.NotContains));
+        Assert.IsTrue(details.All(d => d.Logic == ConditionLogic.And));
+
+        Assert.IsFalse(conditionRules.Any(r => r.TargetSku == "SKU-NOFIELD"));
+    }
+
+    [TestMethod]
+    public void Migrate_ConditionRule_WorksThroughSkuMapper()
+    {
+        var service = new LegacyMigrationService();
+        service.Migrate(_legacyDbPath);
+
+        var mapper = new MiniERP2.Mapping.SkuMapper(new MappingRepository(), "CH01");
+        var item = new OfsOrderItem { ProductName = "샴푸", OptionName = "500ml 3개 묶음" };
+
+        mapper.ApplyMapping(item);
+
+        Assert.AreEqual("SKU-COND", item.MappedSku);
+        Assert.AreEqual("매핑(조건)", item.Status);
     }
 }

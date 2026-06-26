@@ -34,6 +34,7 @@ public class LegacyMigrationService
         MigrateExactAndExceptionRules(connection, MappingRuleType.Exact, "RuleExactTable", result);
         MigrateExactAndExceptionRules(connection, MappingRuleType.Exception, "RuleExceptionTable", result);
         MigrateTempSkus(connection, result);
+        MigrateConditionRules(connection, result);
 
         _channelConfigService.Save(channelConfigs);
         return result;
@@ -303,6 +304,99 @@ public class LegacyMigrationService
         }
     }
 
+    // ===================== 조건부 매핑(다중 AND/OR) =====================
+
+    /// <summary>
+    /// 레거시 RuleConditionTable+RuleConditionDetailTable(485건+상세750건)을 이관합니다.
+    /// 레거시 RuleId는 문자열("9A2C5962_COND_00001")이라 두 테이블을 문자열 RuleId로 직접 조인한다.
+    /// 1회성 도구라 재실행하면 중복으로 추가될 수 있으니, 같은 DB로 두 번 가져오지 않도록 주의.
+    /// </summary>
+    private void MigrateConditionRules(SqliteConnection connection, LegacyMigrationResult result)
+    {
+        using var ruleCommand = connection.CreateCommand();
+        ruleCommand.CommandText = "SELECT RuleId, ChannelCode, TargetSku FROM RuleConditionTable";
+        using var ruleReader = ruleCommand.ExecuteReader();
+
+        var legacyRules = new List<(string LegacyRuleId, string ChannelCode, string TargetSku)>();
+        while (ruleReader.Read())
+        {
+            var legacyRuleId = GetStringOrNull(ruleReader, "RuleId");
+            var channelCode = GetStringOrNull(ruleReader, "ChannelCode");
+            var targetSku = GetStringOrNull(ruleReader, "TargetSku");
+            if (string.IsNullOrWhiteSpace(legacyRuleId) || string.IsNullOrWhiteSpace(channelCode) || targetSku == null) continue;
+
+            legacyRules.Add((legacyRuleId, channelCode, targetSku));
+        }
+        ruleReader.Close();
+
+        foreach (var (legacyRuleId, channelCode, targetSku) in legacyRules)
+        {
+            using var detailCommand = connection.CreateCommand();
+            detailCommand.CommandText = "SELECT HeaderName, Operator, TargetValue, Logic FROM RuleConditionDetailTable WHERE RuleId = $ruleId";
+            detailCommand.Parameters.AddWithValue("$ruleId", legacyRuleId);
+            using var detailReader = detailCommand.ExecuteReader();
+
+            var details = new List<MappingConditionDetail>();
+            var summaryParts = new List<string>();
+            while (detailReader.Read())
+            {
+                var headerName = GetStringOrNull(detailReader, "HeaderName");
+                var op = GetStringOrNull(detailReader, "Operator");
+                var targetValue = GetStringOrNull(detailReader, "TargetValue");
+                var logic = GetStringOrNull(detailReader, "Logic");
+                if (headerName == null || op == null || targetValue == null) continue;
+                if (!TryTranslateLegacyHeaderName(headerName, out var stdField)) continue;
+                if (!TryTranslateOperator(op, out var conditionOperator)) continue;
+
+                details.Add(new MappingConditionDetail
+                {
+                    HeaderField = stdField,
+                    Operator = conditionOperator,
+                    TargetValue = targetValue,
+                    Logic = string.Equals(logic, "OR", StringComparison.OrdinalIgnoreCase) ? ConditionLogic.Or : ConditionLogic.And,
+                });
+                summaryParts.Add($"{headerName} {op} {targetValue}");
+            }
+
+            if (details.Count == 0) continue; // 번역 가능한 조건이 하나도 없으면 의미 없는 규칙이므로 건너뛴다.
+
+            var summaryKey = string.Join(" / ", summaryParts);
+            _mappingRepository.AddConditionRuleWithDetails(channelCode, summaryKey, targetSku, details);
+            result.ConditionRulesImported++;
+        }
+    }
+
+    /// <summary>
+    /// 레거시 조건 상세의 HeaderName(엑셀 헤더 텍스트)을 StdField로 변환합니다.
+    /// 대응되는 표준 필드가 없으면(예: 알 수 없는 헤더) false를 반환해 해당 조건을 건너뛰게 합니다.
+    /// </summary>
+    private static bool TryTranslateLegacyHeaderName(string headerName, out StdField stdField)
+    {
+        if (headerName.Contains("옵션")) { stdField = StdField.OptionName; return true; }
+        if (headerName.Contains("상품명") || headerName.Contains("품목명")) { stdField = StdField.ProductName; return true; }
+        if (headerName.Contains("수량")) { stdField = StdField.Quantity; return true; }
+        if (headerName.Contains("주문")) { stdField = StdField.ProductNo; return true; }
+        if (headerName.Contains("수령") || headerName.Contains("받는")) { stdField = StdField.Recipient; return true; }
+        if (headerName.Contains("연락처") || headerName.Contains("전화")) { stdField = StdField.Phone; return true; }
+        if (headerName.Contains("주소")) { stdField = StdField.Address; return true; }
+
+        stdField = default;
+        return false;
+    }
+
+    private static bool TryTranslateOperator(string legacyOperator, out ConditionOperator conditionOperator)
+    {
+        switch (legacyOperator)
+        {
+            case "contains": conditionOperator = ConditionOperator.Contains; return true;
+            case "not_contains": conditionOperator = ConditionOperator.NotContains; return true;
+            case "==": conditionOperator = ConditionOperator.Equals; return true;
+            default:
+                conditionOperator = default;
+                return false;
+        }
+    }
+
     // ===================== 유틸 =====================
 
     private static string? GetStringOrNull(SqliteDataReader reader, string columnName)
@@ -342,4 +436,5 @@ public class LegacyMigrationResult
     public int ChannelSkusImported { get; set; }
     public int RulesImported { get; set; }
     public int TempSkusImported { get; set; }
+    public int ConditionRulesImported { get; set; }
 }

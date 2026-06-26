@@ -156,8 +156,9 @@ public class MainHub : Form
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
 
         var confirm = MessageBox.Show(
-            "선택한 구버전 DB의 채널 설정/마스터SKU/매핑 규칙/채널별 납품가를 가져옵니다.\n" +
-            "기존에 같은 채널코드/SKU가 있으면 갱신되고, 매핑 규칙은 기존 규칙과 병합됩니다.\n\n계속하시겠습니까?",
+            "선택한 구버전 DB의 채널 설정/마스터SKU/매핑 규칙(1:1/예외/조건부)/채널별 납품가를 가져옵니다.\n" +
+            "기존에 같은 채널코드/SKU가 있으면 갱신되고, 1:1/예외 매핑 규칙은 기존 규칙과 병합됩니다.\n" +
+            "조건부 매핑 규칙은 재실행 시 중복으로 추가될 수 있으니 같은 DB로 두 번 가져오지 마세요.\n\n계속하시겠습니까?",
             "레거시 데이터 가져오기", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
 
@@ -170,9 +171,9 @@ public class MainHub : Form
             MessageBox.Show(
                 $"가져오기 완료.\n\n채널: {result.ChannelsImported}개\n마스터SKU: {result.ItemsImported}개\n" +
                 $"임시SKU(레거시): {result.TempSkusImported}개\n채널별 납품가: {result.ChannelSkusImported}건\n" +
-                $"매핑 규칙(1:1+예외): {result.RulesImported}건\n\n" +
-                "※ 조건부 매핑(여러 조건 AND/OR 조합)과 택배사 양식은 이번 가져오기에 포함되지 않았습니다.\n" +
-                "필요하면 매핑관리창/택배사양식관리창에서 직접 입력해주세요.",
+                $"매핑 규칙(1:1+예외): {result.RulesImported}건\n조건부 매핑 규칙(다중조건): {result.ConditionRulesImported}건\n\n" +
+                "※ 택배사 양식은 이번 가져오기에 포함되지 않았습니다. 필요하면 택배사양식관리창에서 직접 입력해주세요.\n" +
+                "※ 조건부 매핑 규칙은 매핑관리창에 전용 편집 UI가 아직 없습니다 — 그 채널의 '조건부 매핑' 탭에서 저장을 누르면 가져온 내용이 사라지니 주의하세요.",
                 "가져오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
             RefreshSummary();
