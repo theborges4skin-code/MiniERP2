@@ -42,6 +42,20 @@ public class MappingRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
 
+        // 조건부 매핑은 다중 상세조건(RuleConditionDetail)을 가질 수 있다. 부모 규칙을
+        // 삭제하기 전에, 매핑관리창의 단순 그리드 저장으로 고아가 될 상세조건도 함께 정리한다.
+        if (ruleType == MappingRuleType.Condition)
+        {
+            using var deleteDetailsCommand = connection.CreateCommand();
+            deleteDetailsCommand.Transaction = transaction;
+            deleteDetailsCommand.CommandText = $"""
+                DELETE FROM RuleConditionDetail
+                WHERE RuleId IN (SELECT Id FROM {tableName} WHERE ChannelCode = $channelCode)
+                """;
+            deleteDetailsCommand.Parameters.AddWithValue("$channelCode", channelCode);
+            deleteDetailsCommand.ExecuteNonQuery();
+        }
+
         // 1. 기존 채널의 모든 규칙 삭제
         using var deleteCommand = connection.CreateCommand();
         deleteCommand.Transaction = transaction;
@@ -66,6 +80,123 @@ public class MappingRepository
         }
 
         transaction.Commit();
+    }
+
+    /// <summary>
+    /// 지정된 조건부 매핑 규칙(RuleId)에 속한 상세 조건 목록을 가져옵니다.
+    /// </summary>
+    public List<MappingConditionDetail> GetConditionDetails(long ruleId)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, RuleId, HeaderField, Operator, TargetValue, Logic
+            FROM RuleConditionDetail
+            WHERE RuleId = $ruleId
+            ORDER BY Id
+            """;
+        command.Parameters.AddWithValue("$ruleId", ruleId);
+
+        var details = new List<MappingConditionDetail>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            details.Add(new MappingConditionDetail
+            {
+                Id = reader.GetInt64(0),
+                RuleId = reader.GetInt64(1),
+                HeaderField = Enum.Parse<StdField>(reader.GetString(2)),
+                Operator = Enum.Parse<ConditionOperator>(reader.GetString(3)),
+                TargetValue = reader.GetString(4),
+                Logic = Enum.Parse<ConditionLogic>(reader.GetString(5)),
+            });
+        }
+        return details;
+    }
+
+    /// <summary>
+    /// 지정된 채널의 조건부 매핑 규칙에 속한 모든 상세조건을 한 번에 가져와 RuleId별로 묶어 반환합니다.
+    /// SkuMapper가 규칙마다 따로 조회하지 않도록 묶어서 제공합니다.
+    /// </summary>
+    public Dictionary<long, List<MappingConditionDetail>> GetConditionDetailsByChannel(string channelCode)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT d.Id, d.RuleId, d.HeaderField, d.Operator, d.TargetValue, d.Logic
+            FROM RuleConditionDetail d
+            JOIN RuleCondition r ON r.Id = d.RuleId
+            WHERE r.ChannelCode = $channelCode
+            ORDER BY d.RuleId, d.Id
+            """;
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+
+        var result = new Dictionary<long, List<MappingConditionDetail>>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var detail = new MappingConditionDetail
+            {
+                Id = reader.GetInt64(0),
+                RuleId = reader.GetInt64(1),
+                HeaderField = Enum.Parse<StdField>(reader.GetString(2)),
+                Operator = Enum.Parse<ConditionOperator>(reader.GetString(3)),
+                TargetValue = reader.GetString(4),
+                Logic = Enum.Parse<ConditionLogic>(reader.GetString(5)),
+            };
+
+            if (!result.TryGetValue(detail.RuleId, out var list))
+            {
+                list = new List<MappingConditionDetail>();
+                result[detail.RuleId] = list;
+            }
+            list.Add(detail);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 다중 상세조건을 가진 조건부 매핑 규칙 1건을 새로 추가합니다(레거시 마이그레이션 등에서 사용).
+    /// 기존 단순 조건부 규칙(매핑관리창의 단일 Key)과 공존하며, SaveRules(Condition)을 호출하면
+    /// 채널 전체의 조건부 규칙(이 규칙 포함)이 함께 삭제될 수 있으니 주의해야 한다.
+    /// </summary>
+    public long AddConditionRuleWithDetails(string channelCode, string key, string targetSku, List<MappingConditionDetail> details)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var insertRuleCommand = connection.CreateCommand();
+        insertRuleCommand.Transaction = transaction;
+        insertRuleCommand.CommandText = "INSERT INTO RuleCondition (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
+        insertRuleCommand.Parameters.AddWithValue("$channelCode", channelCode);
+        insertRuleCommand.Parameters.AddWithValue("$key", key);
+        insertRuleCommand.Parameters.AddWithValue("$targetSku", targetSku);
+        insertRuleCommand.ExecuteNonQuery();
+
+        using var lastIdCommand = connection.CreateCommand();
+        lastIdCommand.Transaction = transaction;
+        lastIdCommand.CommandText = "SELECT last_insert_rowid()";
+        var ruleId = (long)lastIdCommand.ExecuteScalar()!;
+
+        using var insertDetailCommand = connection.CreateCommand();
+        insertDetailCommand.Transaction = transaction;
+        insertDetailCommand.CommandText = """
+            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic)
+            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic)
+            """;
+        foreach (var detail in details)
+        {
+            insertDetailCommand.Parameters.Clear();
+            insertDetailCommand.Parameters.AddWithValue("$ruleId", ruleId);
+            insertDetailCommand.Parameters.AddWithValue("$headerField", detail.HeaderField.ToString());
+            insertDetailCommand.Parameters.AddWithValue("$operator", detail.Operator.ToString());
+            insertDetailCommand.Parameters.AddWithValue("$targetValue", detail.TargetValue);
+            insertDetailCommand.Parameters.AddWithValue("$logic", detail.Logic.ToString());
+            insertDetailCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return ruleId;
     }
 
     private static string GetTableName(MappingRuleType ruleType) => ruleType switch

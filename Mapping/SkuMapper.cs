@@ -15,6 +15,7 @@ public class SkuMapper
     public const string ExcludedTargetSku = "[EXCLUDED]";
 
     private readonly Dictionary<MappingRuleType, List<MappingRule>> _rules;
+    private readonly Dictionary<long, List<MappingConditionDetail>> _conditionDetailsByRuleId;
 
     /// <summary>
     /// 지정된 채널의 모든 매핑 규칙을 로드하여 SkuMapper를 초기화합니다.
@@ -30,6 +31,7 @@ public class SkuMapper
             [MappingRuleType.Temp] = mappingRepository.GetRules(MappingRuleType.Temp, channelCode),
             [MappingRuleType.Condition] = mappingRepository.GetRules(MappingRuleType.Condition, channelCode)
         };
+        _conditionDetailsByRuleId = mappingRepository.GetConditionDetailsByChannel(channelCode);
     }
 
     /// <summary>
@@ -70,7 +72,7 @@ public class SkuMapper
             item.MappedSku = sku;
             item.Status = "매핑(임시)";
         }
-        else if (TryMap(key, MappingRuleType.Condition, exactMatch: false, out sku))
+        else if (TryMapCondition(item, key, out sku))
         {
             item.MappedSku = sku;
             item.Status = "매핑(조건)";
@@ -89,5 +91,32 @@ public class SkuMapper
 
         targetSku = match?.TargetSku;
         return match != null;
+    }
+
+    /// <summary>
+    /// 조건부 매핑 규칙을 평가한다. 다중 상세조건(AND/OR)이 있는 규칙은 ConditionEvaluator로
+    /// 평가하고, 상세조건이 없는 기존 단순 규칙은 기존처럼 상품명+옵션명 키에 대한 Contains로 평가한다.
+    /// </summary>
+    private bool TryMapCondition(OfsOrderItem item, string key, out string? targetSku)
+    {
+        foreach (var rule in _rules[MappingRuleType.Condition])
+        {
+            if (_conditionDetailsByRuleId.TryGetValue(rule.Id, out var details) && details.Count > 0)
+            {
+                if (ConditionEvaluator.Matches(details, item))
+                {
+                    targetSku = rule.TargetSku;
+                    return true;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(rule.Key) && key.Contains(rule.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                targetSku = rule.TargetSku;
+                return true;
+            }
+        }
+
+        targetSku = null;
+        return false;
     }
 }

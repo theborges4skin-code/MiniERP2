@@ -108,6 +108,15 @@ public static class DbSchema
                 TargetSku TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS RuleConditionDetail (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RuleId INTEGER NOT NULL,
+                HeaderField TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetValue TEXT NOT NULL,
+                Logic TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS MappingHistory (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ChannelCode TEXT NOT NULL,

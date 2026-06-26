@@ -58,6 +58,44 @@ public class SkuMapperTests
     }
 
     [TestMethod]
+    public void ApplyMapping_ConditionRuleWithMultipleAndDetails_MapsWhenAllMatch()
+    {
+        var repository = new MappingRepository();
+        repository.AddConditionRuleWithDetails("CH1", "요약: 500ml 3세트", "SKU-COND", new List<MappingConditionDetail>
+        {
+            new() { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = "500ml 3개", Logic = ConditionLogic.And },
+            new() { HeaderField = StdField.OptionName, Operator = ConditionOperator.NotContains, TargetValue = "면도", Logic = ConditionLogic.And },
+        });
+
+        var mapper = new SkuMapper(repository, "CH1");
+        var item = new OfsOrderItem { ProductName = "샴푸", OptionName = "500ml 3개, 사은품 포함" };
+
+        mapper.ApplyMapping(item);
+
+        Assert.AreEqual("SKU-COND", item.MappedSku);
+        Assert.AreEqual("매핑(조건)", item.Status);
+    }
+
+    [TestMethod]
+    public void ApplyMapping_ConditionRuleWithDetails_DoesNotMapWhenConditionFails()
+    {
+        var repository = new MappingRepository();
+        repository.AddConditionRuleWithDetails("CH1", "요약", "SKU-COND", new List<MappingConditionDetail>
+        {
+            new() { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = "500ml 3개", Logic = ConditionLogic.And },
+            new() { HeaderField = StdField.OptionName, Operator = ConditionOperator.NotContains, TargetValue = "사은품", Logic = ConditionLogic.And },
+        });
+
+        var mapper = new SkuMapper(repository, "CH1");
+        var item = new OfsOrderItem { ProductName = "샴푸", OptionName = "500ml 3개, 사은품 포함" };
+
+        mapper.ApplyMapping(item);
+
+        Assert.IsNull(item.MappedSku);
+        Assert.AreEqual("매핑 실패", item.Status);
+    }
+
+    [TestMethod]
     public void ApplyMapping_NoMatchingRule_SetsMappingFailed()
     {
         var mapper = new SkuMapper(new MappingRepository(), "CH1");
