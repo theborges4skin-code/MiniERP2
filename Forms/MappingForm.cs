@@ -22,6 +22,14 @@ public class MappingForm : Form
     private readonly Dictionary<MappingRuleType, HashSet<string>> _conflictingKeysByType = new();
     private DataGridView _conflictGrid = new();
 
+    // 조건부 매핑(상세) 탭 — 다중 AND/OR 조건 전용 편집기. 기존 "조건부 매핑" 단순 그리드(SaveRules)와
+    // 분리되어 즉시 DB에 반영되므로, 단순 그리드 저장이 이 탭의 데이터를 건드리지 않는다.
+    private DataGridView _conditionRuleGrid = new();
+    private DataGridView _conditionDetailGrid = new();
+    private TextBox _conditionKeyTextBox = new();
+    private TextBox _conditionTargetSkuTextBox = new();
+    private long _selectedConditionRuleId = -1;
+
     public MappingForm()
     {
         InitializeComponent();
@@ -78,6 +86,7 @@ public class MappingForm : Form
         tabControl.TabPages.Add(CreateRuleTabPage("1:1 매핑", MappingRuleType.Exact));
         tabControl.TabPages.Add(CreateRuleTabPage("임시 매핑", MappingRuleType.Temp));
         tabControl.TabPages.Add(CreateRuleTabPage("조건부 매핑", MappingRuleType.Condition));
+        tabControl.TabPages.Add(CreateConditionDetailTabPage());
         tabControl.TabPages.Add(CreateConflictTabPage());
 
         tabControl.Selecting += OnTabSelecting;
@@ -107,6 +116,259 @@ public class MappingForm : Form
 
         tabPage.Controls.Add(_conflictGrid);
         return tabPage;
+    }
+
+    /// <summary>
+    /// 조건부 매핑 규칙별 여러 상세조건(HeaderField/Operator/TargetValue/Logic)을 추가/삭제/수정하는 전용 탭.
+    /// 왼쪽에서 규칙을 고르면 오른쪽에 그 규칙의 상세조건이 뜨고, 각 영역의 저장 버튼이 즉시 DB에 반영한다
+    /// (매핑관리창 상단의 일괄 [저장] 버튼/단순 그리드와는 무관하게 동작).
+    /// </summary>
+    private TabPage CreateConditionDetailTabPage()
+    {
+        var tabPage = new TabPage("조건부 매핑(상세)");
+
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        // 좌측: 규칙 목록
+        var leftPanel = new Panel { Dock = DockStyle.Fill };
+
+        _conditionRuleGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+        };
+        _conditionRuleGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키(레거시 매칭용/요약)", DataPropertyName = "Key", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU", DataPropertyName = "TargetSku", Width = 100 }
+        );
+        _conditionRuleGrid.SelectionChanged += OnConditionRuleSelectionChanged;
+
+        var leftButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36 };
+        var btnAddRule = new Button { Text = "규칙 추가", Size = new Size(90, 28) };
+        btnAddRule.Click += OnAddConditionRuleClick;
+        var btnDeleteRule = new Button { Text = "규칙 삭제", Size = new Size(90, 28) };
+        btnDeleteRule.Click += OnDeleteConditionRuleClick;
+        leftButtonPanel.Controls.Add(btnAddRule);
+        leftButtonPanel.Controls.Add(btnDeleteRule);
+
+        leftPanel.Controls.Add(_conditionRuleGrid);
+        leftPanel.Controls.Add(leftButtonPanel);
+
+        // 우측: 선택한 규칙의 요약 정보 + 상세조건 목록
+        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+
+        var summaryPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        _conditionKeyTextBox = new TextBox { Width = 220 };
+        _conditionTargetSkuTextBox = new TextBox { Width = 120 };
+        var btnSaveSummary = new Button { Text = "규칙 정보 저장", Size = new Size(110, 28) };
+        btnSaveSummary.Click += OnSaveConditionSummaryClick;
+        summaryPanel.Controls.Add(new Label { Text = "키(요약):", AutoSize = true, Padding = new Padding(0, 7, 3, 0) });
+        summaryPanel.Controls.Add(_conditionKeyTextBox);
+        summaryPanel.Controls.Add(new Label { Text = "대상 SKU:", AutoSize = true, Padding = new Padding(10, 7, 3, 0) });
+        summaryPanel.Controls.Add(_conditionTargetSkuTextBox);
+        summaryPanel.Controls.Add(btnSaveSummary);
+        summaryPanel.Controls.Add(new Label
+        {
+            Text = "※ 여기서 추가한 모든 조건은 AND/OR(Logic 열)로 차례대로 결합되어 평가됩니다.",
+            AutoSize = true,
+            Padding = new Padding(0, 5, 0, 0),
+            ForeColor = Color.DimGray,
+        });
+
+        _conditionDetailGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+        };
+        var headerFieldColumn = new DataGridViewComboBoxColumn
+        {
+            Name = "HeaderField",
+            HeaderText = "비교할 항목",
+            DataPropertyName = "HeaderField",
+            DataSource = Enum.GetValues(typeof(StdField)),
+            Width = 130,
+        };
+        var operatorColumn = new DataGridViewComboBoxColumn
+        {
+            Name = "Operator",
+            HeaderText = "조건",
+            DataPropertyName = "Operator",
+            DataSource = Enum.GetValues(typeof(ConditionOperator)),
+            Width = 110,
+        };
+        var targetValueColumn = new DataGridViewTextBoxColumn
+        {
+            Name = "TargetValue",
+            HeaderText = "비교할 값",
+            DataPropertyName = "TargetValue",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+        };
+        var logicColumn = new DataGridViewComboBoxColumn
+        {
+            Name = "Logic",
+            HeaderText = "다음 조건과 결합",
+            DataPropertyName = "Logic",
+            DataSource = Enum.GetValues(typeof(ConditionLogic)),
+            Width = 110,
+        };
+        _conditionDetailGrid.Columns.AddRange(headerFieldColumn, operatorColumn, targetValueColumn, logicColumn);
+
+        var detailButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        var btnAddDetail = new Button { Text = "조건 추가", Size = new Size(90, 28) };
+        btnAddDetail.Click += OnAddConditionDetailClick;
+        var btnDeleteDetail = new Button { Text = "조건 삭제", Size = new Size(90, 28) };
+        btnDeleteDetail.Click += OnDeleteConditionDetailClick;
+        var btnSaveDetails = new Button { Text = "상세조건 저장", Size = new Size(110, 28) };
+        btnSaveDetails.Click += OnSaveConditionDetailsClick;
+        detailButtonPanel.Controls.Add(btnAddDetail);
+        detailButtonPanel.Controls.Add(btnDeleteDetail);
+        detailButtonPanel.Controls.Add(btnSaveDetails);
+
+        rightPanel.Controls.Add(summaryPanel, 0, 0);
+        rightPanel.Controls.Add(_conditionDetailGrid, 0, 1);
+        rightPanel.Controls.Add(detailButtonPanel, 0, 2);
+
+        mainLayout.Controls.Add(leftPanel, 0, 0);
+        mainLayout.Controls.Add(rightPanel, 1, 0);
+        tabPage.Controls.Add(mainLayout);
+
+        SetConditionDetailEditorEnabled(false);
+
+        return tabPage;
+    }
+
+    private void SetConditionDetailEditorEnabled(bool enabled)
+    {
+        _conditionKeyTextBox.Enabled = enabled;
+        _conditionTargetSkuTextBox.Enabled = enabled;
+        _conditionDetailGrid.Enabled = enabled;
+        if (!enabled)
+        {
+            _conditionKeyTextBox.Text = string.Empty;
+            _conditionTargetSkuTextBox.Text = string.Empty;
+            _conditionDetailGrid.DataSource = null;
+        }
+    }
+
+    private void LoadConditionRules(string channelCode)
+    {
+        var rules = _mappingRepository.GetRules(MappingRuleType.Condition, channelCode);
+        _conditionRuleGrid.DataSource = new BindingList<MappingRule>(rules);
+        _selectedConditionRuleId = -1;
+        SetConditionDetailEditorEnabled(false);
+    }
+
+    private void OnConditionRuleSelectionChanged(object? sender, EventArgs e)
+    {
+        if (_conditionRuleGrid.CurrentRow?.DataBoundItem is not MappingRule rule)
+        {
+            _selectedConditionRuleId = -1;
+            SetConditionDetailEditorEnabled(false);
+            return;
+        }
+
+        _selectedConditionRuleId = rule.Id;
+        _conditionKeyTextBox.Text = rule.Key;
+        _conditionTargetSkuTextBox.Text = rule.TargetSku;
+
+        var details = _mappingRepository.GetConditionDetails(rule.Id);
+        _conditionDetailGrid.DataSource = new BindingList<MappingConditionDetail>(details);
+        SetConditionDetailEditorEnabled(true);
+    }
+
+    private void OnAddConditionRuleClick(object? sender, EventArgs e)
+    {
+        var selectedChannel = _channelComboBox.SelectedValue as string;
+        if (string.IsNullOrEmpty(selectedChannel))
+        {
+            MessageBox.Show("먼저 채널을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var newRuleId = _mappingRepository.AddConditionRuleWithDetails(selectedChannel, "새 조건부 규칙", string.Empty, new List<MappingConditionDetail>());
+        LoadConditionRules(selectedChannel);
+
+        foreach (DataGridViewRow row in _conditionRuleGrid.Rows)
+        {
+            if (row.DataBoundItem is MappingRule rule && rule.Id == newRuleId)
+            {
+                _conditionRuleGrid.CurrentCell = row.Cells[0];
+                break;
+            }
+        }
+    }
+
+    private void OnDeleteConditionRuleClick(object? sender, EventArgs e)
+    {
+        if (_selectedConditionRuleId < 0) return;
+
+        var confirm = MessageBox.Show(
+            "선택한 조건부 매핑 규칙과 그 상세조건을 모두 삭제합니다. 계속하시겠습니까?",
+            "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes) return;
+
+        _mappingRepository.DeleteConditionRule(_selectedConditionRuleId);
+
+        var selectedChannel = _channelComboBox.SelectedValue as string;
+        if (!string.IsNullOrEmpty(selectedChannel))
+        {
+            LoadConditionRules(selectedChannel);
+        }
+    }
+
+    private void OnSaveConditionSummaryClick(object? sender, EventArgs e)
+    {
+        if (_selectedConditionRuleId < 0) return;
+
+        _mappingRepository.UpdateConditionRuleSummary(_selectedConditionRuleId, _conditionKeyTextBox.Text, _conditionTargetSkuTextBox.Text);
+
+        var selectedChannel = _channelComboBox.SelectedValue as string;
+        if (!string.IsNullOrEmpty(selectedChannel))
+        {
+            LoadConditionRules(selectedChannel);
+        }
+        MessageBox.Show("규칙 정보가 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void OnAddConditionDetailClick(object? sender, EventArgs e)
+    {
+        if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details) return;
+
+        details.Add(new MappingConditionDetail
+        {
+            RuleId = _selectedConditionRuleId,
+            HeaderField = StdField.ProductName,
+            Operator = ConditionOperator.Contains,
+            TargetValue = string.Empty,
+            Logic = ConditionLogic.And,
+        });
+    }
+
+    private void OnDeleteConditionDetailClick(object? sender, EventArgs e)
+    {
+        if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details) return;
+        if (_conditionDetailGrid.CurrentRow?.DataBoundItem is not MappingConditionDetail detail) return;
+
+        details.Remove(detail);
+    }
+
+    private void OnSaveConditionDetailsClick(object? sender, EventArgs e)
+    {
+        if (_selectedConditionRuleId < 0) return;
+        if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details) return;
+
+        _mappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
+        MessageBox.Show("상세조건이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private TabPage CreateRuleTabPage(string title, MappingRuleType ruleType)
@@ -229,6 +491,7 @@ public class MappingForm : Form
             grid.DataSource = new BindingList<MappingRule>(rules);
         }
 
+        LoadConditionRules(selectedChannel);
         RefreshConflicts();
     }
 

@@ -199,6 +199,79 @@ public class MappingRepository
         return ruleId;
     }
 
+    /// <summary>
+    /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku)만 갱신합니다. 상세조건은 건드리지 않습니다.
+    /// </summary>
+    public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE RuleCondition SET Key = $key, TargetSku = $targetSku WHERE Id = $ruleId";
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$targetSku", targetSku);
+        command.Parameters.AddWithValue("$ruleId", ruleId);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 조건부 매핑 규칙 1건과 그에 속한 모든 상세조건을 삭제합니다.
+    /// </summary>
+    public void DeleteConditionRule(long ruleId)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var deleteDetailsCommand = connection.CreateCommand();
+        deleteDetailsCommand.Transaction = transaction;
+        deleteDetailsCommand.CommandText = "DELETE FROM RuleConditionDetail WHERE RuleId = $ruleId";
+        deleteDetailsCommand.Parameters.AddWithValue("$ruleId", ruleId);
+        deleteDetailsCommand.ExecuteNonQuery();
+
+        using var deleteRuleCommand = connection.CreateCommand();
+        deleteRuleCommand.Transaction = transaction;
+        deleteRuleCommand.CommandText = "DELETE FROM RuleCondition WHERE Id = $ruleId";
+        deleteRuleCommand.Parameters.AddWithValue("$ruleId", ruleId);
+        deleteRuleCommand.ExecuteNonQuery();
+
+        transaction.Commit();
+    }
+
+    /// <summary>
+    /// 지정된 규칙(RuleId)의 상세조건을 모두 지우고 새 목록으로 교체합니다.
+    /// </summary>
+    public void ReplaceConditionDetails(long ruleId, List<MappingConditionDetail> details)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var deleteCommand = connection.CreateCommand();
+        deleteCommand.Transaction = transaction;
+        deleteCommand.CommandText = "DELETE FROM RuleConditionDetail WHERE RuleId = $ruleId";
+        deleteCommand.Parameters.AddWithValue("$ruleId", ruleId);
+        deleteCommand.ExecuteNonQuery();
+
+        using var insertCommand = connection.CreateCommand();
+        insertCommand.Transaction = transaction;
+        insertCommand.CommandText = """
+            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic)
+            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic)
+            """;
+        foreach (var detail in details)
+        {
+            if (string.IsNullOrWhiteSpace(detail.TargetValue)) continue;
+
+            insertCommand.Parameters.Clear();
+            insertCommand.Parameters.AddWithValue("$ruleId", ruleId);
+            insertCommand.Parameters.AddWithValue("$headerField", detail.HeaderField.ToString());
+            insertCommand.Parameters.AddWithValue("$operator", detail.Operator.ToString());
+            insertCommand.Parameters.AddWithValue("$targetValue", detail.TargetValue);
+            insertCommand.Parameters.AddWithValue("$logic", detail.Logic.ToString());
+            insertCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
     private static string GetTableName(MappingRuleType ruleType) => ruleType switch
     {
         MappingRuleType.Exception => "RuleException",
