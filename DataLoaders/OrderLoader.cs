@@ -31,7 +31,9 @@ public class OrderLoader
         await Task.Run(() =>
         {
             ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(filePath));
+            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(filePath)
+                : new ExcelPackage(new FileInfo(filePath));
 
             // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.
             // 여기서는 첫 번째 유효한 매핑 설정을 기준으로 합니다.

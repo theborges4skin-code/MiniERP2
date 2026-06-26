@@ -33,7 +33,9 @@ public class SettlementLoader
         await Task.Run(() =>
         {
             ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(filePath));
+            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(filePath)
+                : new ExcelPackage(new FileInfo(filePath));
 
             var firstValidMapping = channelConfig.SettlementFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)
