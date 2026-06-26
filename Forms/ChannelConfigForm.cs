@@ -124,7 +124,7 @@ public class ChannelConfigForm : Form
         var renameGroupItem = new ToolStripMenuItem("그룹 이름 변경", null, OnRenameGroupClick);
         var deleteGroupItem = new ToolStripMenuItem("그룹 삭제", null, OnDeleteGroupClick);
 
-        contextMenu.Items.AddRange(new ToolStripItem[] { favoriteItem, new ToolStripSeparator(), renameGroupItem, deleteGroup-Item });
+        contextMenu.Items.AddRange(new ToolStripItem[] { favoriteItem, new ToolStripSeparator(), renameGroupItem, deleteGroupItem });
 
         contextMenu.Opening += (s, e) =>
         {

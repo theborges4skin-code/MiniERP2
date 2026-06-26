@@ -9,4 +9,7 @@ public enum StdField
     SettlementAmount,
     ShippingFee,
     HandlingFee,
+    Recipient,
+    Phone,
+    Address,
 }

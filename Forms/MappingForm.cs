@@ -115,7 +115,7 @@ public class MappingForm : Form
         _channelComboBox.ValueMember = "ChannelCode";
     }
 
-    private void LoadRulesForSelectedChannel()
+    private async void LoadRulesForSelectedChannel()
     {
         // Use SelectedValue which corresponds to ValueMember ("ChannelCode")
         var selectedChannel = _channelComboBox.SelectedValue as string;

@@ -15,6 +15,7 @@ public class ExcelLikeDataGridView : DataGridView
     /// </summary>
     [Category("Behavior")]
     [Description("레이아웃 설정을 저장하고 로드하는 데 사용할 고유 키입니다.")]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string PersistenceKey
     {
         get => _persistenceKey;
