@@ -200,6 +200,15 @@ public class MappingForm : Form
         _channelComboBox.ValueMember = "ChannelCode";
     }
 
+    /// <summary>
+    /// 지정된 채널 코드를 콤보박스에서 선택합니다. OFS에서 미매핑건이 발견되었을 때
+    /// 해당 채널의 매핑 규칙을 바로 보여주기 위해 사용합니다.
+    /// </summary>
+    public void SelectChannelByCode(string channelCode)
+    {
+        _channelComboBox.SelectedValue = channelCode;
+    }
+
     private async void LoadRulesForSelectedChannel()
     {
         // Use SelectedValue which corresponds to ValueMember ("ChannelCode")

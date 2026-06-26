@@ -13,6 +13,12 @@ namespace MiniERP2.DataLoaders;
 public class SettlementLoader
 {
     /// <summary>
+    /// 직전 LoadFromFileAsync 호출에서, 설정된 헤더 행에서 매핑된 표준 필드를 하나도 찾지 못했는지 여부입니다.
+    /// 헤더 행이 비어있거나 셀이 병합되어 있을 때(설정 오류) 주로 발생하며, 호출 측에서 경고를 띄우는 데 사용합니다.
+    /// </summary>
+    public bool LastLoadHeaderRowLooksEmpty { get; private set; }
+
+    /// <summary>
     /// 지정된 엑셀 파일 경로에서 정산 데이터를 비동기적으로 로드하고 이익을 계산합니다.
     /// </summary>
     /// <param name="skuMapper">SKU 매핑을 수행할 SkuMapper 인스턴스</param>
@@ -21,6 +27,7 @@ public class SettlementLoader
     /// <param name="filePath">엑셀 파일 경로</param>
     public async Task<List<SettlementData>> LoadFromFileAsync(SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, string filePath)
     {
+        LastLoadHeaderRowLooksEmpty = false;
         var rows = new List<SettlementData>();
 
         await Task.Run(() =>
@@ -69,6 +76,10 @@ public class SettlementLoader
                     stdFieldToIndexMap[stdField] = index;
                 }
             }
+
+            // 설정된 매핑이 하나도 헤더 행과 맞지 않으면(헤더 행이 비어있거나 셀이 병합된 경우 등)
+            // 이후 모든 값이 공란으로 나오게 되므로, 호출 측이 경고할 수 있도록 표시해둔다.
+            LastLoadHeaderRowLooksEmpty = stdFieldToIndexMap.Count == 0 && fixedValues.Count == 0;
 
             // 기획서 5.4절: 보조소스(GrowthAuxSource) JOIN 준비.
             // 보조 시트별로 (대상 표준필드 -> 키값맵)을 만들고, 메인 시트에서 같은 이름의 키 컬럼을 찾아둔다.

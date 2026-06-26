@@ -115,8 +115,29 @@ public class ChannelConfigForm : Form
             ToolbarVisible = true,
             PropertySort = PropertySort.Categorized,
         };
+        _propertyGrid.PropertyValueChanged += OnConfigPropertyValueChanged;
         tabPage.Controls.Add(_propertyGrid);
         return tabPage;
+    }
+
+    /// <summary>
+    /// PropertyGrid에서 채널 이름을 수정하면, 좌측 트리가 보여주는 SalesChannel.ChannelName도
+    /// 함께 갱신하고 DB에 반영한다(둘은 서로 다른 저장소라 자동으로 동기화되지 않음).
+    /// </summary>
+    private void OnConfigPropertyValueChanged(object? sender, PropertyValueChangedEventArgs e)
+    {
+        if (_currentConfig == null) return;
+        if (e.ChangedItem.PropertyDescriptor?.Name != nameof(ChannelConfig.ChannelName)) return;
+
+        var channel = _channels.FirstOrDefault(c => c.ChannelCode == _currentConfig.ChannelCode);
+        if (channel == null) return;
+
+        channel.ChannelName = _currentConfig.ChannelName;
+        _salesChannelRepository.Upsert(channel);
+
+        var selectedCode = _currentConfig.ChannelCode;
+        PopulateTreeView();
+        SelectChannelByCode(selectedCode);
     }
 
     private TabPage CreateFieldMappingTab(string title, DataGridView grid)

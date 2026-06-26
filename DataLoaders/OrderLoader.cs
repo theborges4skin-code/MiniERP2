@@ -11,6 +11,12 @@ namespace MiniERP2.DataLoaders;
 public class OrderLoader
 {
     /// <summary>
+    /// 직전 LoadFromFileAsync 호출에서, 설정된 헤더 행에서 매핑된 표준 필드를 하나도 찾지 못했는지 여부입니다.
+    /// 헤더 행이 비어있거나 셀이 병합되어 있을 때(설정 오류) 주로 발생하며, 호출 측에서 경고를 띄우는 데 사용합니다.
+    /// </summary>
+    public bool LastLoadHeaderRowLooksEmpty { get; private set; }
+
+    /// <summary>
     /// 지정된 엑셀 파일 경로에서 주문 데이터를 비동기적으로 로드합니다.
     /// </summary>
     /// <param name="skuMapper">SKU 매핑을 수행할 SkuMapper 인스턴스</param>
@@ -19,6 +25,7 @@ public class OrderLoader
     /// <returns>로드된 주문 항목의 리스트</returns>
     public async Task<List<OfsOrderItem>> LoadFromFileAsync(SkuMapper skuMapper, ChannelConfig channelConfig, string filePath)
     {
+        LastLoadHeaderRowLooksEmpty = false;
         var items = new List<OfsOrderItem>();
 
         await Task.Run(() =>
@@ -72,6 +79,10 @@ public class OrderLoader
                     stdFieldToIndexMap[stdField] = index;
                 }
             }
+
+            // 설정된 매핑이 하나도 헤더 행과 맞지 않으면(헤더 행이 비어있거나 셀이 병합된 경우 등)
+            // 이후 모든 값이 공란으로 나오게 되므로, 호출 측이 경고할 수 있도록 표시해둔다.
+            LastLoadHeaderRowLooksEmpty = stdFieldToIndexMap.Count == 0 && fixedValues.Count == 0;
 
             // 데이터 행을 순회하며 OfsOrderItem 객체를 생성합니다.
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)

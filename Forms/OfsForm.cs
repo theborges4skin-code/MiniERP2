@@ -163,13 +163,36 @@ public class OfsForm : Form
                 else if (result == DialogResult.Cancel) return;
             }
 
+            var allLoadedItems = new List<OfsOrderItem>();
             foreach (var file in ofd.FileNames)
             {
                 var loadedItems = await _orderLoader.LoadFromFileAsync(skuMapper, channelConfig, file);
-                foreach (var item in loadedItems) _orders.Add(item);
+
+                if (_orderLoader.LastLoadHeaderRowLooksEmpty)
+                {
+                    MessageBox.Show(
+                        $"'{Path.GetFileName(file)}' 파일에서 채널설정에 지정된 헤더 행(헤더 행: {channelConfig.OrderFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column))?.HeaderRow})의 헤더를 하나도 찾지 못했습니다.\n" +
+                        "헤더 행이 비어있거나 셀이 병합되어 있을 수 있습니다. 채널설정에서 헤더 행 번호를 확인해주세요.\n\n확인을 누르면 일단 파일은 그대로 불러옵니다.",
+                        "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                allLoadedItems.AddRange(loadedItems);
             }
 
+            foreach (var item in allLoadedItems) _orders.Add(item);
+
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
+
+            var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
+            if (unmappedCount > 0)
+            {
+                MessageBox.Show($"미매핑건 {unmappedCount}건 있음. 매핑창이 열립니다.", "미매핑 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
+                if (!mappingForm.Visible) mappingForm.Show();
+                mappingForm.BringToFront();
+                mappingForm.SelectChannelByCode(channelConfig.ChannelCode);
+            }
         }
         catch (Exception ex)
         {
