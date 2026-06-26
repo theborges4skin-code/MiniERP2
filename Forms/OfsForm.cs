@@ -136,7 +136,7 @@ public class OfsForm : Form
         var channelConfig = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == channelDialog.SelectedChannel.ChannelCode);
         if (channelConfig == null)
         {
-            MessageBox.Show($"선택한 채널 '{channelDialog.SelectedChannel.ChannelName}'의 설정을 찾을 수 없습니다.", "설정 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            GuideToChannelConfig(channelDialog.SelectedChannel);
             return;
         }
 
@@ -181,6 +181,21 @@ public class OfsForm : Form
             // UI 상태 복원
             Cursor = Cursors.Default;
         }
+    }
+
+    /// <summary>
+    /// 선택한 채널에 ChannelConfig가 없을 때 안내 후 채널 설정 창을 열어 해당 채널을 바로 보여줍니다.
+    /// </summary>
+    private void GuideToChannelConfig(SalesChannel channel)
+    {
+        MessageBox.Show(
+            $"'{channel.ChannelName}' 채널의 설정이 없습니다.\n채널 설정 창에서 발주서를 읽는 방법을 먼저 설정해주세요.",
+            "채널 설정 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+        var configForm = Application.OpenForms.OfType<ChannelConfigForm>().FirstOrDefault() ?? new ChannelConfigForm();
+        if (!configForm.Visible) configForm.Show();
+        configForm.BringToFront();
+        configForm.SelectChannelByCode(channel.ChannelCode);
     }
 
     private async void OnExportClick(object? sender, EventArgs e)

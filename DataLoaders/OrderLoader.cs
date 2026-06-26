@@ -28,7 +28,7 @@ public class OrderLoader
 
             // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.
             // 여기서는 첫 번째 유효한 매핑 설정을 기준으로 합니다.
-            var firstValidMapping = channelConfig.FieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
+            var firstValidMapping = channelConfig.OrderFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)
             {
                 throw new InvalidOperationException($"채널 '{channelConfig.ChannelName}'에 유효한 필드 매핑 설정이 없습니다.");
@@ -59,7 +59,7 @@ public class OrderLoader
 
             // 표준 필드를 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
             var stdFieldToIndexMap = new Dictionary<StdField, int>();
-            foreach (var (stdField, mapping) in channelConfig.FieldMappings)
+            foreach (var (stdField, mapping) in channelConfig.OrderFieldMappings)
             {
                 if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
                 {

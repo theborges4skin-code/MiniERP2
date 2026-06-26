@@ -2,6 +2,8 @@ using System.ComponentModel;
 using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -15,9 +17,24 @@ public class ChannelConfigForm : Form
 
     private List<SalesChannel> _channels = new();
     private List<ChannelConfig> _channelConfigs = new();
+    private ChannelConfig? _currentConfig;
 
     private PropertyGrid _propertyGrid = new();
     private TreeView _channelTreeView = new();
+    private DataGridView _orderMappingGrid = new();
+    private DataGridView _settlementMappingGrid = new();
+
+    private static readonly StdField[] OrderMappingFields =
+    [
+        StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
+        StdField.Recipient, StdField.Phone, StdField.Address,
+    ];
+
+    private static readonly StdField[] SettlementMappingFields =
+    [
+        StdField.ProductName, StdField.OptionName, StdField.Quantity,
+        StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
+    ];
 
     public ChannelConfigForm()
     {
@@ -36,8 +53,9 @@ public class ChannelConfigForm : Form
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         // Left Panel (Channel List)
-        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         _channelTreeView = new TreeView
@@ -62,21 +80,147 @@ public class ChannelConfigForm : Form
         buttonPanel.Controls.Add(btnDelete);
         buttonPanel.Controls.Add(btnSave);
 
+        var courierPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
+        var btnCourier = new Button { Text = "택배사 양식 관리", Width = 150 };
+        btnCourier.Click += (s, e) => FormManager.Show<CourierConfigForm>();
+        courierPanel.Controls.Add(btnCourier);
+
         leftPanel.Controls.Add(_channelTreeView, 0, 0);
         leftPanel.Controls.Add(buttonPanel, 0, 1);
+        leftPanel.Controls.Add(courierPanel, 0, 2);
 
-        // Right Panel (Property Grid)
+        // Right Panel (Tabs: 기본 정보 / 발주서 매핑 / 정산서 매핑)
+        var rightTabControl = new TabControl { Dock = DockStyle.Fill };
+        rightTabControl.TabPages.Add(CreateBasicInfoTab());
+        rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
+        rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
+
+        mainLayout.Controls.Add(leftPanel, 0, 0);
+        mainLayout.Controls.Add(rightTabControl, 1, 0);
+        Controls.Add(mainLayout);
+    }
+
+    private TabPage CreateBasicInfoTab()
+    {
+        var tabPage = new TabPage("기본 정보");
         _propertyGrid = new PropertyGrid
         {
             Dock = DockStyle.Fill,
             HelpVisible = true,
             ToolbarVisible = true,
-            PropertySort = PropertySort.Categorized
+            PropertySort = PropertySort.Categorized,
         };
+        tabPage.Controls.Add(_propertyGrid);
+        return tabPage;
+    }
 
-        mainLayout.Controls.Add(leftPanel, 0, 0);
-        mainLayout.Controls.Add(_propertyGrid, 1, 0);
-        Controls.Add(mainLayout);
+    private TabPage CreateFieldMappingTab(string title, DataGridView grid)
+    {
+        var tabPage = new TabPage(title);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnHelp = new Button { Text = "도움말", Size = new Size(80, 25) };
+        btnHelp.Click += (s, e) => { using var dialog = new FieldMappingHelpDialog(); dialog.ShowDialog(this); };
+        toolbar.Controls.Add(btnHelp);
+
+        grid.Dock = DockStyle.Fill;
+        grid.AutoGenerateColumns = false;
+        grid.AllowUserToAddRows = false;
+        grid.AllowUserToDeleteRows = false;
+        grid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 150, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 150 },
+            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 80 },
+            new DataGridViewTextBoxColumn { Name = "Column", HeaderText = "열(헤더 텍스트)", DataPropertyName = "Column", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+        grid.CellValueChanged += (s, e) => OnFieldMappingGridCellChanged(grid, e);
+
+        layout.Controls.Add(toolbar, 0, 0);
+        layout.Controls.Add(grid, 0, 1);
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private void OnFieldMappingGridCellChanged(DataGridView grid, DataGridViewCellEventArgs e)
+    {
+        if (_currentConfig == null || e.RowIndex < 0 || e.RowIndex >= grid.Rows.Count) return;
+        if (grid.Rows[e.RowIndex].DataBoundItem is not FieldMappingRow row) return;
+
+        var dict = grid == _orderMappingGrid ? _currentConfig.OrderFieldMappings : _currentConfig.SettlementFieldMappings;
+
+        if (string.IsNullOrWhiteSpace(row.Column))
+        {
+            dict.Remove(row.StdField);
+        }
+        else
+        {
+            dict[row.StdField] = new FieldMapping
+            {
+                SheetName = row.SheetName,
+                HeaderRow = row.HeaderRow <= 0 ? 1 : row.HeaderRow,
+                Column = row.Column,
+            };
+        }
+    }
+
+    private void LoadFieldMappingGrids(ChannelConfig config)
+    {
+        _currentConfig = config;
+        _orderMappingGrid.DataSource = BuildFieldMappingRows(OrderMappingFields, config.OrderFieldMappings);
+        _settlementMappingGrid.DataSource = BuildFieldMappingRows(SettlementMappingFields, config.SettlementFieldMappings);
+    }
+
+    private void ClearFieldMappingGrids()
+    {
+        _currentConfig = null;
+        _orderMappingGrid.DataSource = null;
+        _settlementMappingGrid.DataSource = null;
+    }
+
+    private static BindingList<FieldMappingRow> BuildFieldMappingRows(StdField[] fields, Dictionary<StdField, FieldMapping> dict)
+    {
+        var rows = new List<FieldMappingRow>();
+        foreach (var field in fields)
+        {
+            dict.TryGetValue(field, out var mapping);
+            rows.Add(new FieldMappingRow
+            {
+                StdField = field,
+                Label = GetStdFieldLabel(field),
+                SheetName = mapping?.SheetName,
+                HeaderRow = mapping?.HeaderRow ?? 1,
+                Column = mapping?.Column,
+            });
+        }
+        return new BindingList<FieldMappingRow>(rows);
+    }
+
+    private static string GetStdFieldLabel(StdField field) => field switch
+    {
+        StdField.ProductName => "상품명",
+        StdField.OptionName => "옵션명",
+        StdField.ProductNo => "주문번호",
+        StdField.Quantity => "수량",
+        StdField.SettlementAmount => "정산액",
+        StdField.ShippingFee => "배송비",
+        StdField.HandlingFee => "입출고비",
+        StdField.Recipient => "수취인",
+        StdField.Phone => "연락처",
+        StdField.Address => "주소",
+        _ => field.ToString(),
+    };
+
+    private class FieldMappingRow
+    {
+        public StdField StdField { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public string? SheetName { get; set; }
+        public int HeaderRow { get; set; } = 1;
+        public string? Column { get; set; }
     }
 
     private void LoadData()
@@ -145,6 +289,7 @@ public class ChannelConfigForm : Form
         if (_channelTreeView.SelectedNode?.Tag is not SalesChannel selectedChannel)
         {
             _propertyGrid.SelectedObject = null;
+            ClearFieldMappingGrids();
             return;
         }
 
@@ -156,6 +301,35 @@ public class ChannelConfigForm : Form
         }
 
         _propertyGrid.SelectedObject = config;
+        LoadFieldMappingGrids(config);
+    }
+
+    /// <summary>
+    /// 트리에서 지정된 채널 코드를 찾아 선택합니다. 다른 화면(OFS, 마감/이익분석)에서
+    /// 채널 설정이 없어 이 창으로 안내될 때 해당 채널을 바로 보여주기 위해 사용합니다.
+    /// </summary>
+    public void SelectChannelByCode(string channelCode)
+    {
+        var node = FindChannelNode(channelCode);
+        if (node == null) return;
+
+        _channelTreeView.SelectedNode = node;
+        node.EnsureVisible();
+    }
+
+    private TreeNode? FindChannelNode(string channelCode)
+    {
+        foreach (TreeNode topNode in _channelTreeView.Nodes)
+        {
+            foreach (TreeNode childNode in topNode.Nodes)
+            {
+                if (childNode.Tag is SalesChannel sc && sc.ChannelCode == channelCode)
+                {
+                    return childNode;
+                }
+            }
+        }
+        return null;
     }
 
     private void OnAddClick(object? sender, EventArgs e)
@@ -163,20 +337,12 @@ public class ChannelConfigForm : Form
         using var dialog = new AddChannelDialog();
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-        var newChannelCode = dialog.ChannelCode;
-        var newChannelName = dialog.ChannelName;
-
-        if (_channels.Any(c => c.ChannelCode.Equals(newChannelCode, StringComparison.OrdinalIgnoreCase)))
-        {
-            MessageBox.Show("이미 존재하는 채널 코드입니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
-        }
-
-        var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = newChannelName };
+        var newChannelCode = ChannelCodeGenerator.GenerateNext(_channels.Select(c => c.ChannelCode));
+        var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = dialog.ChannelName };
         _salesChannelRepository.Upsert(newChannel);
 
-        LoadData(); // UI와 데이터를 다시 로드
-        // TODO: 새로 추가된 노드를 찾아 선택하는 로직 추가
+        LoadData();
+        SelectChannelByCode(newChannelCode);
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)

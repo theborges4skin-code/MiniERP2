@@ -67,7 +67,7 @@ public class SettlementLoaderGrowthAuxJoinTests
             ChannelCode = "COUPANGGROWTH",
             ChannelName = "쿠팡그로스",
             ChannelType = ChannelType.CoupangGrowth,
-            FieldMappings = new Dictionary<StdField, FieldMapping>
+            SettlementFieldMappings = new Dictionary<StdField, FieldMapping>
             {
                 [StdField.ProductName] = new FieldMapping { SheetName = "메인", HeaderRow = 1, Column = "상품명" },
                 [StdField.Quantity] = new FieldMapping { SheetName = "메인", HeaderRow = 1, Column = "수량" },

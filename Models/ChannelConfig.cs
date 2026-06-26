@@ -25,10 +25,12 @@ public class ChannelConfig
     [Description("아마존 등 외화 정산 채널의 이익분석에 사용할 환율입니다. 원화 채널은 1로 둡니다.")]
     public decimal ExchangeRate { get; set; } = 1m;
 
-    [Category("필드 매핑")]
-    [DisplayName("표준 필드 매핑")]
-    [Description("발주/정산 파일의 각 열을 표준 필드에 연결하는 설정입니다.")]
-    public Dictionary<StdField, FieldMapping> FieldMappings { get; set; } = new();
+    // 채널설정 창의 "발주서 매핑"/"정산서 매핑" 전용 탭에서 편집한다(PropertyGrid는 Dictionary를 지원하지 않음).
+    [Browsable(false)]
+    public Dictionary<StdField, FieldMapping> OrderFieldMappings { get; set; } = new();
+
+    [Browsable(false)]
+    public Dictionary<StdField, FieldMapping> SettlementFieldMappings { get; set; } = new();
 
     [Category("필드 매핑")]
     [DisplayName("보조 소스 설정 (쿠팡 그로스 등)")]

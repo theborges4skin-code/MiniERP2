@@ -39,6 +39,15 @@ public class CourierRepository
         command.ExecuteNonQuery();
     }
 
+    public void Delete(string courierName)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM CourierMasterTable WHERE CourierName = $courierName";
+        command.Parameters.AddWithValue("$courierName", courierName);
+        command.ExecuteNonQuery();
+    }
+
     private static CourierMaster ReadCourier(SqliteDataReader reader) => new()
     {
         CourierName = reader.GetString(0),

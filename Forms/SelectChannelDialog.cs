@@ -1,5 +1,6 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -25,15 +26,21 @@ public class SelectChannelDialog : Form
         MinimizeBox = false;
         MaximizeBox = false;
         ShowInTaskbar = false;
-        Size = new Size(350, 150);
+        Size = new Size(350, 190);
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), RowCount = 2 };
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), RowCount = 3 };
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         _channelComboBox.Dock = DockStyle.Fill;
         _channelComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _channelComboBox.DisplayMember = "ChannelName";
+
+        var newChannelPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
+        var btnNewChannel = new Button { Text = "신규 채널 바로 추가...", AutoSize = true };
+        btnNewChannel.Click += OnNewChannelClick;
+        newChannelPanel.Controls.Add(btnNewChannel);
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnOk = new Button { Text = "확인", Width = 80 };
@@ -46,7 +53,8 @@ public class SelectChannelDialog : Form
         buttonPanel.Controls.Add(btnOk);
 
         mainLayout.Controls.Add(_channelComboBox, 0, 0);
-        mainLayout.Controls.Add(buttonPanel, 0, 1);
+        mainLayout.Controls.Add(newChannelPanel, 0, 1);
+        mainLayout.Controls.Add(buttonPanel, 0, 2);
         Controls.Add(mainLayout);
 
         AcceptButton = btnOk;
@@ -63,6 +71,17 @@ public class SelectChannelDialog : Form
     {
         SelectedChannel = _channelComboBox.SelectedItem as SalesChannel;
         DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    private void OnNewChannelClick(object? sender, EventArgs e)
+    {
+        var configForm = Application.OpenForms.OfType<ChannelConfigForm>().FirstOrDefault() ?? new ChannelConfigForm();
+        if (!configForm.Visible) configForm.Show();
+        configForm.BringToFront();
+
+        // 채널 설정 창에서 채널을 추가/설정하고 돌아오면 다시 시도할 수 있도록 이 다이얼로그는 닫는다.
+        DialogResult = DialogResult.Cancel;
         Close();
     }
 }

@@ -28,7 +28,7 @@ public class SettlementLoader
             ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(filePath));
 
-            var firstValidMapping = channelConfig.FieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
+            var firstValidMapping = channelConfig.SettlementFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)
             {
                 throw new InvalidOperationException($"채널 '{channelConfig.ChannelName}'에 유효한 필드 매핑 설정이 없습니다.");
@@ -57,7 +57,7 @@ public class SettlementLoader
             }
 
             var stdFieldToIndexMap = new Dictionary<StdField, int>();
-            foreach (var (stdField, mapping) in channelConfig.FieldMappings)
+            foreach (var (stdField, mapping) in channelConfig.SettlementFieldMappings)
             {
                 if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
                 {
