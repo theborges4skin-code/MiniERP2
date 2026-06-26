@@ -150,7 +150,7 @@ public class ChannelConfigForm : Form
         var splitContainer = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 620 };
         grid.Dock = DockStyle.Fill;
         splitContainer.Panel1.Controls.Add(grid);
-        splitContainer.Panel2.Controls.Add(CreateSamplePreviewPanel(btnLoadSample));
+        splitContainer.Panel2.Controls.Add(CreateSamplePreviewPanel(grid, btnLoadSample));
 
         layout.Controls.Add(toolbar, 0, 0);
         layout.Controls.Add(splitContainer, 0, 1);
@@ -160,9 +160,9 @@ public class ChannelConfigForm : Form
 
     /// <summary>
     /// 샘플 엑셀 파일을 불러와 시트/헤더 행을 선택하면 그 행의 헤더 텍스트 목록을 보여주는 미리보기 패널입니다.
-    /// 사용자는 이 목록을 보고 그대로 "열" 칸에 입력하면 됩니다.
+    /// 목록 항목을 더블클릭하면 그리드에서 현재 선택된 행의 "열" 칸에 바로 입력됩니다.
     /// </summary>
-    private Control CreateSamplePreviewPanel(Button btnLoadSample)
+    private Control CreateSamplePreviewPanel(DataGridView grid, Button btnLoadSample)
     {
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, Padding = new Padding(8) };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
@@ -170,7 +170,7 @@ public class ChannelConfigForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var titleLabel = new Label { Text = "엑셀 헤더 미리보기", AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
+        var titleLabel = new Label { Text = "엑셀 헤더 미리보기 (더블클릭하면 선택한 행의 '열'에 적용)", AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
 
         var sheetPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         sheetPanel.Controls.Add(new Label { Text = "시트:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
@@ -235,6 +235,18 @@ public class ChannelConfigForm : Form
         };
 
         Disposed += (s, e) => samplePackage?.Dispose();
+
+        // 미리보기 항목을 더블클릭하면 그리드에서 현재 선택된 행의 "열" 칸에 바로 채워준다.
+        previewList.DoubleClick += (s, e) =>
+        {
+            if (previewList.SelectedItem is not string header) return;
+
+            var rowIndex = grid.CurrentCell?.RowIndex ?? -1;
+            if (rowIndex < 0 || rowIndex >= grid.Rows.Count) return;
+
+            if (grid.IsCurrentCellInEditMode) grid.EndEdit();
+            grid.Rows[rowIndex].Cells["Column"].Value = header;
+        };
 
         return layout;
     }
