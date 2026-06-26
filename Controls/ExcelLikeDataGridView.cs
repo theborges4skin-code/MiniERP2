@@ -46,6 +46,16 @@ public class ExcelLikeDataGridView : DataGridView
         ContextMenuStrip = contextMenu;
     }
 
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.V))
+        {
+            OnPasteClick(this, EventArgs.Empty);
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
     /// <summary>
     /// 현재 열 레이아웃을 파일에 저장합니다.
     /// Form의 FormClosing 이벤트에서 호출하는 것을 권장합니다.
@@ -97,13 +107,61 @@ public class ExcelLikeDataGridView : DataGridView
         }
     }
 
+    /// <summary>
+    /// 클립보드의 탭/개행 구분 텍스트(엑셀 복사 형식)를 현재 셀을 기준으로 붙여넣습니다.
+    /// 기존 행의 범위 안에서만 채워지며(새 행은 추가하지 않음), 읽기전용 셀은 건너뜁니다.
+    /// </summary>
     private void OnPasteClick(object? sender, EventArgs e)
     {
-        // 붙여넣기 로직은 복잡하며, 데이터 소스의 상태에 따라 달라집니다.
-        // 여기서는 기본 아이디어만 제시하며, 실제 구현 시에는
-        // 데이터 바인딩 여부, 트랜잭션 등을 고려해야 합니다.
-        // TODO: 붙여넣기 로직 구현
-        MessageBox.Show("붙여넣기 기능은 아직 구현되지 않았습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (CurrentCell == null || !Clipboard.ContainsText()) return;
+
+        var text = Clipboard.GetText();
+        if (string.IsNullOrEmpty(text)) return;
+
+        var lines = text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+        var startRow = CurrentCell.RowIndex;
+        var startCol = CurrentCell.ColumnIndex;
+        var lastDataRowIndex = Rows.Count - (AllowUserToAddRows ? 2 : 1);
+
+        for (int rowOffset = 0; rowOffset < lines.Length; rowOffset++)
+        {
+            var targetRowIndex = startRow + rowOffset;
+            if (targetRowIndex > lastDataRowIndex) break; // 새 행은 만들지 않고, 기존 행 범위 안에서만 채운다
+
+            var values = lines[rowOffset].Split('\t');
+            for (int colOffset = 0; colOffset < values.Length; colOffset++)
+            {
+                var targetColIndex = startCol + colOffset;
+                if (targetColIndex >= Columns.Count) break;
+
+                var cell = Rows[targetRowIndex].Cells[targetColIndex];
+                if (cell.ReadOnly || !cell.OwningColumn.Visible) continue;
+
+                SetCellValue(cell, values[colOffset]);
+            }
+        }
+    }
+
+    private static void SetCellValue(DataGridViewCell cell, string text)
+    {
+        try
+        {
+            var targetType = cell.ValueType ?? typeof(string);
+            var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (string.IsNullOrEmpty(text) && underlyingType != typeof(string))
+            {
+                cell.Value = null;
+            }
+            else
+            {
+                cell.Value = Convert.ChangeType(text, underlyingType);
+            }
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+        {
+            // 형식이 맞지 않는 값은 무시하고 해당 셀은 건너뛴다.
+        }
     }
 
     protected override void Dispose(bool disposing)
