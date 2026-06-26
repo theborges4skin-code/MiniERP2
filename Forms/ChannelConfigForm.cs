@@ -241,9 +241,11 @@ public class ChannelConfigForm : Form
 
             try
             {
-                ExcelLicense.Ensure();
+                var opened = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+                if (opened == null) return;
+
                 samplePackage?.Dispose();
-                samplePackage = new ExcelPackage(new FileInfo(ofd.FileName));
+                samplePackage = opened;
 
                 sheetCombo.Items.Clear();
                 sheetCombo.Items.AddRange(samplePackage.Workbook.Worksheets.Select(w => w.Name).Cast<object>().ToArray());

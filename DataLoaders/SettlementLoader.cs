@@ -25,17 +25,15 @@ public class SettlementLoader
     /// <param name="itemRepository">제조원가 조회를 위한 Repository</param>
     /// <param name="channelConfig">데이터를 해석할 채널 설정</param>
     /// <param name="filePath">엑셀 파일 경로</param>
-    public async Task<List<SettlementData>> LoadFromFileAsync(SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, string filePath)
+    /// <param name="password">암호로 보호된 파일일 경우의 비밀번호. 모르면 생략하고, 실패 시 EncryptedExcelFileException을 받아 재시도하세요.</param>
+    public async Task<List<SettlementData>> LoadFromFileAsync(SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, string filePath, string? password = null)
     {
         LastLoadHeaderRowLooksEmpty = false;
         var rows = new List<SettlementData>();
 
         await Task.Run(() =>
         {
-            ExcelLicense.Ensure();
-            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
-                ? CsvWorkbookReader.LoadAsPackage(filePath)
-                : new ExcelPackage(new FileInfo(filePath));
+            using var package = ExcelFileOpener.Open(filePath, password);
 
             var firstValidMapping = channelConfig.SettlementFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)

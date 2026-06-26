@@ -170,7 +170,8 @@ public class OfsForm : Form
             var allLoadedItems = new List<OfsOrderItem>();
             foreach (var file in ofd.FileNames)
             {
-                var loadedItems = await _orderLoader.LoadFromFileAsync(skuMapper, channelConfig, file);
+                var loadedItems = await LoadOrderFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
+                if (loadedItems == null) continue; // 사용자가 비밀번호 입력을 취소함
 
                 if (_orderLoader.LastLoadHeaderRowLooksEmpty)
                 {
@@ -207,6 +208,24 @@ public class OfsForm : Form
         {
             // UI 상태 복원
             Cursor = Cursors.Default;
+        }
+    }
+
+    /// <summary>
+    /// 파일이 암호로 보호되어 있으면 비밀번호를 물어보고 재시도합니다. 사용자가 취소하면 null을 반환합니다.
+    /// </summary>
+    private async Task<List<OfsOrderItem>?> LoadOrderFileWithPasswordRetryAsync(SkuMapper skuMapper, ChannelConfig channelConfig, string file)
+    {
+        try
+        {
+            return await _orderLoader.LoadFromFileAsync(skuMapper, channelConfig, file);
+        }
+        catch (EncryptedExcelFileException)
+        {
+            using var dialog = new PasswordPromptDialog(Path.GetFileName(file));
+            if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+
+            return await _orderLoader.LoadFromFileAsync(skuMapper, channelConfig, file, dialog.Password);
         }
     }
 

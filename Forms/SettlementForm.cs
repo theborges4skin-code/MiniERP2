@@ -154,7 +154,8 @@ public class SettlementForm : Form
 
             foreach (var file in ofd.FileNames)
             {
-                var loadedRows = await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file);
+                var loadedRows = await LoadSettlementFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
+                if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
             }
 
@@ -168,6 +169,24 @@ public class SettlementForm : Form
         finally
         {
             Cursor = Cursors.Default;
+        }
+    }
+
+    /// <summary>
+    /// 파일이 암호로 보호되어 있으면 비밀번호를 물어보고 재시도합니다. 사용자가 취소하면 null을 반환합니다.
+    /// </summary>
+    private async Task<List<SettlementData>?> LoadSettlementFileWithPasswordRetryAsync(SkuMapper skuMapper, ChannelConfig channelConfig, string file)
+    {
+        try
+        {
+            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file);
+        }
+        catch (EncryptedExcelFileException)
+        {
+            using var dialog = new PasswordPromptDialog(Path.GetFileName(file));
+            if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+
+            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file, dialog.Password);
         }
     }
 
@@ -451,8 +470,9 @@ public class SettlementForm : Form
         {
             _settingsService.SetLastFolder("StatementLoad", Path.GetDirectoryName(ofd.FileName)!);
 
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(ofd.FileName));
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
             if (worksheet?.Dimension == null)
             {

@@ -191,8 +191,9 @@ public class CSkuForm : Form
 
         try
         {
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(filePath));
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
+            if (package == null) return;
+
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
 
             if (worksheet == null)

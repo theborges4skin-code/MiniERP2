@@ -22,18 +22,16 @@ public class OrderLoader
     /// <param name="skuMapper">SKU 매핑을 수행할 SkuMapper 인스턴스</param>
     /// <param name="channelConfig">데이터를 해석할 채널 설정</param>
     /// <param name="filePath">엑셀 파일 경로</param>
+    /// <param name="password">암호로 보호된 파일일 경우의 비밀번호. 모르면 생략하고, 실패 시 EncryptedExcelFileException을 받아 재시도하세요.</param>
     /// <returns>로드된 주문 항목의 리스트</returns>
-    public async Task<List<OfsOrderItem>> LoadFromFileAsync(SkuMapper skuMapper, ChannelConfig channelConfig, string filePath)
+    public async Task<List<OfsOrderItem>> LoadFromFileAsync(SkuMapper skuMapper, ChannelConfig channelConfig, string filePath, string? password = null)
     {
         LastLoadHeaderRowLooksEmpty = false;
         var items = new List<OfsOrderItem>();
 
         await Task.Run(() =>
         {
-            ExcelLicense.Ensure();
-            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
-                ? CsvWorkbookReader.LoadAsPackage(filePath)
-                : new ExcelPackage(new FileInfo(filePath));
+            using var package = ExcelFileOpener.Open(filePath, password);
 
             // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.
             // 여기서는 첫 번째 유효한 매핑 설정을 기준으로 합니다.

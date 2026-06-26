@@ -252,8 +252,8 @@ public class MasterSkuForm : Form
     {
         try
         {
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(filePath));
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
+            if (package == null) return;
 
             using var mappingDialog = new MasterSkuImportMappingDialog(package);
             if (mappingDialog.ShowDialog(this) != DialogResult.OK) return;

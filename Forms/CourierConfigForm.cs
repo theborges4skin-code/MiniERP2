@@ -234,8 +234,9 @@ public class CourierConfigForm : Form
 
         try
         {
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage(new FileInfo(ofd.FileName));
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
             var worksheet = package.Workbook.Worksheets.FirstOrDefault();
             if (worksheet?.Dimension == null)
             {
