@@ -67,7 +67,10 @@ public class MainHub : Form
         channelConfigButton.Enabled = true;
         sidebarPanel.Controls.Add(channelConfigButton);
 
-        sidebarPanel.Controls.Add(CreateMenuButton("마감/이익분석", (s, e) => { /* FormManager.Show<SettlementForm>(); */ }));
+        var settlementButton = CreateMenuButton("마감/이익분석", (s, e) => { FormManager.Show<SettlementForm>(); });
+        settlementButton.Enabled = true;
+        sidebarPanel.Controls.Add(settlementButton);
+
         sidebarPanel.Controls.Add(CreateMenuButton("기타/문서관리", (s, e) => { /* FormManager.Show<DocsForm>(); */ }));
 
         return sidebarPanel;

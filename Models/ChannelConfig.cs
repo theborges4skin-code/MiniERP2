@@ -20,6 +20,11 @@ public class ChannelConfig
     [Description("정산 및 데이터 처리 방식을 결정하는 유형입니다.")]
     public ChannelType ChannelType { get; set; } = ChannelType.General;
 
+    [Category("기본 정보")]
+    [DisplayName("환율 (아마존 채널용)")]
+    [Description("아마존 등 외화 정산 채널의 이익분석에 사용할 환율입니다. 원화 채널은 1로 둡니다.")]
+    public decimal ExchangeRate { get; set; } = 1m;
+
     [Category("필드 매핑")]
     [DisplayName("표준 필드 매핑")]
     [Description("발주/정산 파일의 각 열을 표준 필드에 연결하는 설정입니다.")]

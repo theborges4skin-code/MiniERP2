@@ -260,6 +260,7 @@ public class OfsForm : Form
                     {
                         outboundDetails.Add(new OutboundDetail
                         {
+                            ChannelCode = order.ChannelCode ?? string.Empty,
                             OrderNo = order.OrderNo ?? string.Empty,
                             TrackingNo = order.TrackingNo ?? string.Empty,
                             MskuCode = order.MappedSku,

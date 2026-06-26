@@ -54,20 +54,26 @@ public static class DbSchema
             CREATE TABLE IF NOT EXISTS SettlementData (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ChannelCode TEXT NOT NULL,
-                StdProductId TEXT NOT NULL,
-                Amt REAL NOT NULL,
+                ProductName TEXT,
+                OptionName TEXT,
+                Msku TEXT,
+                Qty INTEGER NOT NULL,
                 Settlement REAL NOT NULL,
                 Shipping REAL NOT NULL,
-                Fee REAL NOT NULL
+                Fee REAL NOT NULL,
+                Profit REAL NOT NULL,
+                Status TEXT
             );
 
             CREATE TABLE IF NOT EXISTS OutboundDetailTable (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL DEFAULT '',
                 OrderNo TEXT NOT NULL,
                 TrackingNo TEXT NOT NULL,
                 MskuCode TEXT NOT NULL,
                 Qty INTEGER NOT NULL,
-                SupplyPrice REAL NOT NULL
+                SupplyPrice REAL NOT NULL,
+                CreatedAt TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS RuleExact (
