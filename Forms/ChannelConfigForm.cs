@@ -31,7 +31,7 @@ public class ChannelConfigForm : Form
     private static readonly StdField[] OrderMappingFields =
     [
         StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Recipient, StdField.Phone, StdField.Address,
+        StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage,
     ];
 
     private static readonly StdField[] SettlementMappingFields =
@@ -260,6 +260,8 @@ public class ChannelConfigForm : Form
         Disposed += (s, e) => samplePackage?.Dispose();
 
         // 미리보기 항목을 더블클릭하면 그리드에서 현재 선택된 행의 "열" 칸에 바로 채워준다.
+        // 미리보기에서 고른 헤더 행 번호도 함께 "헤더 행" 칸에 반영해, 미리보기에서 2/3/4행으로
+        // 바꿔 헤더를 찾아도 매핑 설정의 헤더 행이 기본값 1로 남아있는 문제를 막는다.
         previewList.DoubleClick += (s, e) =>
         {
             if (previewList.SelectedItem is not string header) return;
@@ -269,6 +271,7 @@ public class ChannelConfigForm : Form
 
             if (grid.IsCurrentCellInEditMode) grid.EndEdit();
             grid.Rows[rowIndex].Cells["Column"].Value = header;
+            grid.Rows[rowIndex].Cells["HeaderRow"].Value = (int)headerRowInput.Value;
         };
 
         return layout;
@@ -462,6 +465,7 @@ public class ChannelConfigForm : Form
         StdField.Recipient => "수취인",
         StdField.Phone => "연락처",
         StdField.Address => "주소",
+        StdField.DeliveryMessage => "배송메세지",
         _ => field.ToString(),
     };
 

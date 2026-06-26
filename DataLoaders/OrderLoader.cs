@@ -98,6 +98,7 @@ public class OrderLoader
                     Recipient = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
                     Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
                     Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
+                    DeliveryMessage = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
                     Status = "로드 완료"
                 };
 

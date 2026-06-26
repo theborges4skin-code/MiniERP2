@@ -298,11 +298,14 @@ public class SettlementForm : Form
 
         if (string.IsNullOrWhiteSpace(data.Msku) || data.Status == "원가 정보 없음")
         {
+            // 다크모드에서 기본 글자색이 흰색으로 바뀌어도 강조 배경에서 글자가 보이도록 검은색으로 고정한다.
             row.DefaultCellStyle.BackColor = Color.MistyRose;
+            row.DefaultCellStyle.ForeColor = Color.Black;
         }
         else
         {
             row.DefaultCellStyle.BackColor = _settlementGrid.DefaultCellStyle.BackColor;
+            row.DefaultCellStyle.ForeColor = _settlementGrid.DefaultCellStyle.ForeColor;
         }
     }
 

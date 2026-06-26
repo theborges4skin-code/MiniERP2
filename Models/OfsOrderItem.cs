@@ -14,6 +14,7 @@ public class OfsOrderItem
     public string? Recipient { get; set; }
     public string? Phone { get; set; }
     public string? Address { get; set; }
+    public string? DeliveryMessage { get; set; }
     // 매핑/변환 데이터
     public string? MappedSku { get; set; }
     public string? Status { get; set; }

@@ -12,4 +12,5 @@ public enum StdField
     Recipient,
     Phone,
     Address,
+    DeliveryMessage,
 }

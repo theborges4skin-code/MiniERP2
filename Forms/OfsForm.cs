@@ -436,23 +436,24 @@ public class OfsForm : Form
             return;
         }
 
-        // 매핑 상태에 따라 배경색 설정
+        // 매핑 상태에 따라 배경색 설정. 시스템 다크모드에서는 컨트롤 기본 글자색이 흰색으로
+        // 바뀔 수 있으므로, 배경색을 칠할 때는 항상 검은 글자색을 함께 지정해 다크/라이트
+        // 모드 어느 쪽에서도 잘 보이도록 한다.
         if (item.Status == "매핑 실패" || item.Status == "매핑 키 없음" || item.Status == "납품가 없음")
         {
             row.DefaultCellStyle.BackColor = Color.MistyRose;
+            row.DefaultCellStyle.ForeColor = Color.Black;
         }
-        else if (item.Status.StartsWith("매핑("))
+        else if (item.Status.StartsWith("매핑(") || item.Status == "출고 완료")
         {
             row.DefaultCellStyle.BackColor = Color.Honeydew;
-        }
-        else if (item.Status == "출고 완료")
-        {
-            row.DefaultCellStyle.BackColor = Color.Honeydew;
+            row.DefaultCellStyle.ForeColor = Color.Black;
         }
         else
         {
-            // 다른 상태는 기본 배경색으로 되돌립니다 (가상화 시 중요).
+            // 다른 상태는 기본 배경색/글자색으로 되돌립니다 (가상화 시 중요).
             row.DefaultCellStyle.BackColor = _ordersGrid.DefaultCellStyle.BackColor;
+            row.DefaultCellStyle.ForeColor = _ordersGrid.DefaultCellStyle.ForeColor;
         }
     }
 

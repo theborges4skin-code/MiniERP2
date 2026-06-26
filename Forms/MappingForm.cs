@@ -408,7 +408,9 @@ public class MappingForm : Form
         if (row.DataBoundItem is not MappingRule rule) return;
 
         var isConflicting = _conflictingKeysByType.TryGetValue(ruleType, out var keys) && keys.Contains(rule.Key);
+        // 다크모드에서 기본 글자색이 흰색으로 바뀌어도 강조 배경에서 글자가 보이도록 검은색으로 고정한다.
         row.DefaultCellStyle.BackColor = isConflicting ? Color.MistyRose : grid.DefaultCellStyle.BackColor;
+        row.DefaultCellStyle.ForeColor = isConflicting ? Color.Black : grid.DefaultCellStyle.ForeColor;
     }
 
     /// <summary>
