@@ -9,4 +9,6 @@ public static class PathProvider
     public static string SettingsFilePath => Path.Combine(AppDataFolder, "settings.json");
 
     public static string ChannelConfigFilePath => Path.Combine(AppDataFolder, "channels_config.json");
+
+    public static string WindowBoundsFilePath => Path.Combine(AppDataFolder, "window_bounds.json");
 }

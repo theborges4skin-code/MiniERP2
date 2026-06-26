@@ -1,4 +1,5 @@
 using MiniERP2.Forms;
+using MiniERP2.UI;
 
 namespace MiniERP2;
 
@@ -9,6 +10,9 @@ internal static class Program
     {
         Application.SetColorMode(SystemColorMode.System);
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainHub());
+
+        var mainHub = new MainHub();
+        FormManager.ApplyBoundsTracking(mainHub);
+        Application.Run(mainHub);
     }
 }
