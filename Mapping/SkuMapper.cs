@@ -8,6 +8,12 @@ namespace MiniERP2.Mapping;
 /// </summary>
 public class SkuMapper
 {
+    /// <summary>
+    /// 레거시(구버전 MiniERP) 시스템에서 "예외처리 = 매핑 대상에서 제외"를 의미하던 표시값.
+    /// 배송비/수수료 등 실제 상품이 아닌 주문 행을 자동으로 걸러내기 위해 사용한다.
+    /// </summary>
+    public const string ExcludedTargetSku = "[EXCLUDED]";
+
     private readonly Dictionary<MappingRuleType, List<MappingRule>> _rules;
 
     /// <summary>
@@ -43,6 +49,14 @@ public class SkuMapper
         // 기획서 5.3절 우선순위: 예외 > 1:1 > 임시 > 조건부
         if (TryMap(key, MappingRuleType.Exception, exactMatch: false, out var sku))
         {
+            if (sku == ExcludedTargetSku)
+            {
+                // 배송비/수수료 안내 행 등 상품이 아닌 주문 행 — SKU를 매핑하지 않고 처리 대상에서 제외한다.
+                item.MappedSku = null;
+                item.Status = "제외(배송비 등)";
+                return;
+            }
+
             item.MappedSku = sku;
             item.Status = "매핑(예외)";
         }
