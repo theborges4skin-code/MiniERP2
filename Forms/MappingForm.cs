@@ -44,6 +44,7 @@ public class MappingForm : Form
     private RadioButton _unmappedVatIncludedRadio = new();
     private RadioButton _unmappedVatExcludedRadio = new();
     private TextBox _unmappedInvoiceNameTextBox = new();
+    private Label _invoicePreviewLabel = new();
     private BindingList<OfsOrderItem>? _sourceOrders;
     private Action? _onMappingApplied;
     private string? _unmappedChannelCode;
@@ -135,21 +136,23 @@ public class MappingForm : Form
             ReadOnly = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
             MultiSelect = false,
+            AllowUserToResizeColumns = true,
         };
         _unmappedGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "ProductName", HeaderText = "상품명", DataPropertyName = "ProductName", Width = 220 },
-            new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
-            new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "수량", DataPropertyName = "Quantity", Width = 60 },
-            new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "상태", DataPropertyName = "Status", Width = 100 }
+            new DataGridViewTextBoxColumn { Name = "ProductName", HeaderText = "상품명", DataPropertyName = "ProductName", Width = 220, Resizable = DataGridViewTriState.True },
+            new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, Resizable = DataGridViewTriState.True },
+            new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "수량", DataPropertyName = "Quantity", Width = 60, Resizable = DataGridViewTriState.True },
+            new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "상태", DataPropertyName = "Status", Width = 100, Resizable = DataGridViewTriState.True }
         );
         _unmappedGrid.SelectionChanged += OnUnmappedRowSelectionChanged;
         SetupUnmappedContextMenu();
 
-        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
 
         var searchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
         searchPanel.Controls.Add(new Label { Text = "마스터DB 검색(SKU/상품명):", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
@@ -201,7 +204,11 @@ public class MappingForm : Form
         infoPanel.Controls.Add(_unmappedVatExcludedRadio);
         infoPanel.Controls.Add(new Label { Text = "송장표시명(선택):", AutoSize = true, Padding = new Padding(15, 6, 4, 0) });
         _unmappedInvoiceNameTextBox = new TextBox { Width = 220 };
+        _unmappedInvoiceNameTextBox.TextChanged += (s, e) => RefreshInvoicePreview();
         infoPanel.Controls.Add(_unmappedInvoiceNameTextBox);
+
+        _invoicePreviewLabel = new Label { Dock = DockStyle.Fill, AutoSize = false, Padding = new Padding(5, 3, 0, 0), ForeColor = Color.DimGray };
+        RefreshInvoicePreview();
 
         var actionButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
         var btnApplyExact = new Button { Text = "1:1 매핑 적용", Size = new Size(110, 30) };
@@ -224,6 +231,7 @@ public class MappingForm : Form
         bottomLayout.Controls.Add(_masterCandidateGrid, 0, 1);
         bottomLayout.Controls.Add(cskuPanel, 0, 2);
         bottomLayout.Controls.Add(infoAndActions, 0, 3);
+        bottomLayout.Controls.Add(_invoicePreviewLabel, 0, 4);
 
         split.Panel1.Controls.Add(_unmappedGrid);
         split.Panel2.Controls.Add(bottomLayout);
@@ -239,15 +247,33 @@ public class MappingForm : Form
         menu.Items.Add("임시 SKU 등록 후 매핑", null, (s, e) => RegisterTempSkuAndMap());
         menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => AddConditionRuleFromSelectedUnmapped());
         menu.Items.Add("예외 처리(매핑 제외)", null, (s, e) => ExcludeSelectedUnmapped());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("이 셀 내용을 CSKU 상품명으로 사용", null, (s, e) => UseCurrentCellAsInvoiceDisplayName());
         _unmappedGrid.ContextMenuStrip = menu;
 
-        // 실무에서는 오른쪽 클릭으로 바로 메뉴를 여는 경우가 많으므로, 우클릭한 행을 먼저 선택시킨다.
+        // 실무에서는 오른쪽 클릭으로 바로 메뉴를 여는 경우가 많으므로, 우클릭한 셀을 먼저 선택시킨다
+        // (어느 열을 우클릭했는지도 함께 기억해 "CSKU 상품명으로 사용"이 그 칸의 값을 그대로 쓸 수 있게 한다).
         _unmappedGrid.MouseDown += (s, e) =>
         {
             if (e.Button != MouseButtons.Right) return;
             var hit = _unmappedGrid.HitTest(e.X, e.Y);
-            if (hit.RowIndex >= 0) _unmappedGrid.CurrentCell = _unmappedGrid.Rows[hit.RowIndex].Cells[0];
+            if (hit.RowIndex < 0) return;
+            var columnIndex = hit.ColumnIndex >= 0 ? hit.ColumnIndex : 0;
+            _unmappedGrid.CurrentCell = _unmappedGrid.Rows[hit.RowIndex].Cells[columnIndex];
         };
+    }
+
+    /// <summary>
+    /// 우클릭한 셀(상품명/옵션명 등)의 표시 텍스트를 그대로 "송장표시명" 입력란에 채워준다.
+    /// 발주서의 상품명/옵션명 표기가 그대로 송장에 쓸 만큼 간결한 경우, 다시 타이핑하지 않고
+    /// 바로 가져다 쓸 수 있게 하기 위함이다.
+    /// </summary>
+    private void UseCurrentCellAsInvoiceDisplayName()
+    {
+        var cell = _unmappedGrid.CurrentCell;
+        if (cell == null) return;
+
+        _unmappedInvoiceNameTextBox.Text = cell.Value?.ToString() ?? string.Empty;
     }
 
     /// <summary>
@@ -264,9 +290,14 @@ public class MappingForm : Form
 
         _channelComboBox.SelectedValue = channelCode;
         RefreshUnmappedGrid();
+
+        // RefreshUnmappedGrid가 그리드를 바인딩하면서 첫 행이 자동 선택되어 검색창에 그 상품명이
+        // 채워질 수 있으므로, 창을 열 때는 항상 빈 검색창에서 시작하도록 마지막에 다시 비워준다.
         _masterSearchBox.Text = string.Empty;
         RunMasterSearch();
         _ruleTabControl.SelectedTab = _unmappedTabPage;
+        _masterSearchBox.Focus();
+        _masterSearchBox.SelectAll();
     }
 
     private void RefreshUnmappedGrid()
@@ -285,8 +316,25 @@ public class MappingForm : Form
 
     private void OnUnmappedRowSelectionChanged(object? sender, EventArgs e)
     {
+        RefreshInvoicePreview();
+
         if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item) return;
         _masterSearchBox.Text = item.ProductName ?? string.Empty;
+    }
+
+    /// <summary>
+    /// 선택한 미매핑 항목의 수량과 송장표시명 입력값을 조합해, 택배사 출력양식에 실제로 나갈
+    /// "송장표시 품목명"이 어떤 모습일지 매핑하기 전에 미리 보여준다(SkuMapper.BuildInvoiceLabel과
+    /// 같은 조합 규칙: 표시명 + 수량 + "개").
+    /// </summary>
+    private void RefreshInvoicePreview()
+    {
+        var quantity = _unmappedGrid.CurrentRow?.DataBoundItem is OfsOrderItem item ? item.Quantity : 0;
+        var name = _unmappedInvoiceNameTextBox.Text.Trim();
+
+        _invoicePreviewLabel.Text = string.IsNullOrEmpty(name)
+            ? "송장표시 미리보기: (송장표시명을 입력하면 택배사 양식에 실제로 나갈 모습을 여기서 미리 볼 수 있습니다)"
+            : $"송장표시 미리보기: \"{name} {quantity}개\"";
     }
 
     private void RunMasterSearch()
