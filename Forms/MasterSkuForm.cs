@@ -79,6 +79,7 @@ public class MasterSkuForm : Form
             new DataGridViewTextBoxColumn { Name = "Sku", HeaderText = "SKU", DataPropertyName = "Sku", Width = 150 },
             new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 250 },
             new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "원가", DataPropertyName = "CostPrice", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "ProductGroup", HeaderText = "상품그룹", DataPropertyName = "ProductGroup", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve1", HeaderText = "예비1", DataPropertyName = "Reserve1", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve2", HeaderText = "예비2", DataPropertyName = "Reserve2", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve3", HeaderText = "예비3", DataPropertyName = "Reserve3", Width = 120 }
@@ -273,6 +274,7 @@ public class MasterSkuForm : Form
             var skuCol = headerToIndexMap[mappingDialog.SkuColumn];
             var itemNameCol = headerToIndexMap[mappingDialog.ItemNameColumn];
             var costPriceCol = headerToIndexMap[mappingDialog.CostPriceColumn];
+            var productGroupCol = mappingDialog.ProductGroupColumn is { } pg ? headerToIndexMap.GetValueOrDefault(pg) : 0;
             var reserve1Col = mappingDialog.Reserve1Column is { } r1 ? headerToIndexMap.GetValueOrDefault(r1) : 0;
             var reserve2Col = mappingDialog.Reserve2Column is { } r2 ? headerToIndexMap.GetValueOrDefault(r2) : 0;
             var reserve3Col = mappingDialog.Reserve3Column is { } r3 ? headerToIndexMap.GetValueOrDefault(r3) : 0;
@@ -294,6 +296,7 @@ public class MasterSkuForm : Form
                     Sku = sku,
                     ItemName = itemName,
                     CostPrice = costPrice,
+                    ProductGroup = productGroupCol > 0 ? worksheet.Cells[row, productGroupCol].Value?.ToString() : null,
                     Reserve1 = reserve1Col > 0 ? worksheet.Cells[row, reserve1Col].Value?.ToString() : null,
                     Reserve2 = reserve2Col > 0 ? worksheet.Cells[row, reserve2Col].Value?.ToString() : null,
                     Reserve3 = reserve3Col > 0 ? worksheet.Cells[row, reserve3Col].Value?.ToString() : null,
@@ -370,9 +373,10 @@ public class MasterSkuForm : Form
                 worksheet.Cells[rowIndex + 2, 1].Value = item.Sku;
                 worksheet.Cells[rowIndex + 2, 2].Value = item.ItemName;
                 worksheet.Cells[rowIndex + 2, 3].Value = item.CostPrice;
-                worksheet.Cells[rowIndex + 2, 4].Value = item.Reserve1;
-                worksheet.Cells[rowIndex + 2, 5].Value = item.Reserve2;
-                worksheet.Cells[rowIndex + 2, 6].Value = item.Reserve3;
+                worksheet.Cells[rowIndex + 2, 4].Value = item.ProductGroup;
+                worksheet.Cells[rowIndex + 2, 5].Value = item.Reserve1;
+                worksheet.Cells[rowIndex + 2, 6].Value = item.Reserve2;
+                worksheet.Cells[rowIndex + 2, 7].Value = item.Reserve3;
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();

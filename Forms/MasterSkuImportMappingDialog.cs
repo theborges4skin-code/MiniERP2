@@ -16,6 +16,7 @@ public class MasterSkuImportMappingDialog : Form
     private readonly ComboBox _skuCombo = new();
     private readonly ComboBox _itemNameCombo = new();
     private readonly ComboBox _costPriceCombo = new();
+    private readonly ComboBox _productGroupCombo = new();
     private readonly ComboBox _reserve1Combo = new();
     private readonly ComboBox _reserve2Combo = new();
     private readonly ComboBox _reserve3Combo = new();
@@ -25,6 +26,7 @@ public class MasterSkuImportMappingDialog : Form
     public string SkuColumn => _skuCombo.SelectedItem as string ?? string.Empty;
     public string ItemNameColumn => _itemNameCombo.SelectedItem as string ?? string.Empty;
     public string CostPriceColumn => _costPriceCombo.SelectedItem as string ?? string.Empty;
+    public string? ProductGroupColumn => AsOptionalColumn(_productGroupCombo);
     public string? Reserve1Column => AsOptionalColumn(_reserve1Combo);
     public string? Reserve2Column => AsOptionalColumn(_reserve2Combo);
     public string? Reserve3Column => AsOptionalColumn(_reserve3Combo);
@@ -46,10 +48,10 @@ public class MasterSkuImportMappingDialog : Form
         MinimizeBox = false;
         MaximizeBox = false;
         ShowInTaskbar = false;
-        Size = new Size(420, 420);
+        Size = new Size(420, 450);
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), RowCount = 9, ColumnCount = 2 };
-        for (int i = 0; i < 8; i++) mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), RowCount = 10, ColumnCount = 2 };
+        for (int i = 0; i < 9; i++) mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -63,7 +65,7 @@ public class MasterSkuImportMappingDialog : Form
         _headerRowInput.Maximum = 1000;
         _headerRowInput.Value = 1;
 
-        foreach (var combo in new[] { _skuCombo, _itemNameCombo, _costPriceCombo, _reserve1Combo, _reserve2Combo, _reserve3Combo })
+        foreach (var combo in new[] { _skuCombo, _itemNameCombo, _costPriceCombo, _productGroupCombo, _reserve1Combo, _reserve2Combo, _reserve3Combo })
         {
             combo.Dock = DockStyle.Fill;
             combo.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -80,6 +82,8 @@ public class MasterSkuImportMappingDialog : Form
         mainLayout.Controls.Add(_itemNameCombo, 1, row++);
         mainLayout.Controls.Add(new Label { Text = "원가 열:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, row);
         mainLayout.Controls.Add(_costPriceCombo, 1, row++);
+        mainLayout.Controls.Add(new Label { Text = "상품그룹 열:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, row);
+        mainLayout.Controls.Add(_productGroupCombo, 1, row++);
         mainLayout.Controls.Add(new Label { Text = "예비1 열:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, row);
         mainLayout.Controls.Add(_reserve1Combo, 1, row++);
         mainLayout.Controls.Add(new Label { Text = "예비2 열:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, row);
@@ -130,6 +134,7 @@ public class MasterSkuImportMappingDialog : Form
         SetUpRequiredCombo(_skuCombo, headers, ["sku", "품목코드", "코드"]);
         SetUpRequiredCombo(_itemNameCombo, headers, ["상품명", "품목명", "이름"]);
         SetUpRequiredCombo(_costPriceCombo, headers, ["원가", "단가", "가격", "cost"]);
+        SetUpOptionalCombo(_productGroupCombo, headers);
         SetUpOptionalCombo(_reserve1Combo, headers);
         SetUpOptionalCombo(_reserve2Combo, headers);
         SetUpOptionalCombo(_reserve3Combo, headers);

@@ -14,7 +14,8 @@ public static class DbSchema
                 CostPrice REAL NOT NULL,
                 Reserve1 TEXT,
                 Reserve2 TEXT,
-                Reserve3 TEXT
+                Reserve3 TEXT,
+                ProductGroup TEXT
             );
 
             CREATE TABLE IF NOT EXISTS ItemCostHistory (
@@ -118,5 +119,32 @@ public static class DbSchema
             );
             """;
         command.ExecuteNonQuery();
+
+        // CREATE TABLE IF NOT EXISTS는 이미 존재하는 테이블에 새 컬럼을 추가해주지 않으므로,
+        // 이전 버전의 DB 파일에서도 신규 컬럼이 누락되지 않도록 직접 보강한다.
+        EnsureColumn(connection, "ItemTable", "Reserve1", "TEXT");
+        EnsureColumn(connection, "ItemTable", "Reserve2", "TEXT");
+        EnsureColumn(connection, "ItemTable", "Reserve3", "TEXT");
+        EnsureColumn(connection, "ItemTable", "ProductGroup", "TEXT");
+    }
+
+    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)
+    {
+        using var checkCommand = connection.CreateCommand();
+        checkCommand.CommandText = $"PRAGMA table_info({tableName})";
+        using var reader = checkCommand.ExecuteReader();
+        while (reader.Read())
+        {
+            // PRAGMA table_info 결과의 두 번째 컬럼(인덱스 1)이 컬럼 이름이다.
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return; // 이미 존재함
+            }
+        }
+        reader.Close();
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnType}";
+        alterCommand.ExecuteNonQuery();
     }
 }

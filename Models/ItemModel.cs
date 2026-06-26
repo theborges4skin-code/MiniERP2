@@ -8,4 +8,5 @@ public class ItemModel
     public string? Reserve1 { get; set; }
     public string? Reserve2 { get; set; }
     public string? Reserve3 { get; set; }
+    public string? ProductGroup { get; set; }
 }

@@ -30,14 +30,15 @@ public class ItemRepository
             using var upsertCommand = connection.CreateCommand();
             upsertCommand.Transaction = transaction;
             upsertCommand.CommandText = """
-                INSERT INTO ItemTable (Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3)
-                VALUES ($sku, $itemName, $costPrice, $reserve1, $reserve2, $reserve3)
+                INSERT INTO ItemTable (Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup)
+                VALUES ($sku, $itemName, $costPrice, $reserve1, $reserve2, $reserve3, $productGroup)
                 ON CONFLICT(Sku) DO UPDATE SET
                     ItemName = excluded.ItemName,
                     CostPrice = excluded.CostPrice,
                     Reserve1 = excluded.Reserve1,
                     Reserve2 = excluded.Reserve2,
-                    Reserve3 = excluded.Reserve3
+                    Reserve3 = excluded.Reserve3,
+                    ProductGroup = excluded.ProductGroup
                 """;
             upsertCommand.Parameters.AddWithValue("$sku", item.Sku);
             upsertCommand.Parameters.AddWithValue("$itemName", item.ItemName);
@@ -45,6 +46,7 @@ public class ItemRepository
             upsertCommand.Parameters.AddWithValue("$reserve1", (object?)item.Reserve1 ?? DBNull.Value);
             upsertCommand.Parameters.AddWithValue("$reserve2", (object?)item.Reserve2 ?? DBNull.Value);
             upsertCommand.Parameters.AddWithValue("$reserve3", (object?)item.Reserve3 ?? DBNull.Value);
+            upsertCommand.Parameters.AddWithValue("$productGroup", (object?)item.ProductGroup ?? DBNull.Value);
             upsertCommand.ExecuteNonQuery();
 
             transaction.Commit();
@@ -95,7 +97,7 @@ public class ItemRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3 FROM ItemTable";
+        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup FROM ItemTable";
 
         var items = new List<ItemModel>();
         using var reader = command.ExecuteReader();
@@ -137,7 +139,7 @@ public class ItemRepository
     private static ItemModel? GetBySku(SqliteConnection connection, string sku)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3 FROM ItemTable WHERE Sku = $sku";
+        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup FROM ItemTable WHERE Sku = $sku";
         command.Parameters.AddWithValue("$sku", sku);
 
         using var reader = command.ExecuteReader();
@@ -152,5 +154,6 @@ public class ItemRepository
         Reserve1 = reader.IsDBNull(3) ? null : reader.GetString(3),
         Reserve2 = reader.IsDBNull(4) ? null : reader.GetString(4),
         Reserve3 = reader.IsDBNull(5) ? null : reader.GetString(5),
+        ProductGroup = reader.IsDBNull(6) ? null : reader.GetString(6),
     };
 }
