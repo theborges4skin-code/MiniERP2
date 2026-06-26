@@ -4,7 +4,7 @@
 바로 이어받을 수 있도록 진행 상황을 정리한 것이다. 프로젝트 전체 배경/아키텍처는
 [PLAN.md](PLAN.md) 참고. 2026-06-26 세션 작업 내역은 git log(커밋 `1322618`~`f7db495`) 참고.
 
-**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **83/83 통과**.
+**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **84/84 통과**.
 전부 `origin/main`에 푸시됨(마지막 커밋은 git log 참고).
 
 ## auto-compact 이후 추가로 한 일
@@ -52,6 +52,32 @@
       (신규 발견, 별도 작업 불필요) — `ChannelSkuRepository.GetPriceHistory`로 조회 가능.
       송장표시명 변경 이력은 별도로 로깅하지 않는다(가격처럼 자주 바뀌지 않고, 변경 추적의
       실익이 적다고 판단 — 필요해지면 같은 패턴으로 추가 가능).
+13. **매핑관리창에 "미매핑 처리" 탭 신설(상하 분리 레이아웃)** — 사용자가 "매핑창을 열어도 미매핑
+    리스트가 아무것도 안 보인다"고 지적함. 실제로 매핑관리창은 그동안 저장된 매핑 *규칙*만
+    관리했고, OFS에서 로드한 발주서의 실제 미매핑 *주문 항목*을 보여주는 화면이 없었다. 이번에
+    `Forms/MappingForm.cs`에 첫 번째 탭으로 "미매핑 처리"를 추가:
+    - 상단(`_unmappedGrid`): 현재 선택된 채널의 미매핑 항목(상품명/옵션명/수량/상태) 목록.
+      `ShowUnmappedItems(channelCode, BindingList<OfsOrderItem> orders, Action? onMappingApplied)`로
+      OFS의 `_orders`를 **참조로** 그대로 받기 때문에, 여기서 매핑을 적용하면 그 객체에 바로
+      반영되고 `onMappingApplied` 콜백으로 OFS 그리드도 `Invalidate()`된다.
+    - 하단: 마스터DB 검색(SKU **또는 상품명**, 입력하는 대로 실시간 필터) 결과 그리드, 그 아래
+      "CSKU 매핑 이력" 그리드(선택한 SKU에 이미 매핑된 다른 상품명+옵션명 조합들을 그대로
+      나열 — 사용자가 예로 든 "상품A+옵션B"와 "상품A+옵션C"가 같은 SKU인 경우 둘 다 따로 표시),
+      납품단가(VAT포함/별도)·송장표시명 입력란.
+    - 버튼 4개(+ 그리드 우클릭 컨텍스트 메뉴로 동일하게 제공, "실무에선 우클릭을 더 많이 쓴다"는
+      요청 반영): **1:1 매핑 적용**(선택한 미매핑 항목 키를 `UpsertExactRule`로 영구 저장 +
+      CSKU 정보 저장), **임시 SKU 등록 후 매핑**, **조건부 매핑 규칙 추가**(선택한 항목의
+      상품명/옵션명을 그대로 포함하는 AND 조건 2개로 규칙을 만들고 "조건부 매핑(상세)" 탭으로
+      이동해 다듬게 함), **예외 처리(매핑 제외)**(`UpsertRule(Exception, ...)`로 즉시 제외 규칙
+      저장).
+    - `MappingRepository.UpsertExactRule`을 일반화한 `UpsertRule(MappingRuleType, ...)`을 새로
+      추가(기존 `UpsertExactRule`은 이걸 호출하는 얇은 래퍼로 유지, 기존 호출부/테스트 영향 없음).
+    - `Forms/OfsForm.cs`: 발주서 로드 후 미매핑 자동 안내 시 호출하던
+      `mappingForm.SelectChannelByCode(...)`를 `mappingForm.ShowUnmappedItems(...)`로 교체(채널만
+      선택하던 것에서 실제 미매핑 목록까지 보여주도록). 또한 언제든 다시 열 수 있는 "미매핑 일괄
+      처리" 버튼을 툴바에 추가. `SkuMapper` 생성 시 `_channelSkuRepository`를 함께 넘기도록 수정해
+      OFS에서 로드한 주문에도 `InvoiceLabel`이 채워지게 함(이전엔 OFS 쪽 SkuMapper 생성 코드가
+      이 매개변수를 안 넘기고 있었음 — 누락 수정).
 
 ### 다음 큰 과제: 분할배송/합포장 + 택배송장 4줄 제한 (설계만, 미구현)
 

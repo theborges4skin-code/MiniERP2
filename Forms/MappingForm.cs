@@ -15,6 +15,8 @@ public class MappingForm : Form
 {
     private readonly MappingRepository _mappingRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly ItemRepository _itemRepository = new();
+    private readonly ChannelSkuRepository _channelSkuRepository = new();
 
     private ComboBox _channelComboBox = new();
     private TabControl _ruleTabControl = new();
@@ -24,11 +26,27 @@ public class MappingForm : Form
 
     // 조건부 매핑(상세) 탭 — 다중 AND/OR 조건 전용 편집기. 기존 "조건부 매핑" 단순 그리드(SaveRules)와
     // 분리되어 즉시 DB에 반영되므로, 단순 그리드 저장이 이 탭의 데이터를 건드리지 않는다.
+    private TabPage _conditionDetailTabPage = new();
     private DataGridView _conditionRuleGrid = new();
     private DataGridView _conditionDetailGrid = new();
     private TextBox _conditionKeyTextBox = new();
     private TextBox _conditionTargetSkuTextBox = new();
     private long _selectedConditionRuleId = -1;
+
+    // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
+    // 상단(미매핑 목록)/하단(마스터DB 검색+CSKU 입력)으로 분리되어 있다.
+    private TabPage _unmappedTabPage = new();
+    private DataGridView _unmappedGrid = new();
+    private TextBox _masterSearchBox = new();
+    private DataGridView _masterCandidateGrid = new();
+    private DataGridView _cskuHistoryGrid = new();
+    private TextBox _unmappedSupplyPriceTextBox = new();
+    private RadioButton _unmappedVatIncludedRadio = new();
+    private RadioButton _unmappedVatExcludedRadio = new();
+    private TextBox _unmappedInvoiceNameTextBox = new();
+    private BindingList<OfsOrderItem>? _sourceOrders;
+    private Action? _onMappingApplied;
+    private string? _unmappedChannelCode;
 
     public MappingForm()
     {
@@ -82,16 +100,410 @@ public class MappingForm : Form
     {
         var tabControl = new TabControl { Dock = DockStyle.Fill };
 
+        _unmappedTabPage = CreateUnmappedTabPage();
+        tabControl.TabPages.Add(_unmappedTabPage);
         tabControl.TabPages.Add(CreateRuleTabPage("예외 처리", MappingRuleType.Exception));
         tabControl.TabPages.Add(CreateRuleTabPage("1:1 매핑", MappingRuleType.Exact));
         tabControl.TabPages.Add(CreateRuleTabPage("임시 매핑", MappingRuleType.Temp));
         tabControl.TabPages.Add(CreateRuleTabPage("조건부 매핑", MappingRuleType.Condition));
-        tabControl.TabPages.Add(CreateConditionDetailTabPage());
+        _conditionDetailTabPage = CreateConditionDetailTabPage();
+        tabControl.TabPages.Add(_conditionDetailTabPage);
         tabControl.TabPages.Add(CreateConflictTabPage());
 
         tabControl.Selecting += OnTabSelecting;
 
         return tabControl;
+    }
+
+    /// <summary>
+    /// 발주서에서 로드된 미매핑건을 보면서 바로 매핑할 수 있는 탭. 상단은 미매핑 목록(원본
+    /// OfsOrderItem 참조 — 여기서 매핑하면 OFS 화면에도 그대로 반영됨), 하단은 마스터DB
+    /// 검색(SKU/상품명)과 CSKU(납품가/송장표시명) 입력, 그리고 선택한 SKU에 이미 매핑된 다른
+    /// 상품명+옵션명 조합들을 보여주는 "CSKU 매핑 이력" 영역으로 구성된다.
+    /// </summary>
+    private TabPage CreateUnmappedTabPage()
+    {
+        var tabPage = new TabPage("미매핑 처리");
+
+        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220 };
+
+        _unmappedGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+        };
+        _unmappedGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "ProductName", HeaderText = "상품명", DataPropertyName = "ProductName", Width = 220 },
+            new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "수량", DataPropertyName = "Quantity", Width = 60 },
+            new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "상태", DataPropertyName = "Status", Width = 100 }
+        );
+        _unmappedGrid.SelectionChanged += OnUnmappedRowSelectionChanged;
+        SetupUnmappedContextMenu();
+
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+
+        var searchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
+        searchPanel.Controls.Add(new Label { Text = "마스터DB 검색(SKU/상품명):", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
+        _masterSearchBox = new TextBox { Width = 300 };
+        _masterSearchBox.TextChanged += (s, e) => RunMasterSearch();
+        searchPanel.Controls.Add(_masterSearchBox);
+
+        _masterCandidateGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+        };
+        _masterCandidateGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "Sku", HeaderText = "SKU", DataPropertyName = "Sku", Width = 150 },
+            new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 220 },
+            new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "제조원가(VAT포함)", DataPropertyName = "CostPrice", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+        _masterCandidateGrid.SelectionChanged += (s, e) => OnMasterCandidateSelectionChanged();
+
+        _cskuHistoryGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+        };
+        _cskuHistoryGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "이 SKU로 매핑된 상품명+옵션명 조합(1:1 규칙)", DataPropertyName = "Key", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+
+        var cskuPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        cskuPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+        cskuPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        cskuPanel.Controls.Add(new Label { Text = "CSKU 매핑 이력 — 같은 SKU에 매핑된 다른 상품명/옵션명 조합", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
+        cskuPanel.Controls.Add(_cskuHistoryGrid, 0, 1);
+
+        var infoAndActions = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        var infoPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
+        infoPanel.Controls.Add(new Label { Text = "납품단가(선택):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+        _unmappedSupplyPriceTextBox = new TextBox { Width = 90 };
+        infoPanel.Controls.Add(_unmappedSupplyPriceTextBox);
+        _unmappedVatIncludedRadio = new RadioButton { Text = "VAT포함", AutoSize = true, Checked = true, Padding = new Padding(8, 4, 0, 0) };
+        _unmappedVatExcludedRadio = new RadioButton { Text = "VAT별도", AutoSize = true, Padding = new Padding(5, 4, 0, 0) };
+        infoPanel.Controls.Add(_unmappedVatIncludedRadio);
+        infoPanel.Controls.Add(_unmappedVatExcludedRadio);
+        infoPanel.Controls.Add(new Label { Text = "송장표시명(선택):", AutoSize = true, Padding = new Padding(15, 6, 4, 0) });
+        _unmappedInvoiceNameTextBox = new TextBox { Width = 220 };
+        infoPanel.Controls.Add(_unmappedInvoiceNameTextBox);
+
+        var actionButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
+        var btnApplyExact = new Button { Text = "1:1 매핑 적용", Size = new Size(110, 30) };
+        btnApplyExact.Click += (s, e) => ApplyExactMappingToSelectedUnmapped();
+        var btnRegisterTemp = new Button { Text = "임시 SKU 등록 후 매핑", Size = new Size(150, 30) };
+        btnRegisterTemp.Click += (s, e) => RegisterTempSkuAndMap();
+        var btnAddCondition = new Button { Text = "조건부 매핑 규칙 추가", Size = new Size(150, 30) };
+        btnAddCondition.Click += (s, e) => AddConditionRuleFromSelectedUnmapped();
+        var btnExclude = new Button { Text = "예외 처리(매핑 제외)", Size = new Size(140, 30) };
+        btnExclude.Click += (s, e) => ExcludeSelectedUnmapped();
+        actionButtonPanel.Controls.Add(btnApplyExact);
+        actionButtonPanel.Controls.Add(btnRegisterTemp);
+        actionButtonPanel.Controls.Add(btnAddCondition);
+        actionButtonPanel.Controls.Add(btnExclude);
+
+        infoAndActions.Controls.Add(infoPanel, 0, 0);
+        infoAndActions.Controls.Add(actionButtonPanel, 0, 1);
+
+        bottomLayout.Controls.Add(searchPanel, 0, 0);
+        bottomLayout.Controls.Add(_masterCandidateGrid, 0, 1);
+        bottomLayout.Controls.Add(cskuPanel, 0, 2);
+        bottomLayout.Controls.Add(infoAndActions, 0, 3);
+
+        split.Panel1.Controls.Add(_unmappedGrid);
+        split.Panel2.Controls.Add(bottomLayout);
+
+        tabPage.Controls.Add(split);
+        return tabPage;
+    }
+
+    private void SetupUnmappedContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("1:1 매핑 적용", null, (s, e) => ApplyExactMappingToSelectedUnmapped());
+        menu.Items.Add("임시 SKU 등록 후 매핑", null, (s, e) => RegisterTempSkuAndMap());
+        menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => AddConditionRuleFromSelectedUnmapped());
+        menu.Items.Add("예외 처리(매핑 제외)", null, (s, e) => ExcludeSelectedUnmapped());
+        _unmappedGrid.ContextMenuStrip = menu;
+
+        // 실무에서는 오른쪽 클릭으로 바로 메뉴를 여는 경우가 많으므로, 우클릭한 행을 먼저 선택시킨다.
+        _unmappedGrid.MouseDown += (s, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var hit = _unmappedGrid.HitTest(e.X, e.Y);
+            if (hit.RowIndex >= 0) _unmappedGrid.CurrentCell = _unmappedGrid.Rows[hit.RowIndex].Cells[0];
+        };
+    }
+
+    /// <summary>
+    /// OFS에서 발주서를 로드한 직후(또는 수동으로) 호출됩니다. 채널을 선택하고 "미매핑 처리" 탭으로
+    /// 전환해, 로드된 주문 목록에서 미매핑 항목을 바로 보면서 매핑할 수 있게 합니다. orders는 OFS의
+    /// 그리드와 같은 인스턴스를 참조해야 하며, 여기서 매핑을 적용하면 그 객체에 직접 반영되고
+    /// onMappingApplied 콜백으로 OFS 화면도 새로고침할 수 있습니다.
+    /// </summary>
+    public void ShowUnmappedItems(string channelCode, BindingList<OfsOrderItem> orders, Action? onMappingApplied = null)
+    {
+        _sourceOrders = orders;
+        _onMappingApplied = onMappingApplied;
+        _unmappedChannelCode = channelCode;
+
+        _channelComboBox.SelectedValue = channelCode;
+        RefreshUnmappedGrid();
+        _masterSearchBox.Text = string.Empty;
+        RunMasterSearch();
+        _ruleTabControl.SelectedTab = _unmappedTabPage;
+    }
+
+    private void RefreshUnmappedGrid()
+    {
+        if (_sourceOrders == null || string.IsNullOrEmpty(_unmappedChannelCode))
+        {
+            _unmappedGrid.DataSource = null;
+            return;
+        }
+
+        var unmapped = _sourceOrders
+            .Where(o => o.ChannelCode == _unmappedChannelCode && (o.Status == "매핑 실패" || o.Status == "매핑 키 없음"))
+            .ToList();
+        _unmappedGrid.DataSource = new BindingList<OfsOrderItem>(unmapped);
+    }
+
+    private void OnUnmappedRowSelectionChanged(object? sender, EventArgs e)
+    {
+        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item) return;
+        _masterSearchBox.Text = item.ProductName ?? string.Empty;
+    }
+
+    private void RunMasterSearch()
+    {
+        var query = _masterSearchBox.Text.Trim();
+        var allItems = _itemRepository.GetAll();
+
+        var matches = string.IsNullOrEmpty(query)
+            ? allItems
+            : allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        _masterCandidateGrid.DataSource = new BindingList<ItemModel>(matches);
+    }
+
+    private void OnMasterCandidateSelectionChanged()
+    {
+        _unmappedSupplyPriceTextBox.Text = string.Empty;
+        _unmappedInvoiceNameTextBox.Text = string.Empty;
+        _unmappedVatIncludedRadio.Checked = true;
+        _cskuHistoryGrid.DataSource = null;
+
+        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel selected) return;
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var existing = _channelSkuRepository.GetByChannelAndMsku(_unmappedChannelCode, selected.Sku);
+        if (existing != null)
+        {
+            _unmappedSupplyPriceTextBox.Text = existing.SupplyPrice.ToString();
+            _unmappedInvoiceNameTextBox.Text = existing.InvoiceDisplayName ?? string.Empty;
+        }
+
+        RefreshCskuHistoryGrid(selected.Sku);
+    }
+
+    /// <summary>
+    /// 선택된 SKU로 이미 매핑된 1:1 규칙들(즉, 다른 상품명+옵션명 조합이라도 같은 CSKU로 모이는 사례)을
+    /// 보여준다. 예: "상품A+옵션B"와 "상품A+옵션C"가 같은 SKU라면 둘 다 이 목록에 각각 나타난다.
+    /// </summary>
+    private void RefreshCskuHistoryGrid(string sku)
+    {
+        if (string.IsNullOrEmpty(_unmappedChannelCode))
+        {
+            _cskuHistoryGrid.DataSource = null;
+            return;
+        }
+
+        var rows = _mappingRepository.GetRules(MappingRuleType.Exact, _unmappedChannelCode)
+            .Where(r => r.TargetSku == sku)
+            .ToList();
+        _cskuHistoryGrid.DataSource = new BindingList<MappingRule>(rows);
+    }
+
+    private void ApplyExactMappingToSelectedUnmapped()
+    {
+        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
+        {
+            MessageBox.Show("매핑할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel candidate)
+        {
+            MessageBox.Show("마스터DB에서 매핑할 SKU를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        ApplyMappingToItem(item, candidate.Sku, "매핑(1:1)", saveAsExactRule: true);
+    }
+
+    private void RegisterTempSkuAndMap()
+    {
+        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
+        {
+            MessageBox.Show("매핑할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var existingSkus = _itemRepository.GetAll().Select(i => i.Sku);
+        var tempSku = TempSkuGenerator.GenerateNext(existingSkus);
+
+        var confirm = MessageBox.Show(
+            $"임시 SKU '{tempSku}'를 마스터DB에 새로 등록하고 이 주문에 매핑하시겠습니까?\n상품명: {item.ProductName}\n\n등록 후 마스터SKU 관리창에서 원가 등 정보를 보완해주세요.",
+            "임시 SKU 등록", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        _itemRepository.Upsert(new ItemModel
+        {
+            Sku = tempSku,
+            ItemName = string.IsNullOrWhiteSpace(item.ProductName) ? tempSku : item.ProductName,
+            CostPrice = 0m,
+        });
+
+        ApplyMappingToItem(item, tempSku, "매핑(임시)", saveAsExactRule: true);
+    }
+
+    private void ApplyMappingToItem(OfsOrderItem item, string targetSku, string status, bool saveAsExactRule)
+    {
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        SaveChannelSkuInfoFromUnmappedPanel(targetSku);
+
+        if (saveAsExactRule)
+        {
+            var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                _mappingRepository.UpsertExactRule(_unmappedChannelCode, key, targetSku);
+            }
+        }
+
+        item.MappedSku = targetSku;
+        item.Status = status;
+
+        RefreshUnmappedGrid();
+        RefreshCskuHistoryGrid(targetSku);
+        _onMappingApplied?.Invoke();
+    }
+
+    /// <summary>
+    /// 납품단가/송장표시명 중 하나라도 입력된 경우 채널-SKU(CSKU) 설정으로 저장한다.
+    /// 납품단가는 VAT별도로 선택했으면 1.1을 곱해 VAT포함 기준으로 변환한다.
+    /// </summary>
+    private void SaveChannelSkuInfoFromUnmappedPanel(string targetSku)
+    {
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var hasPrice = decimal.TryParse(_unmappedSupplyPriceTextBox.Text, out var enteredPrice);
+        var invoiceDisplayName = string.IsNullOrWhiteSpace(_unmappedInvoiceNameTextBox.Text) ? null : _unmappedInvoiceNameTextBox.Text.Trim();
+        if (!hasPrice && invoiceDisplayName == null) return;
+
+        var existing = _channelSkuRepository.GetByChannelAndMsku(_unmappedChannelCode, targetSku);
+        var supplyPrice = hasPrice
+            ? (_unmappedVatExcludedRadio.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
+            : existing?.SupplyPrice ?? 0m;
+
+        _channelSkuRepository.Upsert(new ChannelSkuModel
+        {
+            ChannelCode = _unmappedChannelCode,
+            Msku = targetSku,
+            SupplyPrice = supplyPrice,
+            InvoiceDisplayName = invoiceDisplayName ?? existing?.InvoiceDisplayName,
+        });
+    }
+
+    /// <summary>
+    /// 선택한 미매핑 항목의 상품명/옵션명을 그대로 포함하는 조건(AND)으로 조건부 매핑 규칙을 만들고,
+    /// "조건부 매핑(상세)" 탭으로 이동해 바로 다듬을 수 있게 한다.
+    /// </summary>
+    private void AddConditionRuleFromSelectedUnmapped()
+    {
+        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
+        {
+            MessageBox.Show("조건부 매핑을 추가할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel candidate)
+        {
+            MessageBox.Show("마스터DB에서 매핑할 SKU를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var details = new List<MappingConditionDetail>();
+        if (!string.IsNullOrWhiteSpace(item.ProductName))
+        {
+            details.Add(new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = item.ProductName, Logic = ConditionLogic.And });
+        }
+        if (!string.IsNullOrWhiteSpace(item.OptionName))
+        {
+            details.Add(new MappingConditionDetail { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = item.OptionName, Logic = ConditionLogic.And });
+        }
+
+        if (details.Count == 0)
+        {
+            MessageBox.Show("이 항목에는 조건으로 쓸 상품명/옵션명이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var summaryKey = $"{item.ProductName} {item.OptionName}".Trim();
+        var newRuleId = _mappingRepository.AddConditionRuleWithDetails(_unmappedChannelCode, summaryKey, candidate.Sku, details);
+
+        MessageBox.Show(
+            "조건부 매핑 규칙을 추가했습니다. '조건부 매핑(상세)' 탭에서 조건을 다듬을 수 있습니다(기본값은 상품명/옵션명을 그대로 포함하는 조건입니다).",
+            "추가 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        LoadConditionRules(_unmappedChannelCode);
+        SelectConditionRuleById(newRuleId);
+        _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+    }
+
+    /// <summary>
+    /// 선택한 미매핑 항목(상품명+옵션명 조합)을 매핑 대상에서 제외(배송비/수수료 등)하는
+    /// 예외 규칙으로 저장한다.
+    /// </summary>
+    private void ExcludeSelectedUnmapped()
+    {
+        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
+        {
+            MessageBox.Show("제외 처리할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        var confirm = MessageBox.Show(
+            $"'{item.ProductName} {item.OptionName}' 조합을 매핑 대상에서 제외(배송비/수수료 등)하도록 예외 규칙으로 저장하시겠습니까?",
+            "예외 처리 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        _mappingRepository.UpsertRule(MappingRuleType.Exception, _unmappedChannelCode, key, SkuMapper.ExcludedTargetSku);
+
+        item.MappedSku = null;
+        item.Status = "제외(배송비 등)";
+
+        RefreshUnmappedGrid();
+        _onMappingApplied?.Invoke();
     }
 
     private TabPage CreateConflictTabPage()
@@ -297,10 +709,14 @@ public class MappingForm : Form
 
         var newRuleId = _mappingRepository.AddConditionRuleWithDetails(selectedChannel, "새 조건부 규칙", string.Empty, new List<MappingConditionDetail>());
         LoadConditionRules(selectedChannel);
+        SelectConditionRuleById(newRuleId);
+    }
 
+    private void SelectConditionRuleById(long ruleId)
+    {
         foreach (DataGridViewRow row in _conditionRuleGrid.Rows)
         {
-            if (row.DataBoundItem is MappingRule rule && rule.Id == newRuleId)
+            if (row.DataBoundItem is MappingRule rule && rule.Id == ruleId)
             {
                 _conditionRuleGrid.CurrentCell = row.Cells[0];
                 break;
@@ -494,6 +910,8 @@ public class MappingForm : Form
         }
 
         LoadConditionRules(selectedChannel);
+        _unmappedChannelCode = selectedChannel;
+        RefreshUnmappedGrid();
         RefreshConflicts();
     }
 

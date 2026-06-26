@@ -205,13 +205,22 @@ public class MappingRepository
     /// 발주서에서도 자동으로 매핑되도록, 매번 다시 골라야 하는 수고를 없애기 위함입니다.
     /// </summary>
     public void UpsertExactRule(string channelCode, string key, string targetSku)
+        => UpsertRule(MappingRuleType.Exact, channelCode, key, targetSku);
+
+    /// <summary>
+    /// 1:1/예외 등 단순 규칙(Key/TargetSku만 갖는 유형)을 추가하거나(같은 채널+키가 없으면)
+    /// 기존 규칙의 TargetSku를 갱신합니다. 조건부 매핑(다중 상세조건)에는 사용하지 않습니다
+    /// — 그쪽은 AddConditionRuleWithDetails/UpdateConditionRuleSummary를 쓰세요.
+    /// </summary>
+    public void UpsertRule(MappingRuleType ruleType, string channelCode, string key, string targetSku)
     {
+        var tableName = GetTableName(ruleType);
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
 
         using var findCommand = connection.CreateCommand();
         findCommand.Transaction = transaction;
-        findCommand.CommandText = "SELECT Id FROM RuleExact WHERE ChannelCode = $channelCode AND Key = $key";
+        findCommand.CommandText = $"SELECT Id FROM {tableName} WHERE ChannelCode = $channelCode AND Key = $key";
         findCommand.Parameters.AddWithValue("$channelCode", channelCode);
         findCommand.Parameters.AddWithValue("$key", key);
         var existingId = findCommand.ExecuteScalar();
@@ -220,7 +229,7 @@ public class MappingRepository
         {
             using var updateCommand = connection.CreateCommand();
             updateCommand.Transaction = transaction;
-            updateCommand.CommandText = "UPDATE RuleExact SET TargetSku = $targetSku WHERE Id = $id";
+            updateCommand.CommandText = $"UPDATE {tableName} SET TargetSku = $targetSku WHERE Id = $id";
             updateCommand.Parameters.AddWithValue("$targetSku", targetSku);
             updateCommand.Parameters.AddWithValue("$id", existingId);
             updateCommand.ExecuteNonQuery();
@@ -229,7 +238,7 @@ public class MappingRepository
         {
             using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
-            insertCommand.CommandText = "INSERT INTO RuleExact (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
+            insertCommand.CommandText = $"INSERT INTO {tableName} (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
             insertCommand.Parameters.AddWithValue("$channelCode", channelCode);
             insertCommand.Parameters.AddWithValue("$key", key);
             insertCommand.Parameters.AddWithValue("$targetSku", targetSku);

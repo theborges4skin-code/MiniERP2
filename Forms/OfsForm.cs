@@ -30,6 +30,7 @@ public class OfsForm : Form
     private StatusStrip _statusStrip = new();
     private ToolStripStatusLabel _statusLabel = new();
     private BindingList<OfsOrderItem> _orders = new();
+    private string? _lastChannelCode;
 
     public OfsForm()
     {
@@ -52,6 +53,7 @@ public class OfsForm : Form
         var btnLoadOrders = new Button { Text = "발주 파일 로드", Size = new Size(120, 30) };
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
         var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
+        var btnUnmappedBatch = new Button { Text = "미매핑 일괄 처리", Size = new Size(130, 30) };
         var btnSave = new Button { Text = "저장 (출고 확정)", Size = new Size(130, 30) };
         var btnExport = new Button { Text = "택배사 양식으로 내보내기", Size = new Size(180, 30) };
 
@@ -60,10 +62,12 @@ public class OfsForm : Form
         btnSave.Click += OnSaveClick;
         btnAddManualOrder.Click += OnAddManualOrderClick;
         btnMappingAssistant.Click += OnMappingAssistantClick;
+        btnUnmappedBatch.Click += OnUnmappedBatchClick;
 
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
         toolStrip.Controls.Add(btnMappingAssistant);
+        toolStrip.Controls.Add(btnUnmappedBatch);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
 
@@ -145,7 +149,8 @@ public class OfsForm : Form
         }
 
         // 선택된 채널의 매핑 규칙으로 SkuMapper를 생성합니다.
-        var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode);
+        var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode, _channelSkuRepository);
+        _lastChannelCode = channelConfig.ChannelCode;
 
         // UI를 대기 상태로 변경
         Cursor = Cursors.WaitCursor;
@@ -196,7 +201,7 @@ public class OfsForm : Form
                 var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
                 if (!mappingForm.Visible) mappingForm.Show();
                 mappingForm.BringToFront();
-                mappingForm.SelectChannelByCode(channelConfig.ChannelCode);
+                mappingForm.ShowUnmappedItems(channelConfig.ChannelCode, _orders, () => _ordersGrid.Invalidate());
             }
         }
         catch (Exception ex)
@@ -277,6 +282,28 @@ public class OfsForm : Form
         item.MappedSku = dialog.ResultMappedSku;
         item.Status = dialog.ResultStatus;
         _ordersGrid.Invalidate();
+    }
+
+    /// <summary>
+    /// 매핑관리창의 "미매핑 처리" 탭을 열어, 로드된 발주서의 미매핑건을 한 화면에서
+    /// 검토하면서 매핑할 수 있게 합니다. 자동 안내 팝업을 닫은 뒤에도 언제든 다시 열 수 있도록
+    /// 별도 버튼으로 제공합니다.
+    /// </summary>
+    private void OnUnmappedBatchClick(object? sender, EventArgs e)
+    {
+        var channelCode = _lastChannelCode ?? _orders.FirstOrDefault(o => !string.IsNullOrEmpty(o.ChannelCode))?.ChannelCode;
+        if (string.IsNullOrEmpty(channelCode))
+        {
+            MessageBox.Show("먼저 발주 파일을 로드하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!EnsureMasterDbNotEmpty()) return;
+
+        var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
+        if (!mappingForm.Visible) mappingForm.Show();
+        mappingForm.BringToFront();
+        mappingForm.ShowUnmappedItems(channelCode, _orders, () => _ordersGrid.Invalidate());
     }
 
     private async void OnExportClick(object? sender, EventArgs e)

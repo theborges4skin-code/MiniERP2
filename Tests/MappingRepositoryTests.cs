@@ -46,4 +46,17 @@ public class MappingRepositoryTests
         Assert.HasCount(1, rules.Where(r => r.Key == "상품A옵션1"));
         Assert.AreEqual("SKU-2", rules.Single(r => r.Key == "상품A옵션1").TargetSku);
     }
+
+    [TestMethod]
+    public void UpsertRule_ExceptionType_InsertsIntoExceptionTableNotExact()
+    {
+        var repository = new MappingRepository();
+        repository.UpsertRule(MappingRuleType.Exception, "CH1", "<기본배송료>", MiniERP2.Mapping.SkuMapper.ExcludedTargetSku);
+
+        var exceptionRules = repository.GetRules(MappingRuleType.Exception, "CH1");
+        var exactRules = repository.GetRules(MappingRuleType.Exact, "CH1");
+
+        Assert.IsTrue(exceptionRules.Any(r => r.Key == "<기본배송료>" && r.TargetSku == MiniERP2.Mapping.SkuMapper.ExcludedTargetSku));
+        Assert.IsEmpty(exactRules);
+    }
 }
