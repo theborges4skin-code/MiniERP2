@@ -4,7 +4,7 @@
 바로 이어받을 수 있도록 진행 상황을 정리한 것이다. 프로젝트 전체 배경/아키텍처는
 [PLAN.md](PLAN.md) 참고. 2026-06-26 세션 작업 내역은 git log(커밋 `1322618`~`f7db495`) 참고.
 
-**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **98/98 통과**.
+**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **103/103 통과**.
 전부 `origin/main`에 푸시됨(마지막 커밋은 git log 참고).
 
 ## auto-compact 이후 추가로 한 일
@@ -111,6 +111,42 @@
 - 테스트 9건 추가(`ShipmentGroupingTests` 4건 + `CourierExporterTests` 5건: 같은 주문번호 합치기,
   다른 주문번호 같은 그룹ID로 합포장, 같은 주문번호 다른 그룹ID로 분리배송, 4줄 초과 경고,
   InvoiceLabel 우선 사용).
+
+### 사용자가 실제로 묶음 기능을 써보며 발견한 점 + 추가 개선 3건
+
+**"발주서 1건만 출력됨" 문의 → 원인은 버그가 아니라 묶음 기본 동작**: 테스트 발주파일의 여러 줄이
+같은 주문번호 값을 가지고 있어서(또는 채널설정에 주문번호 매핑이 없어서 모두 같은 값으로 읽혀서)
+전부 한 묶음으로 합쳐진 것이었다. 채널설정의 "발주서 매핑" → 주문번호 열 매핑을 확인하면 된다.
+별도 코드 수정은 하지 않음(의도된 기본 동작).
+
+이어서 요청받은 3가지 기능개선을 구현:
+
+1. **부분 선택 내보내기** — `Forms/OfsForm.cs`의 `OnExportClick`. 그리드에서 줄을 선택해둔 상태면
+   선택한 건만, 아무것도 선택하지 않았으면 매핑된 전체를 내보낸다(`GetSelectedOrderItems()` 재사용).
+2. **택배사 출력 미리보기 패널** — OFS 화면을 위(상세 줄)/아래(미리보기) `SplitContainer`로 나눠
+   하단에 신설(`CreateExportPreviewPanel`). 매핑 성공한 줄을
+   `ShipmentGrouping.GetEffectiveGroupId`로 묶어 `ShipmentPreviewRow`(주문번호들/수취인/연락처/
+   주소/배송메세지/품목(`ShipmentGrouping.BuildCombinedItemDescription`로 CourierExporter와 동일한
+   조합 로직 공유)/총수량/운송장번호/줄수)를 한 행씩 보여준다. 배송메세지·운송장번호는 미리보기
+   에서 바로 고치면 그 묶음의 모든 원본 줄에 반영된다(속성 setter가 처리). 우클릭으로 "합포장(묶음
+   합치기)"/"묶음 해제"도 가능(분리배송은 줄 단위 선택이 필요해 상세 그리드에서 하도록 안내).
+   품목 4줄 초과 묶음은 미리보기에서도 연분홍으로 강조. 발주서 로드/매핑 적용/그룹 조작 등 묶음에
+   영향을 줄 수 있는 모든 지점에 `RefreshExportPreview()` 호출을 추가해 자동 갱신되게 했고, 수동
+   "새로고침" 버튼도 함께 둠.
+3. **발주확정 시 발주이력 기록 + 추적관리** — 기존 `OutboundDetailTable`(저장(출고확정) 시
+   `OutboundRepository.SaveOutbound`가 채움, `SettlementForm`의 "마감 대조(수기)" 탭에서 조회)이
+   이미 발주이력 역할을 하고 있었으나 상태 추적이 없었다. `OutboundDetail`에 `Status`("발송대기"/
+   "발송완료")와 `ConfirmedAt`(nullable) 추가. 발주확정 시점에 운송장번호가 이미 있으면
+   "발송완료"로, 없으면 "발송대기"로 시작(이미 발송완료였던 건을 재확정해도 뒤로 되돌아가지 않게
+   SQL CASE로 보호). 마감 대조 탭에 버튼 2개 추가:
+   - **선택건 발송확인 처리** — `OutboundRepository.MarkAsShipped(ids)`로 운송장번호 없이도 수동
+     확정(매장 직접배송 등).
+   - **운송장번호 업로드** — 택배사 등에서 받은 "주문번호/운송장번호" 2열 엑셀을 읽어
+     `OutboundRepository.BulkUpdateTrackingNoByOrderNo`로 일괄 갱신 + 자동 발송완료 처리(주문번호가
+     일치하지 않으면 조용히 건너뜀).
+   - `Database/DbSchema.cs`에 `EnsureColumn`으로 기존 DB도 마이그레이션.
+4. 테스트 5건 추가(`OutboundRepositoryTests`: 운송장번호 유무에 따른 초기 상태, 재확정 시 상태
+   유지, MarkAsShipped, BulkUpdateTrackingNoByOrderNo 일부매칭). 103/103 통과.
 
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 

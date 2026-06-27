@@ -70,4 +70,109 @@ public class OutboundRepositoryTests
 
         Assert.HasCount(2, results);
     }
+
+    [TestMethod]
+    public void SaveOutbound_WithoutTrackingNo_StartsAsWaitingForShipment()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.UtcNow.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-3", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+
+        Assert.AreEqual("발송대기", results[0].Status);
+        Assert.IsNull(results[0].ConfirmedAt);
+    }
+
+    [TestMethod]
+    public void SaveOutbound_WithTrackingNo_StartsAsShippedWithConfirmedAt()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.UtcNow.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-4", TrackingNo = "T100", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+
+        Assert.AreEqual("발송완료", results[0].Status);
+        Assert.IsNotNull(results[0].ConfirmedAt);
+    }
+
+    [TestMethod]
+    public void SaveOutbound_ReconfirmingWithoutTrackingNo_DoesNotDowngradeAlreadyShippedStatus()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.UtcNow.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-5", TrackingNo = "T200", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+        // 같은 건을 운송장번호 없이 다시 저장(예: 발주서 재로딩 후 재확정) — 이미 발송완료였던 상태가
+        // 발송대기로 후퇴하면 안 된다.
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-5", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+
+        Assert.AreEqual("발송완료", results[0].Status);
+        Assert.IsNotNull(results[0].ConfirmedAt);
+    }
+
+    [TestMethod]
+    public void MarkAsShipped_UpdatesStatusAndConfirmedAt()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.UtcNow.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-6", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+        var saved = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+
+        repository.MarkAsShipped([saved.Id]);
+
+        var updated = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        Assert.AreEqual("발송완료", updated.Status);
+        Assert.IsNotNull(updated.ConfirmedAt);
+    }
+
+    [TestMethod]
+    public void BulkUpdateTrackingNoByOrderNo_UpdatesMatchingOrdersAndSkipsUnmatched()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.UtcNow.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-7", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-7", TrackingNo = "", MskuCode = "SKU-2", Qty = 1, SupplyPrice = 2000m },
+        });
+
+        var updatedCount = repository.BulkUpdateTrackingNoByOrderNo(new Dictionary<string, string>
+        {
+            ["ORDER-7"] = "T300",
+            ["ORDER-NOT-FOUND"] = "T999",
+        });
+
+        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+
+        Assert.AreEqual(2, updatedCount); // ORDER-7의 두 SKU 줄 모두 갱신, 없는 주문번호는 건너뜀
+        Assert.IsTrue(results.All(r => r.TrackingNo == "T300" && r.Status == "발송완료" && r.ConfirmedAt != null));
+    }
 }

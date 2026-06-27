@@ -333,10 +333,14 @@ public class SettlementForm : Form
         var btnLoadOutbound = new Button { Text = "출고내역 조회", Size = new Size(110, 30) };
         var btnLoadStatement = new Button { Text = "거래처 마감내역 불러오기", Size = new Size(170, 30) };
         var btnExportOutbound = new Button { Text = "출고내역 엑셀로 내보내기", Size = new Size(170, 30) };
+        var btnMarkShipped = new Button { Text = "선택건 발송확인 처리", Size = new Size(140, 30) };
+        var btnUploadTracking = new Button { Text = "운송장번호 업로드", Size = new Size(130, 30) };
 
         btnLoadOutbound.Click += OnLoadOutboundClick;
         btnLoadStatement.Click += OnLoadStatementClick;
         btnExportOutbound.Click += OnExportOutboundClick;
+        btnMarkShipped.Click += OnMarkShippedClick;
+        btnUploadTracking.Click += OnUploadTrackingClick;
 
         toolStrip.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
         toolStrip.Controls.Add(_reconcileChannelComboBox);
@@ -347,6 +351,8 @@ public class SettlementForm : Form
         toolStrip.Controls.Add(btnLoadOutbound);
         toolStrip.Controls.Add(btnExportOutbound);
         toolStrip.Controls.Add(btnLoadStatement);
+        toolStrip.Controls.Add(btnMarkShipped);
+        toolStrip.Controls.Add(btnUploadTracking);
 
         var splitContainer = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
 
@@ -362,7 +368,9 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "SKU", Name = "MskuCode", DataPropertyName = "MskuCode", Width = 120 },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60 },
             new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "출고일시", Name = "CreatedAt", DataPropertyName = "CreatedAt", Width = 130 }
+            new DataGridViewTextBoxColumn { HeaderText = "출고일시", Name = "CreatedAt", DataPropertyName = "CreatedAt", Width = 130 },
+            new DataGridViewTextBoxColumn { HeaderText = "발주이력 상태", Name = "Status", DataPropertyName = "Status", Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "확정일시", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130 }
         );
 
         _statementGrid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = true, AllowUserToAddRows = false, ReadOnly = true };
@@ -405,6 +413,96 @@ public class SettlementForm : Form
         var details = _outboundRepository.GetByChannel(channelCode, _fromDatePicker.Value.Date, _toDatePicker.Value.Date.AddDays(1).AddTicks(-1));
         _outboundGrid.DataSource = new BindingList<OutboundDetail>(details);
         _statusLabel.Text = $"출고내역 {details.Count}건 조회됨.";
+    }
+
+    /// <summary>
+    /// 선택한 발주이력을 운송장번호 없이도 "발송완료"로 수동 확정한다(예: 매장 직접배송 등
+    /// 운송장번호가 없는 발송 방식). 마감 시점에 어떤 건이 실제로 발송됐는지 추적하기 위함이다.
+    /// </summary>
+    private void OnMarkShippedClick(object? sender, EventArgs e)
+    {
+        if (_outboundGrid.DataSource is not BindingList<OutboundDetail> details)
+        {
+            MessageBox.Show("먼저 출고내역을 조회하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var selectedIds = _outboundGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow)
+            .Select(r => r.DataBoundItem)
+            .OfType<OutboundDetail>()
+            .Select(d => d.Id)
+            .ToList();
+
+        if (selectedIds.Count == 0)
+        {
+            MessageBox.Show("발송확인 처리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _outboundRepository.MarkAsShipped(selectedIds);
+        OnLoadOutboundClick(sender, e); // 갱신된 상태를 다시 조회해 그리드에 반영
+        _statusLabel.Text = $"{selectedIds.Count}건을 발송완료로 처리했습니다.";
+    }
+
+    /// <summary>
+    /// 택배사 등에서 받은 "주문번호-운송장번호" 매칭 파일을 불러와 일괄로 운송장번호를 채우고
+    /// 발송완료로 확정한다. 1행은 헤더, 1열은 주문번호, 2열은 운송장번호로 가정한다.
+    /// </summary>
+    private void OnUploadTrackingClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Title = "주문번호-운송장번호 매칭 파일을 선택하세요 (1열: 주문번호, 2열: 운송장번호)",
+            InitialDirectory = _settingsService.GetLastFolder("TrackingUpload") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            _settingsService.SetLastFolder("TrackingUpload", Path.GetDirectoryName(ofd.FileName)!);
+
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
+            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+            if (worksheet?.Dimension == null)
+            {
+                MessageBox.Show("엑셀 파일에서 데이터를 찾을 수 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var trackingNoByOrderNo = new Dictionary<string, string>();
+            for (int row = 2; row <= worksheet.Dimension.End.Row; row++)
+            {
+                var orderNo = worksheet.Cells[row, 1].Value?.ToString();
+                var trackingNo = worksheet.Cells[row, 2].Value?.ToString();
+                if (string.IsNullOrWhiteSpace(orderNo) || string.IsNullOrWhiteSpace(trackingNo)) continue;
+
+                trackingNoByOrderNo[orderNo] = trackingNo;
+            }
+
+            if (trackingNoByOrderNo.Count == 0)
+            {
+                MessageBox.Show("읽을 수 있는 주문번호-운송장번호 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var updatedRowCount = _outboundRepository.BulkUpdateTrackingNoByOrderNo(trackingNoByOrderNo);
+            OnLoadOutboundClick(sender, e);
+            _statusLabel.Text = $"주문번호 {trackingNoByOrderNo.Count}건 매칭 시도 → 출고 줄 {updatedRowCount}건의 운송장번호를 갱신하고 발송완료로 처리했습니다.";
+
+            MessageBox.Show(
+                $"파일의 주문번호 {trackingNoByOrderNo.Count}건 중, 일치하는 출고내역 {updatedRowCount}줄(SKU 단위)의 운송장번호를 갱신했습니다.\n" +
+                "일치하는 주문번호가 없으면 조용히 건너뛰었습니다(다른 채널/기간일 수 있습니다).",
+                "갱신 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnExportOutboundClick(object? sender, EventArgs e)

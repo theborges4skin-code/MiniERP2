@@ -27,6 +27,7 @@ public class OfsForm : Form
     private readonly ItemRepository _itemRepository = new();
 
     private ExcelLikeDataGridView _ordersGrid = new();
+    private DataGridView _previewGrid = new();
     private StatusStrip _statusStrip = new();
     private ToolStripStatusLabel _statusLabel = new();
     private BindingList<OfsOrderItem> _orders = new();
@@ -112,6 +113,11 @@ public class OfsForm : Form
         _ordersGrid.CellFormatting += OnOrdersGridCellFormatting;
         SetupShipmentGroupingContextMenu();
 
+        // 2.5. 위(상세 줄)/아래(택배사 출력 미리보기) 분할
+        var gridSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420 };
+        gridSplit.Panel1.Controls.Add(_ordersGrid);
+        gridSplit.Panel2.Controls.Add(CreateExportPreviewPanel());
+
         // 3. Status Bar
         _statusStrip = new StatusStrip { Dock = DockStyle.Bottom };
         _statusLabel = new ToolStripStatusLabel("준비");
@@ -119,7 +125,7 @@ public class OfsForm : Form
 
         // Add controls to layout
         mainLayout.Controls.Add(toolStrip, 0, 0);
-        mainLayout.Controls.Add(_ordersGrid, 0, 1);
+        mainLayout.Controls.Add(gridSplit, 0, 1);
         mainLayout.Controls.Add(_statusStrip, 0, 2);
 
         Controls.Add(mainLayout);
@@ -199,6 +205,7 @@ public class OfsForm : Form
             foreach (var item in allLoadedItems) _orders.Add(item);
 
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
+            RefreshExportPreview();
 
             var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
             if (unmappedCount > 0 && EnsureMasterDbNotEmpty())
@@ -208,7 +215,7 @@ public class OfsForm : Form
                 var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
                 if (!mappingForm.Visible) mappingForm.Show();
                 mappingForm.BringToFront();
-                mappingForm.ShowUnmappedItems(channelConfig.ChannelCode, _orders, () => _ordersGrid.Invalidate());
+                mappingForm.ShowUnmappedItems(channelConfig.ChannelCode, _orders, () => { _ordersGrid.Invalidate(); RefreshExportPreview(); });
             }
         }
         catch (Exception ex)
@@ -289,6 +296,7 @@ public class OfsForm : Form
         item.MappedSku = dialog.ResultMappedSku;
         item.Status = dialog.ResultStatus;
         _ordersGrid.Invalidate();
+        RefreshExportPreview();
     }
 
     /// <summary>
@@ -310,15 +318,24 @@ public class OfsForm : Form
         var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
         if (!mappingForm.Visible) mappingForm.Show();
         mappingForm.BringToFront();
-        mappingForm.ShowUnmappedItems(channelCode, _orders, () => _ordersGrid.Invalidate());
+        mappingForm.ShowUnmappedItems(channelCode, _orders, () => { _ordersGrid.Invalidate(); RefreshExportPreview(); });
     }
 
     private async void OnExportClick(object? sender, EventArgs e)
     {
-        var ordersToExport = _orders.Where(o => !string.IsNullOrWhiteSpace(o.MappedSku)).ToList();
+        // 그리드에서 줄을 선택해둔 상태면 선택한 건만, 아무것도 선택하지 않았으면 매핑된 전체를 내보낸다.
+        var selected = GetSelectedOrderItems();
+        var isPartialSelection = selected.Count > 0;
+        var ordersToExport = (isPartialSelection ? selected : (IEnumerable<OfsOrderItem>)_orders)
+            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku))
+            .ToList();
+
         if (ordersToExport.Count == 0)
         {
-            MessageBox.Show("내보낼 (매핑 성공된) 주문이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var message = isPartialSelection
+                ? "선택한 줄 중 매핑 성공된 주문이 없습니다."
+                : "내보낼 (매핑 성공된) 주문이 없습니다.";
+            MessageBox.Show(message, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -352,7 +369,8 @@ public class OfsForm : Form
         {
             var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
             var overflowGroups = await _courierExporter.ExportAsync(ordersToExport, courier, filePath, channelConfigsByCode);
-            _statusLabel.Text = $"{ordersToExport.Count}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
+            var scopeLabel = isPartialSelection ? "선택한" : "매핑된 전체";
+            _statusLabel.Text = $"{scopeLabel} {ordersToExport.Count}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
 
             if (overflowGroups.Count > 0)
             {
@@ -552,6 +570,7 @@ public class OfsForm : Form
             }
             // 변경된 상태를 그리드에 즉시 반영하기 위해 해당 행을 무효화합니다.
             _ordersGrid.InvalidateRow(e.RowIndex);
+            RefreshExportPreview();
         }
         // '운송장번호' 열이 수정되면 같은 묶음(송장)의 다른 줄에도 같은 운송장번호를 복사한다
         // (실제로는 한 패키지에 운송장 1개이므로, 묶음 안의 모든 줄이 같은 운송장번호를 가져야 함).
@@ -563,6 +582,7 @@ public class OfsForm : Form
                 sibling.TrackingNo = item.TrackingNo;
             }
             _ordersGrid.Invalidate();
+            RefreshExportPreview();
         }
     }
 
@@ -629,6 +649,7 @@ public class OfsForm : Form
             item.ShipmentGroupId = groupId;
         }
         _ordersGrid.Invalidate();
+        RefreshExportPreview();
     }
 
     private void OnSplitIntoNewShipmentClick(object? sender, EventArgs e)
@@ -647,6 +668,7 @@ public class OfsForm : Form
             item.ShipmentGroupId = newGroupId;
         }
         _ordersGrid.Invalidate();
+        RefreshExportPreview();
     }
 
     private void OnResetShipmentGroupClick(object? sender, EventArgs e)
@@ -663,5 +685,173 @@ public class OfsForm : Form
             item.ShipmentGroupId = null;
         }
         _ordersGrid.Invalidate();
+        RefreshExportPreview();
+    }
+
+    // ===================== 택배사 출력 미리보기 =====================
+
+    /// <summary>
+    /// 묶음(=송장) 단위로 묶인 미리보기 한 줄을 나타낸다. 실제 택배사 출력 시 CourierExporter가
+    /// 만드는 결과와 같은 조합 규칙(<see cref="ShipmentGrouping.BuildCombinedItemDescription"/>)을
+    /// 써서, 내보내기 전에 미리 어떤 모습으로 나갈지 확인할 수 있게 한다. 배송메세지/운송장번호는
+    /// 여기서 수정하면 묶음에 속한 모든 원본 줄에 그대로 반영된다.
+    /// </summary>
+    private class ShipmentPreviewRow
+    {
+        public required List<OfsOrderItem> Items { get; init; }
+
+        public string OrderNos => string.Join(", ", Items.Select(i => i.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct());
+        public string? Recipient => Items[0].Recipient;
+        public string? Phone => Items[0].Phone;
+        public string? Address => Items[0].Address;
+
+        public string? DeliveryMessage
+        {
+            get => Items[0].DeliveryMessage;
+            set { foreach (var item in Items) item.DeliveryMessage = value; }
+        }
+
+        public string ItemsDescription => ShipmentGrouping.BuildCombinedItemDescription(Items);
+        public int TotalQuantity => Items.Sum(i => i.Quantity);
+
+        public string? TrackingNo
+        {
+            get => Items[0].TrackingNo;
+            set { foreach (var item in Items) item.TrackingNo = value; }
+        }
+
+        public int LineCount => Items.Count;
+    }
+
+    private Control CreateExportPreviewPanel()
+    {
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
+        toolStrip.Controls.Add(new Label { Text = "택배사 출력 미리보기(묶음 단위) — 매핑 성공한 줄만 표시", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Padding = new Padding(0, 4, 10, 0) });
+        var btnRefreshPreview = new Button { Text = "새로고침", Size = new Size(80, 24) };
+        btnRefreshPreview.Click += (s, e) => RefreshExportPreview();
+        toolStrip.Controls.Add(btnRefreshPreview);
+
+        _previewGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+        };
+        _previewGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "OrderNos", HeaderText = "주문번호", DataPropertyName = "OrderNos", Width = 150, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Phone", HeaderText = "연락처", DataPropertyName = "Phone", Width = 110, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Address", HeaderText = "주소", DataPropertyName = "Address", Width = 200, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "DeliveryMessage", HeaderText = "배송메세지", DataPropertyName = "DeliveryMessage", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "ItemsDescription", HeaderText = "품목(실제 출력될 내용)", DataPropertyName = "ItemsDescription", Width = 220, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "TotalQuantity", HeaderText = "총수량", DataPropertyName = "TotalQuantity", Width = 60, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "TrackingNo", HeaderText = "운송장번호", DataPropertyName = "TrackingNo", Width = 130 },
+            new DataGridViewTextBoxColumn { Name = "LineCount", HeaderText = "줄수", DataPropertyName = "LineCount", Width = 50, ReadOnly = true }
+        );
+        _previewGrid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        _previewGrid.CellValueChanged += OnPreviewGridCellValueChanged;
+        _previewGrid.CellFormatting += OnPreviewGridCellFormatting;
+        SetupPreviewGridContextMenu();
+
+        layout.Controls.Add(toolStrip, 0, 0);
+        layout.Controls.Add(_previewGrid, 0, 1);
+        return layout;
+    }
+
+    /// <summary>
+    /// 품목이 4줄을 초과하는 묶음은 미리보기에서도 강조해, 내보내기 전에 미리 알아채고 줄을
+    /// 합치거나 분리배송으로 나눌 수 있게 한다(CourierExporter의 4줄 초과 경고와 같은 기준).
+    /// </summary>
+    private void OnPreviewGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _previewGrid.Rows.Count) return;
+        if (_previewGrid.Rows[e.RowIndex].DataBoundItem is not ShipmentPreviewRow row) return;
+
+        var isOverflow = row.ItemsDescription.Split('\n').Length > 4;
+        _previewGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = isOverflow ? Color.MistyRose : _previewGrid.DefaultCellStyle.BackColor;
+        _previewGrid.Rows[e.RowIndex].DefaultCellStyle.ForeColor = isOverflow ? Color.Black : _previewGrid.DefaultCellStyle.ForeColor;
+    }
+
+    /// <summary>
+    /// 미리보기에서 배송메세지/운송장번호를 고치면 그 묶음에 속한 모든 원본 줄(ShipmentPreviewRow.
+    /// Items)에 즉시 반영된다(속성 setter가 처리). 위쪽 상세 그리드도 같이 보이도록 무효화한다.
+    /// </summary>
+    private void OnPreviewGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0) return;
+        _ordersGrid.Invalidate();
+    }
+
+    private void SetupPreviewGridContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("합포장(선택한 묶음들을 하나로 합치기)", null, OnMergePreviewGroupsClick);
+        menu.Items.Add("묶음 해제(주문번호 단위로 되돌리기)", null, OnResetPreviewGroupsClick);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("※ 특정 줄만 분리배송하려면 위 상세 목록에서 줄을 선택해 우클릭하세요.") { Enabled = false });
+        _previewGrid.ContextMenuStrip = menu;
+    }
+
+    private List<ShipmentPreviewRow> GetSelectedPreviewRows()
+    {
+        return _previewGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem)
+            .OfType<ShipmentPreviewRow>()
+            .ToList();
+    }
+
+    private void OnMergePreviewGroupsClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedPreviewRows();
+        if (selected.Count < 2)
+        {
+            MessageBox.Show("합포장으로 합칠 묶음을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
+        foreach (var item in selected.SelectMany(r => r.Items))
+        {
+            item.ShipmentGroupId = groupId;
+        }
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+    }
+
+    private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedPreviewRows();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        foreach (var item in selected.SelectMany(r => r.Items))
+        {
+            item.ShipmentGroupId = null;
+        }
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+    }
+
+    /// <summary>
+    /// 매핑 성공한 줄을 묶음 단위로 모아 미리보기 그리드를 다시 채운다. 발주서 로드, 매핑 적용,
+    /// 분리배송/합포장 조작 등 미리보기에 영향을 줄 수 있는 작업 뒤에 호출한다.
+    /// </summary>
+    private void RefreshExportPreview()
+    {
+        var rows = _orders
+            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku))
+            .GroupBy(ShipmentGrouping.GetEffectiveGroupId)
+            .Select(g => new ShipmentPreviewRow { Items = g.ToList() })
+            .ToList();
+
+        _previewGrid.DataSource = new BindingList<ShipmentPreviewRow>(rows);
     }
 }

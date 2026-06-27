@@ -84,7 +84,9 @@ public static class DbSchema
                 MskuCode TEXT NOT NULL,
                 Qty INTEGER NOT NULL,
                 SupplyPrice REAL NOT NULL,
-                CreatedAt TEXT NOT NULL DEFAULT ''
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                Status TEXT NOT NULL DEFAULT '발송대기',
+                ConfirmedAt TEXT
             );
 
             CREATE TABLE IF NOT EXISTS RuleExact (
@@ -156,6 +158,8 @@ public static class DbSchema
         EnsureColumn(connection, "ItemTable", "Reserve3", "TEXT");
         EnsureColumn(connection, "ItemTable", "ProductGroup", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "InvoiceDisplayName", "TEXT");
+        EnsureColumn(connection, "OutboundDetailTable", "Status", "TEXT NOT NULL DEFAULT '발송대기'");
+        EnsureColumn(connection, "OutboundDetailTable", "ConfirmedAt", "TEXT");
     }
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)

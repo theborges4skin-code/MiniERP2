@@ -64,15 +64,11 @@ public class CourierExporter
                 var groupItems = group.ToList();
                 var representative = groupItems[0];
 
-                var descriptionLines = groupItems
-                    .Select(i => i.InvoiceLabel ?? $"{i.ProductName} {i.Quantity}개")
-                    .Where(text => !string.IsNullOrWhiteSpace(text))
-                    .ToList();
-                if (descriptionLines.Count > 4)
+                var combinedDescription = ShipmentGrouping.BuildCombinedItemDescription(groupItems);
+                if (combinedDescription.Split('\n').Length > 4)
                 {
                     overflowGroups.Add(representative.OrderNo ?? group.Key);
                 }
-                var combinedDescription = string.Join("\n", descriptionLines);
 
                 for (int col = 0; col < headers.Count; col++)
                 {

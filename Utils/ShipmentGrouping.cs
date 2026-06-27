@@ -20,4 +20,16 @@ public static class ShipmentGrouping
         // (객체 식별 해시는 GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다).
         return $"__row_{RuntimeHelpers.GetHashCode(item)}";
     }
+
+    /// <summary>
+    /// 한 묶음(=한 송장)에 속한 모든 줄의 품목 표시문자열을 줄바꿈으로 이어붙인다. 택배사 내보내기
+    /// (CourierExporter)와 OFS의 출력 미리보기 패널이 항상 같은 결과를 보여주도록 공유한다.
+    /// </summary>
+    public static string BuildCombinedItemDescription(IEnumerable<OfsOrderItem> items)
+    {
+        var lines = items
+            .Select(i => i.InvoiceLabel ?? $"{i.ProductName} {i.Quantity}개")
+            .Where(text => !string.IsNullOrWhiteSpace(text));
+        return string.Join("\n", lines);
+    }
 }
