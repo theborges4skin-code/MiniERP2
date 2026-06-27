@@ -54,7 +54,8 @@ public static class DbSchema
                 HeaderMappingJson TEXT NOT NULL,
                 TrackingImportHeaderRow INTEGER NOT NULL DEFAULT 1,
                 TrackingImportRecipientHeader TEXT NOT NULL DEFAULT '',
-                TrackingImportTrackingNoHeader TEXT NOT NULL DEFAULT ''
+                TrackingImportTrackingNoHeader TEXT NOT NULL DEFAULT '',
+                QuantityNotationFormat TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS SalesChannelTable (
@@ -172,6 +173,7 @@ public static class DbSchema
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportHeaderRow", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportRecipientHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "QuantityNotationFormat", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

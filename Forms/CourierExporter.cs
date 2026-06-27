@@ -80,7 +80,7 @@ public class CourierExporter
                 var groupItems = group.ToList();
                 var representative = groupItems[0];
 
-                var combinedDescription = ShipmentGrouping.BuildCombinedItemDescription(groupItems);
+                var combinedDescription = ShipmentGrouping.BuildCombinedItemDescription(groupItems, courier.QuantityNotationFormat);
                 if (ShipmentGrouping.CountDescriptionLines(groupItems) > 4)
                 {
                     overflowGroups.Add(representative.OrderNo ?? group.Key);
@@ -110,7 +110,12 @@ public class CourierExporter
                     // 그대로 출력해 빈 칸이 되는 것보다는 낫게 한다).
                     if (string.Equals(propertyName, nameof(OfsOrderItem.MappedSku), StringComparison.OrdinalIgnoreCase))
                     {
-                        var invoiceDisplayName = ResolveInvoiceDisplayName(representative, invoiceDisplayNameCache);
+                        // SkuMapper를 거친 정상 흐름이면 이미 InvoiceDisplayName이 채워져 있어 DB
+                        // 조회가 필요 없다 — 발주/출고 이력에서 재출력하는 경우(채워지지 않음)에만
+                        // 채널코드+CSKU코드로 다시 조회한다.
+                        var invoiceDisplayName = !string.IsNullOrWhiteSpace(representative.InvoiceDisplayName)
+                            ? representative.InvoiceDisplayName
+                            : ResolveInvoiceDisplayName(representative, invoiceDisplayNameCache);
                         worksheet.Cells[row, col + 1].Value = !string.IsNullOrWhiteSpace(invoiceDisplayName) ? invoiceDisplayName : representative.MappedSku;
                         continue;
                     }

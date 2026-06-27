@@ -12,6 +12,9 @@ namespace MiniERP2.Utils;
 /// </summary>
 public static class ShipmentGrouping
 {
+    /// <summary>수량 표기 형식이 설정되지 않았을 때 쓰는 기본값(과거 동작과 동일: "표시명 수량개").</summary>
+    private const string DefaultQuantityFormat = " ##개";
+
     public static string GetEffectiveGroupId(OfsOrderItem item)
     {
         if (!string.IsNullOrWhiteSpace(item.ShipmentGroupId)) return item.ShipmentGroupId;
@@ -28,9 +31,15 @@ public static class ShipmentGrouping
     /// 송장에서 어디까지가 한 품목인지 헷갈린다는 피드백을 반영한다. 택배사 내보내기
     /// (CourierExporter)와 OFS의 출력 미리보기 패널이 항상 같은 결과를 보여주도록 공유한다.
     /// </summary>
-    public static string BuildCombinedItemDescription(IEnumerable<OfsOrderItem> items)
+    /// <param name="items">한 묶음에 속한 줄들입니다.</param>
+    /// <param name="quantityFormat">
+    /// 택배사별 수량 표기 형식("##"이 수량으로 치환됨, 예: "   ▶[##개]"). 생략하면 기본 형식을 쓴다.
+    /// CourierExporter가 선택된 택배사의 설정을 전달하고, OFS 미리보기처럼 특정 택배사가 아직
+    /// 정해지지 않은 화면은 기본 형식을 그대로 쓴다.
+    /// </param>
+    public static string BuildCombinedItemDescription(IEnumerable<OfsOrderItem> items, string? quantityFormat = null)
     {
-        var lines = GetDescriptionLines(items);
+        var lines = GetDescriptionLines(items, quantityFormat);
         if (lines.Count == 0) return string.Empty;
         if (lines.Count == 1) return lines[0];
 
@@ -42,13 +51,33 @@ public static class ShipmentGrouping
     /// <see cref="BuildCombinedItemDescription"/>이 괄호+플러스로 합쳐버린 뒤에는 줄바꿈으로 셀 수
     /// 없으므로, 합치기 전의 줄 목록 개수를 그대로 쓴다.
     /// </summary>
-    public static int CountDescriptionLines(IEnumerable<OfsOrderItem> items) => GetDescriptionLines(items).Count;
+    public static int CountDescriptionLines(IEnumerable<OfsOrderItem> items) => GetDescriptionLines(items, null).Count;
 
-    private static List<string> GetDescriptionLines(IEnumerable<OfsOrderItem> items)
+    private static List<string> GetDescriptionLines(IEnumerable<OfsOrderItem> items, string? quantityFormat)
     {
-        return items
-            .Select(i => i.InvoiceLabel ?? $"{i.ProductName} {i.Quantity}개")
+        var itemList = items.ToList();
+        // 합포장(한 묶음에 품목이 2건 이상)이면 작업자가 다중건 포장임을 한눈에 알아챌 수 있도록,
+        // 각 줄의 수량 표기 앞뒤에 "xx"를 붙인다(사용자 요청 — 일렬로만 나오면 구분이 어렵다는 피드백).
+        var isMultiItemGroup = itemList.Count >= 2;
+
+        return itemList
+            .Select(i => i.InvoiceLabel ?? BuildAutoLabel(i, quantityFormat, isMultiItemGroup))
             .Where(text => !string.IsNullOrWhiteSpace(text))
             .ToList();
+    }
+
+    private static string BuildAutoLabel(OfsOrderItem item, string? quantityFormat, bool isMultiItemGroup)
+    {
+        var name = !string.IsNullOrWhiteSpace(item.InvoiceDisplayName) ? item.InvoiceDisplayName : item.ProductName;
+        var quantityTag = FormatQuantityTag(quantityFormat, item.Quantity);
+        if (isMultiItemGroup) quantityTag = $"xx{quantityTag}xx";
+
+        return $"{name}{quantityTag}";
+    }
+
+    private static string FormatQuantityTag(string? template, int quantity)
+    {
+        var effective = string.IsNullOrEmpty(template) ? DefaultQuantityFormat : template;
+        return effective.Replace("##", quantity.ToString());
     }
 }

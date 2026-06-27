@@ -1062,10 +1062,12 @@ public class OfsForm : Form
         Phone = item.Phone,
         Address = item.Address,
         DeliveryMessage = item.DeliveryMessage,
+        OrderDate = item.OrderDate,
         MappedSku = item.MappedSku,
         Status = item.Status,
         TrackingNo = item.TrackingNo,
         InvoiceLabel = item.InvoiceLabel,
+        InvoiceDisplayName = item.InvoiceDisplayName,
         ShipmentGroupId = item.ShipmentGroupId,
     };
 

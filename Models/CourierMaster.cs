@@ -12,4 +12,12 @@ public class CourierMaster
     public int TrackingImportHeaderRow { get; set; } = 1;
     public string TrackingImportRecipientHeader { get; set; } = string.Empty;
     public string TrackingImportTrackingNoHeader { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 송장표시명 뒤에 붙일 수량 표기 형식입니다. "##"이 실제 수량으로 치환됩니다(예: "   ▶[##개]" +
+    /// 수량 2 → "   ▶[2개]"). 비어있으면 기본형식(" ##개")을 씁니다. 합포장(한 묶음에 품목이 2건
+    /// 이상)이면 작업자가 알아보기 쉽도록 이 형식 앞뒤에 "xx"가 자동으로 붙습니다
+    /// (Utils.ShipmentGrouping 참고).
+    /// </summary>
+    public string QuantityNotationFormat { get; set; } = string.Empty;
 }

@@ -23,6 +23,7 @@ public class CourierConfigForm : Form
     private NumericUpDown _numTrackingHeaderRow = new();
     private ComboBox _cmbTrackingRecipientHeader = new();
     private ComboBox _cmbTrackingNoHeader = new();
+    private TextBox _txtQuantityNotationFormat = new();
 
     private static readonly (string Property, string Label)[] PropertyOptions =
     [
@@ -34,7 +35,7 @@ public class CourierConfigForm : Form
         ("Phone", "연락처"),
         ("Address", "주소"),
         ("DeliveryMessage", "배송메세지"),
-        ("InvoiceLabel", "송장표시 품목명(CSKU 송장표시명+수량 자동조합, 설정 없으면 빈값)"),
+        ("InvoiceLabel", "송장표시 품목명(CSKU 송장표시명+수량표기형식 자동조합, 설정 없으면 빈값)"),
         ("MappedSku", "매핑된 SKU(CSKU 코드가 아니라 그 CSKU의 송장표시명으로 출력됨, 미설정 시 코드 그대로)"),
         ("Status", "처리 상태"),
         ("TrackingNo", "운송장번호"),
@@ -77,11 +78,12 @@ public class CourierConfigForm : Form
         leftPanel.Controls.Add(leftButtonPanel, 0, 1);
 
         // 우측: 선택한 택배사 편집
-        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, Padding = new Padding(10) };
+        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 7, Padding = new Padding(10) };
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
@@ -140,6 +142,24 @@ public class CourierConfigForm : Form
             AutoSize = false,
         };
 
+        // "품목" 칸(InvoiceLabel/ProductName 매핑)에 붙는 수량 표기를 택배사별로 다르게 지정한다.
+        // 일렬로만 나오면(예: "A상품 2개") 알아보기 어렵다는 피드백 — "##"을 실제 수량으로 치환해
+        // 넣고, 합포장(한 묶음에 품목 2건 이상)이면 작업자가 알아보기 쉽도록 앞뒤에 "xx"를 자동으로
+        // 붙인다(Utils/ShipmentGrouping.cs).
+        var quantityFormatGroup = new GroupBox { Text = "수량 표기 형식", Dock = DockStyle.Fill };
+        var quantityFormatPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        quantityFormatPanel.Controls.Add(new Label { Text = "형식(## = 수량):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+        _txtQuantityNotationFormat = new TextBox { Width = 150 };
+        quantityFormatPanel.Controls.Add(_txtQuantityNotationFormat);
+        quantityFormatPanel.Controls.Add(new Label
+        {
+            Text = "예: \"   ▶[##개]\" → \"A상품   ▶[2개]\" (합포장 시 앞뒤에 xx 자동 추가). 비워두면 기본형식(\" ##개\") 사용.",
+            AutoSize = true,
+            Padding = new Padding(8, 6, 0, 0),
+            ForeColor = Color.DimGray,
+        });
+        quantityFormatGroup.Controls.Add(quantityFormatPanel);
+
         // 운송장 결과 가져오기(입수) 양식 — 출력 양식과는 별개의 파일이라 따로 설정한다.
         // 발주/출고 이력 관리창에서 "운송장번호 불러오기" 시 이 설정으로 헤더 시작행과 수령인/
         // 운송장번호 열을 찾는다.
@@ -173,8 +193,9 @@ public class CourierConfigForm : Form
         rightPanel.Controls.Add(samplePanel, 0, 1);
         rightPanel.Controls.Add(_mappingGrid, 0, 2);
         rightPanel.Controls.Add(_legendLabel, 0, 3);
-        rightPanel.Controls.Add(trackingImportGroup, 0, 4);
-        rightPanel.Controls.Add(saveButtonPanel, 0, 5);
+        rightPanel.Controls.Add(quantityFormatGroup, 0, 4);
+        rightPanel.Controls.Add(trackingImportGroup, 0, 5);
+        rightPanel.Controls.Add(saveButtonPanel, 0, 6);
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightPanel, 1, 0);
@@ -210,6 +231,7 @@ public class CourierConfigForm : Form
         _numTrackingHeaderRow.Value = Math.Clamp(courier.TrackingImportHeaderRow, (int)_numTrackingHeaderRow.Minimum, (int)_numTrackingHeaderRow.Maximum);
         _cmbTrackingRecipientHeader.Text = courier.TrackingImportRecipientHeader;
         _cmbTrackingNoHeader.Text = courier.TrackingImportTrackingNoHeader;
+        _txtQuantityNotationFormat.Text = courier.QuantityNotationFormat;
     }
 
     /// <summary>
@@ -239,6 +261,7 @@ public class CourierConfigForm : Form
         _numTrackingHeaderRow.Value = 1;
         _cmbTrackingRecipientHeader.Text = string.Empty;
         _cmbTrackingNoHeader.Text = string.Empty;
+        _txtQuantityNotationFormat.Text = string.Empty;
         _txtCourierName.Focus();
     }
 
@@ -386,6 +409,7 @@ public class CourierConfigForm : Form
             TrackingImportHeaderRow = (int)_numTrackingHeaderRow.Value,
             TrackingImportRecipientHeader = _cmbTrackingRecipientHeader.Text.Trim(),
             TrackingImportTrackingNoHeader = _cmbTrackingNoHeader.Text.Trim(),
+            QuantityNotationFormat = _txtQuantityNotationFormat.Text,
         });
 
         MessageBox.Show("택배사 양식이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);

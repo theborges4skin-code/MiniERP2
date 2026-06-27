@@ -29,9 +29,17 @@ public class OfsOrderItem
     public string? TrackingNo { get; set; }
 
     /// <summary>
-    /// 택배사 출력양식(송장)에 쓸 간결한 품목 표시 문자열입니다(SkuMapper가 매핑 시 채워줌).
-    /// 매핑된 SKU의 채널별 송장표시명이 설정되어 있을 때만 값이 채워지며, 그 외에는 null입니다
-    /// (이 경우 택배사 양식 설정에서 ProductName 등 다른 속성을 직접 선택해 사용하면 됩니다).
+    /// 매핑된 CSKU의 채널별 송장표시명입니다(SkuMapper가 매핑 시 채워줌, 설정이 없으면 null —
+    /// 이 경우 <see cref="Utils.ShipmentGrouping"/>이 ProductName으로 대체합니다). 수량은 포함되지
+    /// 않습니다 — 수량 표기 방식(택배사별 커스텀 형식)은 내보내기 시점에 따로 붙습니다.
+    /// </summary>
+    public string? InvoiceDisplayName { get; set; }
+
+    /// <summary>
+    /// 송장에 쓸 품목 표시문자열을 사용자가 직접 지정(override)한 경우에만 값이 채워집니다(OFS
+    /// 미리보기에서 셀 직접편집/"CSKU 상품명으로 사용"/행 복사 등). null이면
+    /// <see cref="Utils.ShipmentGrouping"/>이 InvoiceDisplayName+수량으로 자동 조합하고, 빈 문자열
+    /// ("")이면 합포장된 다른 줄에 표시를 넘기고 이 줄은 표시에서 빠집니다.
     /// </summary>
     public string? InvoiceLabel { get; set; }
 

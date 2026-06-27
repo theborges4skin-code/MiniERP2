@@ -59,14 +59,47 @@ public class ShipmentGroupingTests
     [TestMethod]
     public void BuildCombinedItemDescription_MultipleLines_WrapsEachInBracketsJoinedByPlus()
     {
-        // 합포장 시 줄바꿈만으로는 송장에서 품목 구분이 어렵다는 피드백을 반영한 표시 형식.
+        // 합포장 시 줄바꿈만으로는 송장에서 품목 구분이 어렵다는 피드백을 반영한 표시 형식. 묶음에
+        // 품목이 2건 이상이면(다중건 포장) 작업자가 알아보기 쉽도록 수량 표기 앞뒤에 xx가 붙는다.
         var items = new[]
         {
             new OfsOrderItem { ProductName = "A품목", Quantity = 2 },
             new OfsOrderItem { ProductName = "B품목", Quantity = 3 },
         };
 
-        Assert.AreEqual("((A품목 2개))   +   ((B품목 3개))", ShipmentGrouping.BuildCombinedItemDescription(items));
+        Assert.AreEqual("((A품목xx 2개xx))   +   ((B품목xx 3개xx))", ShipmentGrouping.BuildCombinedItemDescription(items));
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_CustomQuantityFormat_ReplacesPlaceholderWithQuantity()
+    {
+        var items = new[] { new OfsOrderItem { ProductName = "A상품", Quantity = 2 } };
+
+        var result = ShipmentGrouping.BuildCombinedItemDescription(items, "   ▶[##개]");
+
+        Assert.AreEqual("A상품   ▶[2개]", result);
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_CustomQuantityFormatWithMultipleItems_WrapsFormattedTagWithXx()
+    {
+        var items = new[]
+        {
+            new OfsOrderItem { ProductName = "A상품", Quantity = 2 },
+            new OfsOrderItem { ProductName = "B상품", Quantity = 1 },
+        };
+
+        var result = ShipmentGrouping.BuildCombinedItemDescription(items, "▶[##개]");
+
+        Assert.AreEqual("((A상품xx▶[2개]xx))   +   ((B상품xx▶[1개]xx))", result);
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_UsesInvoiceDisplayNameOverProductNameWhenSet()
+    {
+        var items = new[] { new OfsOrderItem { ProductName = "원본상품명", InvoiceDisplayName = "샴푸 500ml", Quantity = 2 } };
+
+        Assert.AreEqual("샴푸 500ml 2개", ShipmentGrouping.BuildCombinedItemDescription(items));
     }
 
     [TestMethod]

@@ -475,6 +475,36 @@ null로 남는지 검증. 126/126 통과.
 UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같은 사정) — 직접 셀 수정 후 저장 버튼
 없이 닫을 때 확인창이 뜨는지, 셀 하나만 복사했을 때 그 값만 붙여넣어지는지 확인 권장.
 
+### 송장표시명 수량 표기 형식을 택배사별로 커스터마이즈 + 합포장 시 "xx" 강조 표시
+
+"품목명 수량개"처럼 일렬로만 나오면 합포장(한 묶음에 여러 품목)인지 한눈에 알아보기 어렵다는
+피드백. 택배사 양식 관리 창에 "수량 표기 형식" 텍스트박스를 신설해, "##"을 실제 수량으로
+치환하는 커스텀 형식을 택배사별로 지정할 수 있게 했다(예: "   ▶[##개]" + 수량 2 →
+"   ▶[2개]"). 합포장(한 묶음에 품목이 2건 이상)이면 작업자가 다중건 포장임을 바로 알아챌 수
+있도록, 그 형식 앞뒤에 "xx" 두 글자가 자동으로 붙는다(예: "A상품xx   ▶[2개]xx").
+
+- **데이터 흐름 재구성이 필요했던 이유**: 기존엔 `SkuMapper.BuildInvoiceLabel`이 매핑 시점에
+  "CSKU 송장표시명 + 수량" 문자열을 미리 만들어 `OfsOrderItem.InvoiceLabel`에 박아 넣었다. 그런데
+  수량 표기 형식은 **택배사별** 설정이고, 매핑은 어느 택배사로 내보낼지 정해지기 전에 일어나므로
+  그 시점엔 형식을 적용할 수 없다. `OfsOrderItem.InvoiceDisplayName`(신규, 수량 미포함 순수
+  표시명)을 추가해 매핑 시점엔 이것만 채우고, 수량 표기는 실제 내보내기 시점(택배사가 정해진 뒤)
+  에 `Utils/ShipmentGrouping.cs`가 조합하도록 옮겼다. `InvoiceLabel`은 이제 "사용자가 직접
+  지정한 수동 오버라이드"만을 의미한다(OFS 미리보기 셀 직접편집/"CSKU 상품명으로 사용"/행 복사 —
+  기존 기능 그대로 동작).
+- `Models/CourierMaster.cs`에 `QuantityNotationFormat` 추가, `CourierConfigForm`에 입력란 추가.
+- `ShipmentGrouping.BuildCombinedItemDescription`/`GetDescriptionLines`가 `quantityFormat` 선택
+  인자를 받는다. `CourierExporter`가 선택된 택배사의 형식을 전달하고, OFS 미리보기처럼 특정
+  택배사가 아직 정해지지 않은 화면은 기본 형식(" ##개", 기존 동작과 동일)을 그대로 쓴다 —
+  미리보기와 실제 출력 형식이 정확히 같을 필요는 없다는 설계 판단(애초에 미리보기는 어느
+  택배사로 낼지 모르는 상태에서 보여주는 화면이라 같을 수가 없음).
+- `CourierExporter`의 "MappedSku" 헤더 처리(CSKU 코드 대신 송장표시명 출력, 직전 라운드에서
+  추가한 기능)도 이제 `item.InvoiceDisplayName`이 이미 채워져 있으면 그걸 그대로 쓰고, 비어있을
+  때만(발주/출고 이력에서 재출력하는 경우) DB를 조회하도록 최적화했다.
+
+테스트: `SkuMapperTests`(InvoiceDisplayName으로 이름 변경, 수량 미포함 검증),
+`ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
+`CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

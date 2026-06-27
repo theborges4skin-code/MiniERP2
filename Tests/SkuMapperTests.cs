@@ -108,8 +108,10 @@ public class SkuMapperTests
     }
 
     [TestMethod]
-    public void ApplyMapping_MappedSkuHasInvoiceDisplayName_FillsInvoiceLabelWithQuantity()
+    public void ApplyMapping_MappedSkuHasInvoiceDisplayName_FillsInvoiceDisplayNameWithoutQuantity()
     {
+        // 수량은 더 이상 여기서 붙지 않는다 — 택배사별 수량 표기 형식이 내보내기 시점에 따로 붙는다
+        // (Utils/ShipmentGrouping.cs 참고).
         var mappingRepository = new MappingRepository();
         mappingRepository.SaveRules(MappingRuleType.Exact, "CH1", [new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-1" }]);
 
@@ -122,11 +124,12 @@ public class SkuMapperTests
         mapper.ApplyMapping(item);
 
         Assert.AreEqual("SKU-1", item.MappedSku);
-        Assert.AreEqual("샴푸 500ml 3개", item.InvoiceLabel);
+        Assert.AreEqual("샴푸 500ml", item.InvoiceDisplayName);
+        Assert.IsNull(item.InvoiceLabel);
     }
 
     [TestMethod]
-    public void ApplyMapping_MappedSkuHasNoInvoiceDisplayName_LeavesInvoiceLabelNull()
+    public void ApplyMapping_MappedSkuHasNoInvoiceDisplayName_LeavesInvoiceDisplayNameNull()
     {
         var mappingRepository = new MappingRepository();
         mappingRepository.SaveRules(MappingRuleType.Exact, "CH1", [new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-1" }]);
@@ -137,6 +140,6 @@ public class SkuMapperTests
         mapper.ApplyMapping(item);
 
         Assert.AreEqual("SKU-1", item.MappedSku);
-        Assert.IsNull(item.InvoiceLabel);
+        Assert.IsNull(item.InvoiceDisplayName);
     }
 }

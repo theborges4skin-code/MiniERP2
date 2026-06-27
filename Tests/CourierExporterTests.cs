@@ -145,7 +145,7 @@ public class CourierExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
 
-        Assert.AreEqual("((상품A 1개))   +   ((상품B 1개))", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("((상품Axx 1개xx))   +   ((상품Bxx 1개xx))", sheet.Cells[2, 1].Value);
         Assert.IsNull(sheet.Cells[3, 1].Value);
     }
 
@@ -198,7 +198,7 @@ public class CourierExporterTests
         ExcelLicense.Ensure();
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
-        Assert.AreEqual("((상품1 1개))   +   ((상품2 1개))   +   ((상품3 1개))   +   ((상품4 1개))   +   ((상품5 1개))", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("((상품1xx 1개xx))   +   ((상품2xx 1개xx))   +   ((상품3xx 1개xx))   +   ((상품4xx 1개xx))   +   ((상품5xx 1개xx))", sheet.Cells[2, 1].Value);
     }
 
     [TestMethod]
@@ -221,6 +221,26 @@ public class CourierExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
         Assert.AreEqual("샴푸 500ml 2개", sheet.Cells[2, 1].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_AppliesCourierSpecificQuantityNotationFormat()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "품목": "ProductName" }""",
+            QuantityNotationFormat = "   ▶[##개]",
+        };
+        var orders = new List<OfsOrderItem> { new() { OrderNo = "ORDER-1", ProductName = "A상품", Quantity = 2 } };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+        Assert.AreEqual("A상품   ▶[2개]", sheet.Cells[2, 1].Value);
     }
 
     [TestMethod]
