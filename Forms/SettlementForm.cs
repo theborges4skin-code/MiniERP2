@@ -416,7 +416,7 @@ public class SettlementForm : Form
     }
 
     /// <summary>
-    /// 선택한 발주이력을 운송장번호 없이도 "발송완료"로 수동 확정한다(예: 매장 직접배송 등
+    /// 선택한 발주이력을 운송장번호 없이도 "출고확정"으로 수동 확정한다(예: 매장 직접배송 등
     /// 운송장번호가 없는 발송 방식). 마감 시점에 어떤 건이 실제로 발송됐는지 추적하기 위함이다.
     /// </summary>
     private void OnMarkShippedClick(object? sender, EventArgs e)
@@ -442,12 +442,12 @@ public class SettlementForm : Form
 
         _outboundRepository.MarkAsShipped(selectedIds);
         OnLoadOutboundClick(sender, e); // 갱신된 상태를 다시 조회해 그리드에 반영
-        _statusLabel.Text = $"{selectedIds.Count}건을 발송완료로 처리했습니다.";
+        _statusLabel.Text = $"{selectedIds.Count}건을 출고확정으로 처리했습니다.";
     }
 
     /// <summary>
     /// 택배사 등에서 받은 "주문번호-운송장번호" 매칭 파일을 불러와 일괄로 운송장번호를 채우고
-    /// 발송완료로 확정한다. 1행은 헤더, 1열은 주문번호, 2열은 운송장번호로 가정한다.
+    /// 출고확정으로 확정한다. 1행은 헤더, 1열은 주문번호, 2열은 운송장번호로 가정한다.
     /// </summary>
     private void OnUploadTrackingClick(object? sender, EventArgs e)
     {
@@ -492,7 +492,7 @@ public class SettlementForm : Form
 
             var updatedRowCount = _outboundRepository.BulkUpdateTrackingNoByOrderNo(trackingNoByOrderNo);
             OnLoadOutboundClick(sender, e);
-            _statusLabel.Text = $"주문번호 {trackingNoByOrderNo.Count}건 매칭 시도 → 출고 줄 {updatedRowCount}건의 운송장번호를 갱신하고 발송완료로 처리했습니다.";
+            _statusLabel.Text = $"주문번호 {trackingNoByOrderNo.Count}건 매칭 시도 → 출고 줄 {updatedRowCount}건의 운송장번호를 갱신하고 출고확정으로 처리했습니다.";
 
             MessageBox.Show(
                 $"파일의 주문번호 {trackingNoByOrderNo.Count}건 중, 일치하는 출고내역 {updatedRowCount}줄(SKU 단위)의 운송장번호를 갱신했습니다.\n" +

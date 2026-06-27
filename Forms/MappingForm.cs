@@ -349,12 +349,14 @@ public class MappingForm : Form
         _unmappedGrid.DataSource = new BindingList<OfsOrderItem>(unmapped);
     }
 
+    /// <summary>
+    /// 미매핑 항목을 선택해도 검색창은 건드리지 않는다(빈칸 유지). 상품명을 그대로 옮겨 쓰고 싶으면
+    /// 미매핑 목록을 우클릭해 "CSKU 상품명으로 사용"을 쓰면 된다 — 검색창 자동입력은 매번 지우고
+    /// 다시 입력해야 하는 불편함이 있어 제거했다.
+    /// </summary>
     private void OnUnmappedRowSelectionChanged(object? sender, EventArgs e)
     {
         RefreshInvoicePreview();
-
-        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item) return;
-        _masterSearchBox.Text = item.ProductName ?? string.Empty;
     }
 
     /// <summary>

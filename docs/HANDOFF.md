@@ -221,6 +221,48 @@
    "실행취소" 버튼(+ 우클릭 메뉴에도 동일 항목) 클릭 시 가장 최근 스냅샷으로 `_orders`를 되돌리고
    미리보기/상세 그리드를 새로고침한다.
 
+### 발주확정/출고확정 용어 정정 + 택배사 양식 전체헤더 출력 + 검색창 자동입력 제거
+
+사용자가 실제로 써보며 4가지를 지적함:
+
+1. **(이미 구현돼 있던 기능 재확인, 코드 변경 없음)** 부분선택 내보내기(`OnExportClick`의
+   `GetSelectedOrderItems()` 분기)와 발주이력 Status/ConfirmedAt 추적은 이전 세션에 이미 구현되어
+   있었다 — 그대로 유지.
+2. **발주확정 vs 출고확정 용어 정정(중요)** — 실무에서 "출고완료"는 운송장번호가 있어야 성립하는데,
+   `Forms/OfsForm.cs`의 저장 버튼("저장 (출고 확정)")을 누르면 운송장번호 유무와 무관하게 무조건
+   `item.Status = "출고 완료"`였다. 이를 **저장 단계 = "발주확정"**, **운송장번호가 있을 때(또는
+   나중에 등록될 때) = "출고확정"**으로 분리했다:
+   - 버튼 텍스트 "저장 (출고 확정)" → "저장 (발주확정)".
+   - `UpdateOrderStatusAfterSave`: `order.Status = string.IsNullOrWhiteSpace(order.TrackingNo) ?
+     "발주확정" : "출고확정"`(저장 시점에 운송장번호가 이미 있으면 즉시 출고확정).
+   - `OnOrdersGridRowPrePaint`의 녹색 강조 조건에 `"발주확정"`/`"출고확정"` 둘 다 포함.
+   - **`Models/OutboundDetail.Status`/`Database/OutboundRepository.cs`의 값도 "발송대기"/
+     "발송완료"에서 "발주확정"/"출고확정"으로 통일**(OFS 버튼과 같은 용어를 쓰도록). 마감 대조
+     탭(`SettlementForm`)의 "운송장번호 업로드"가 이미 하던 동작(주문번호 매칭 시 Status를
+     출고확정으로 바꾸는 것)은 그대로 유지, 문구만 갱신.
+   - `Tests/OutboundRepositoryTests.cs`의 모든 기대값을 새 용어로 수정. 참고: 이미 저장된 과거
+     DB의 Status 값("발송대기"/"발송완료")은 마이그레이션하지 않았다 — 새로 저장되는 건부터 새
+     용어가 적용되고, 과거 값은 문자열이 다를 뿐 화면 표시 외 로직(트래킹 유무 기반 CASE문 등)에는
+     영향이 없다.
+3. **택배사 양식 — 매핑 안 한 헤더도 전체 출력** — 샘플 파일에 a,b,c,d,e 헤더가 있고 그중 a,b,d만
+   "매핑할 데이터"를 지정해도, 출력 파일에는 a,b,c,d,e 헤더가 전부 있어야 한다(매핑 안 한 c,e는
+   데이터만 빈 칸) — 그래야 택배사 프로그램에 그 파일 그대로 올릴 수 있기 때문. `Forms/
+   CourierConfigForm.cs`의 `OnSaveClick`이 저장 시 `PropertyName`이 빈 행을 통째로 걸러내고 있던
+   게 원인(샘플 불러오기 자체는 이미 전체 헤더를 행으로 추가해주고 있었음, `OnLoadSampleClick`).
+   `Header`만 있으면 행을 유지하도록 필터를 고쳐 `HeaderMappingJson`에 빈 매핑(`PropertyName=""`)
+   도 함께 저장되게 했다 — `CourierExporter`는 `GetProperty("")`가 null을 반환해 자연스럽게
+   빈 칸으로 출력하므로 별도 수정이 필요 없었다.
+4. **매핑관리창 SKU 검색창 자동입력 제거** — `Forms/MappingForm.cs`의
+   `OnUnmappedRowSelectionChanged`가 미매핑 항목을 선택할 때마다 검색창에 그 줄의 상품명을 채워
+   넣고 있어서, 매번 지우고 다시 입력해야 하는 불편이 있었다. 이 자동입력은 애초에 "CSKU 송장표시명
+   영역에 상품명을 옮겨쓰고 싶다"는 요청에서 나온 것인데, 그건 이미 별도 기능
+   (`UseCurrentCellAsInvoiceDisplayName`, 우클릭 "CSKU 상품명으로 사용")으로 구현돼 있어서 검색창
+   자동입력은 더 이상 필요 없었다. 제거하고 `RefreshInvoicePreview()`만 남김(검색창은 항상 빈칸
+   유지, 창을 열 때 자동 포커스되는 기존 동작은 그대로).
+
+테스트 기존 5건의 기대값만 수정(신규 테스트는 없음 — 용어 변경/필터 조건/이벤트 핸들러 단순화라
+새 동작 케이스는 기존 테스트가 이미 커버). 110/110 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

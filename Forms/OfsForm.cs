@@ -60,7 +60,7 @@ public class OfsForm : Form
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
         var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
         var btnUnmappedBatch = new Button { Text = "미매핑 일괄 처리", Size = new Size(130, 30) };
-        var btnSave = new Button { Text = "저장 (출고 확정)", Size = new Size(130, 30) };
+        var btnSave = new Button { Text = "저장 (발주확정)", Size = new Size(130, 30) };
         var btnExport = new Button { Text = "택배사 양식으로 내보내기", Size = new Size(180, 30) };
 
         btnLoadOrders.Click += OnLoadOrdersClick;
@@ -408,7 +408,7 @@ public class OfsForm : Form
             return;
         }
 
-        var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 출고 확정하고 저장하시겠습니까?", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.)", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result != DialogResult.Yes) return;
 
         Cursor = Cursors.WaitCursor;
@@ -466,12 +466,16 @@ public class OfsForm : Form
 
     private void UpdateOrderStatusAfterSave(List<OutboundDetail> savedDetails, List<OfsOrderItem> failedOrders)
     {
-        // 성공한 주문들의 상태를 '출고 완료'로 변경
+        // 성공한 주문들의 상태를 변경한다. 실무에서 출고확정은 운송장번호가 있어야 성립하므로,
+        // 운송장번호가 아직 없으면 '발주확정', 있으면 '출고확정'(OutboundRepository.SaveOutbound와
+        // 같은 기준). 나중에 운송장번호를 업로드하면(마감 대조 탭) 그 이력의 상태가 출고확정으로
+        // 바뀐다 — 단, 이 화면(OFS)에 그 발주서가 더 이상 열려 있지 않을 수 있으므로 그건
+        // OutboundDetail 쪽 기록에만 반영되고 여기 그리드까지 되돌아오지는 않는다.
         var savedOrderNos = new HashSet<string>(savedDetails.Select(d => d.OrderNo));
         var savedOrdersInGrid = _orders.Where(o => o.OrderNo != null && savedOrderNos.Contains(o.OrderNo)).ToList();
         foreach (var order in savedOrdersInGrid)
         {
-            order.Status = "출고 완료";
+            order.Status = string.IsNullOrWhiteSpace(order.TrackingNo) ? "발주확정" : "출고확정";
         }
 
         // 실패한 주문들의 상태를 '납품가 없음'으로 변경
@@ -510,7 +514,7 @@ public class OfsForm : Form
             row.DefaultCellStyle.BackColor = Color.MistyRose;
             row.DefaultCellStyle.ForeColor = Color.Black;
         }
-        else if (item.Status.StartsWith("매핑(") || item.Status == "출고 완료")
+        else if (item.Status.StartsWith("매핑(") || item.Status == "발주확정" || item.Status == "출고확정")
         {
             row.DefaultCellStyle.BackColor = Color.Honeydew;
             row.DefaultCellStyle.ForeColor = Color.Black;

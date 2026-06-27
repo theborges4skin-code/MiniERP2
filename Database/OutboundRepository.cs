@@ -10,8 +10,8 @@ public class OutboundRepository
 {
     /// <summary>
     /// 출고 상세 내역 목록을 데이터베이스에 저장합니다(발주확정 시점 = 발주이력의 시작점).
-    /// 운송장번호가 이미 입력되어 있으면 "발송완료"로, 없으면 "발송대기"로 시작합니다.
-    /// 이미 발송완료로 확정된 건을 다시 저장해도(같은 OrderNo+MskuCode) 상태가 뒤로 되돌아가지
+    /// 운송장번호가 이미 입력되어 있으면 "출고확정"으로, 없으면 "발주확정"으로 시작합니다.
+    /// 이미 출고확정으로 확정된 건을 다시 저장해도(같은 OrderNo+MskuCode) 상태가 뒤로 되돌아가지
     /// 않도록, 새 운송장번호가 없으면 기존 Status/ConfirmedAt을 그대로 유지합니다.
     /// </summary>
     public void SaveOutbound(IEnumerable<OutboundDetail> details)
@@ -29,7 +29,7 @@ public class OutboundRepository
                 TrackingNo = excluded.TrackingNo,
                 Qty = excluded.Qty,
                 SupplyPrice = excluded.SupplyPrice,
-                Status = CASE WHEN excluded.TrackingNo <> '' THEN '발송완료' ELSE OutboundDetailTable.Status END,
+                Status = CASE WHEN excluded.TrackingNo <> '' THEN '출고확정' ELSE OutboundDetailTable.Status END,
                 ConfirmedAt = CASE WHEN excluded.TrackingNo <> '' AND OutboundDetailTable.ConfirmedAt IS NULL THEN excluded.ConfirmedAt ELSE OutboundDetailTable.ConfirmedAt END
             """;
 
@@ -46,7 +46,7 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$qty", detail.Qty);
             command.Parameters.AddWithValue("$supplyPrice", detail.SupplyPrice);
             command.Parameters.AddWithValue("$createdAt", now);
-            command.Parameters.AddWithValue("$status", hasTracking ? "발송완료" : "발송대기");
+            command.Parameters.AddWithValue("$status", hasTracking ? "출고확정" : "발주확정");
             command.Parameters.AddWithValue("$confirmedAt", hasTracking ? now : (object)DBNull.Value);
             command.ExecuteNonQuery();
         }
@@ -55,7 +55,7 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 선택된 발주이력을 "발송완료"로 수동 확정합니다(운송장번호를 별도로 받지 않는 수기 발송확인용).
+    /// 선택된 발주이력을 "출고확정"으로 수동 확정합니다(운송장번호를 별도로 받지 않는 수기 발송확인용).
     /// </summary>
     public void MarkAsShipped(IEnumerable<long> ids)
     {
@@ -64,7 +64,7 @@ public class OutboundRepository
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "UPDATE OutboundDetailTable SET Status = '발송완료', ConfirmedAt = $confirmedAt WHERE Id = $id";
+        command.CommandText = "UPDATE OutboundDetailTable SET Status = '출고확정', ConfirmedAt = $confirmedAt WHERE Id = $id";
 
         foreach (var id in ids)
         {
@@ -78,7 +78,7 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 주문번호 기준으로 운송장번호를 일괄 업로드/갱신하고 "발송완료"로 확정합니다(같은 주문번호의
+    /// 주문번호 기준으로 운송장번호를 일괄 업로드/갱신하고 "출고확정"으로 확정합니다(같은 주문번호의
     /// 모든 SKU 줄에 적용됨). 일치하는 주문번호가 없으면 그 항목은 조용히 건너뜁니다.
     /// </summary>
     public int BulkUpdateTrackingNoByOrderNo(IReadOnlyDictionary<string, string> trackingNoByOrderNo)
@@ -90,7 +90,7 @@ public class OutboundRepository
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE OutboundDetailTable
-            SET TrackingNo = $trackingNo, Status = '발송완료', ConfirmedAt = $confirmedAt
+            SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt
             WHERE OrderNo = $orderNo
             """;
 

@@ -285,17 +285,25 @@ public class CourierConfigForm : Form
             return;
         }
 
-        var rows = (_mappingGrid.DataSource as BindingList<HeaderMappingRow>)?
-            .Where(r => !string.IsNullOrWhiteSpace(r.Header) && !string.IsNullOrWhiteSpace(r.PropertyName))
+        // 매핑할 데이터를 지정하지 않은 헤더(예: 샘플의 c,e열)도 그대로 저장해야 한다 — 택배사
+        // 프로그램에 그 파일을 그대로 올리려면 샘플에 있던 헤더가 출력 파일에도 전부 있어야 하기
+        // 때문이다(매핑이 없는 헤더는 빈 칸으로 출력됨, CourierExporter 참고).
+        var allRows = (_mappingGrid.DataSource as BindingList<HeaderMappingRow>)?
+            .Where(r => !string.IsNullOrWhiteSpace(r.Header))
             .ToList() ?? [];
 
-        if (rows.Count == 0)
+        if (allRows.Count == 0)
         {
-            MessageBox.Show("최소 한 개 이상의 '엑셀 헤더 → 매핑할 데이터'를 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("최소 한 개 이상의 엑셀 헤더가 필요합니다(샘플 양식을 불러오거나 직접 입력하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (!allRows.Any(r => !string.IsNullOrWhiteSpace(r.PropertyName)))
+        {
+            MessageBox.Show("최소 한 개 이상의 '엑셀 헤더 → 매핑할 데이터'를 지정하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        var mapping = rows.ToDictionary(r => r.Header, r => r.PropertyName);
+        var mapping = allRows.ToDictionary(r => r.Header, r => r.PropertyName);
         var headerMappingJson = JsonSerializer.Serialize(mapping);
 
         _courierRepository.Upsert(new CourierMaster { CourierName = courierName, HeaderMappingJson = headerMappingJson });
