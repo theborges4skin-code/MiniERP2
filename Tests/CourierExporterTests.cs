@@ -213,4 +213,39 @@ public class CourierExporterTests
         var sheet = package.Workbook.Worksheets["Sheet1"];
         Assert.AreEqual("샴푸 500ml 2개", sheet.Cells[2, 1].Value);
     }
+
+    [TestMethod]
+    public async Task ExportAsync_PreservesSampleHeaderOrderExactly()
+    {
+        // CourierConfigForm이 저장하는 순서가 보장되는 형식(JSON 배열) — 샘플 양식에서 불러온
+        // 순서 그대로 출력되어야 택배사 프로그램이 파일을 인식할 수 있다는 요구사항의 회귀 테스트.
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = CourierHeaderMapping.Serialize(new[]
+            {
+                new HeaderMappingEntry("E열", ""),
+                new HeaderMappingEntry("받는분", "Recipient"),
+                new HeaderMappingEntry("C열", ""),
+                new HeaderMappingEntry("운송장번호", "TrackingNo"),
+                new HeaderMappingEntry("A열", ""),
+            })
+        };
+        var orders = new List<OfsOrderItem> { new() { Recipient = "홍길동", TrackingNo = "T001" } };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.AreEqual("E열", sheet.Cells[1, 1].Value);
+        Assert.AreEqual("받는분", sheet.Cells[1, 2].Value);
+        Assert.AreEqual("C열", sheet.Cells[1, 3].Value);
+        Assert.AreEqual("운송장번호", sheet.Cells[1, 4].Value);
+        Assert.AreEqual("A열", sheet.Cells[1, 5].Value);
+        Assert.AreEqual("홍길동", sheet.Cells[2, 2].Value);
+        Assert.AreEqual("T001", sheet.Cells[2, 4].Value);
+    }
 }

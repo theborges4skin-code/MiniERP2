@@ -98,4 +98,43 @@ public class DbSchemaMigrationTests
         Assert.IsNotNull(secondOption);
         Assert.AreEqual("SKU-LEGACY", secondOption.Msku);
     }
+
+    /// <summary>
+    /// 발주확정/출고확정 용어로 바뀌기 전("발송대기"/"발송완료")에 저장된 OutboundDetailTable 데이터가
+    /// 있으면, 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가
+    /// 났다. 기동 시 자동으로 새 용어로 정규화되는지 검증한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_OnLegacyOutboundStatus_NormalizesToCurrentTerminology()
+    {
+        using (var legacyConnection = new SqliteConnection($"Data Source={PathProvider.DatabaseFilePath}"))
+        {
+            legacyConnection.Open();
+            using var command = legacyConnection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE OutboundDetailTable (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ChannelCode TEXT NOT NULL DEFAULT '',
+                    OrderNo TEXT NOT NULL,
+                    TrackingNo TEXT NOT NULL,
+                    MskuCode TEXT NOT NULL,
+                    Qty INTEGER NOT NULL,
+                    SupplyPrice REAL NOT NULL,
+                    CreatedAt TEXT NOT NULL DEFAULT '',
+                    Status TEXT NOT NULL DEFAULT '발송대기'
+                );
+                INSERT INTO OutboundDetailTable (OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status)
+                VALUES ('ORDER-LEGACY-1', '', 'SKU-1', 1, 1000, '2024-01-01', '발송대기');
+                INSERT INTO OutboundDetailTable (OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status)
+                VALUES ('ORDER-LEGACY-2', 'T001', 'SKU-1', 1, 1000, '2024-01-01', '발송완료');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var repository = new OutboundRepository();
+        var results = repository.GetHistory(null, new DateTime(2023, 1, 1), DateTime.UtcNow);
+
+        Assert.AreEqual("발주확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-1").Status);
+        Assert.AreEqual("출고확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-2").Status);
+    }
 }

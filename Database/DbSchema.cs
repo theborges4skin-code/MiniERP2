@@ -172,6 +172,21 @@ public static class DbSchema
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportHeaderRow", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportRecipientHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
+
+        // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
+        // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.
+        // 기동 시마다 실행해도 안전한 정규화(이미 새 값이면 매치 없음 → no-op)이다.
+        NormalizeLegacyOutboundStatus(connection);
+    }
+
+    private static void NormalizeLegacyOutboundStatus(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE OutboundDetailTable SET Status = '발주확정' WHERE Status = '발송대기';
+            UPDATE OutboundDetailTable SET Status = '출고확정' WHERE Status = '발송완료';
+            """;
+        command.ExecuteNonQuery();
     }
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)

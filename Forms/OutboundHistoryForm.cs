@@ -2,6 +2,7 @@ using System.ComponentModel;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
+using MiniERP2.Exporters;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 
@@ -10,13 +11,15 @@ namespace MiniERP2.Forms;
 /// <summary>
 /// 발주/출고 이력 관리창. 발주확정/출고확정 이력을 조회하고, 택배사 프로그램에서 받은 운송장 결과
 /// 파일을 불러와 수령인 기준으로 매칭해 운송장번호를 채워 출고확정으로 처리한다. 직접 셀을 편집해
-/// 수정할 수도 있고, 여러 건을 선택해 삭제할 수도 있다.
+/// 수정할 수도 있고, 여러 건을 선택해 삭제할 수도 있다. 발주확정만 해두고 OFS에서 택배사 양식
+/// 출력을 빠뜨린 건도 여기서 임의 선택해 다시 출력할 수 있다.
 /// </summary>
 public class OutboundHistoryForm : Form
 {
     private readonly OutboundRepository _outboundRepository = new();
-    private readonly CourierRepository _courierRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly ChannelConfigService _channelConfigService = new();
+    private readonly CourierExporter _courierExporter = new();
     private readonly SettingsService _settingsService = new();
 
     private ComboBox _channelComboBox = new();
@@ -56,10 +59,12 @@ public class OutboundHistoryForm : Form
 
         var btnLoad = new Button { Text = "조회", Size = new Size(80, 30) };
         var btnImportTracking = new Button { Text = "운송장번호 불러오기", Size = new Size(150, 30) };
+        var btnExport = new Button { Text = "선택 건 택배사 양식 출력", Size = new Size(170, 30) };
         var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 30) };
 
         btnLoad.Click += OnLoadClick;
         btnImportTracking.Click += OnImportTrackingClick;
+        btnExport.Click += OnExportClick;
         btnDelete.Click += OnDeleteClick;
 
         toolStrip.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
@@ -70,6 +75,7 @@ public class OutboundHistoryForm : Form
         toolStrip.Controls.Add(_toDatePicker);
         toolStrip.Controls.Add(btnLoad);
         toolStrip.Controls.Add(btnImportTracking);
+        toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnDelete);
 
         _historyGrid = new ExcelLikeDataGridView
@@ -96,6 +102,9 @@ public class OutboundHistoryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "출고확정 시점", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130, ReadOnly = true }
         );
         _historyGrid.CellEndEdit += OnHistoryGridCellEndEdit;
+        // 옛 용어("발송대기"/"발송완료")로 저장된 데이터가 DB 정규화 전에 이미 메모리에 올라온 경우 등
+        // 상태 콤보(Items)에 없는 값이 들어와도 창이 죽지 않도록 방어한다(DataGridViewComboBoxCell 오류).
+        _historyGrid.DataError += (s, e) => { e.ThrowException = false; };
 
         _statusLabel = new Label { Dock = DockStyle.Fill, Text = "조회 버튼을 눌러 발주/출고 이력을 불러오세요.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
@@ -112,10 +121,27 @@ public class OutboundHistoryForm : Form
         var to = _toDatePicker.Value.Date.AddDays(1).AddTicks(-1);
 
         var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to);
+        EnsureStatusItemsInclude(details.Select(d => d.Status));
         _suppressCellEndEdit = true;
         _historyGrid.DataSource = new BindingList<OutboundDetail>(details);
         _suppressCellEndEdit = false;
         _statusLabel.Text = $"발주/출고 이력 {details.Count}건 조회됨.";
+    }
+
+    /// <summary>
+    /// 옛 용어로 저장된 값 등 콤보의 두 표준값("발주확정"/"출고확정")에 없는 상태값이 데이터에 있어도
+    /// 표시 시 DataGridViewComboBoxCell 오류가 나지 않도록, 실제 로드된 값을 Items에 보강해둔다.
+    /// </summary>
+    private void EnsureStatusItemsInclude(IEnumerable<string> values)
+    {
+        if (_historyGrid.Columns["Status"] is not DataGridViewComboBoxColumn column) return;
+
+        var existing = new HashSet<string>(column.Items.Cast<string>(), StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            if (string.IsNullOrEmpty(value) || !existing.Add(value)) continue;
+            column.Items.Add(value);
+        }
     }
 
     /// <summary>
@@ -139,6 +165,94 @@ public class OutboundHistoryForm : Form
 
         _outboundRepository.UpdateDetail(detail);
         _historyGrid.InvalidateRow(e.RowIndex);
+    }
+
+    /// <summary>
+    /// 발주확정만 해두고 OFS에서 택배사 양식 출력을 빠뜨린 건(또는 재출력이 필요한 건)을 여기서
+    /// 임의로 선택해 택배사 양식으로 다시 출력한다. OutboundDetail에는 OFS 그리드의 연락처/배송메세지/
+    /// 송장표시명 같은 일부 정보가 없으므로(저장 안 됨), 그 항목들은 비워진 채로 출력된다.
+    /// </summary>
+    private void OnExportClick(object? sender, EventArgs e)
+    {
+        if (_historyGrid.DataSource is not BindingList<OutboundDetail> details)
+        {
+            MessageBox.Show("먼저 이력을 조회하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var selected = _historyGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow)
+            .Select(r => r.DataBoundItem)
+            .OfType<OutboundDetail>()
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("택배사 양식으로 출력할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var courierDialog = new SelectCourierDialog();
+        if (courierDialog.ShowDialog(this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
+        {
+            return;
+        }
+
+        using var sfd = new SaveFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            FileName = $"{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
+            InitialDirectory = _settingsService.GetLastFolder("OutboundHistoryExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+        var filePath = sfd.FileName;
+        _settingsService.SetLastFolder("OutboundHistoryExport", Path.GetDirectoryName(filePath)!);
+
+        var orderItems = selected.Select(d => new OfsOrderItem
+        {
+            ChannelCode = d.ChannelCode,
+            OrderNo = d.OrderNo,
+            ProductName = d.ProductName,
+            Quantity = d.Qty,
+            Recipient = d.Recipient,
+            Address = d.Address,
+            MappedSku = d.MskuCode,
+            TrackingNo = d.TrackingNo,
+        }).ToList();
+
+        ExportOrders(orderItems, courier, filePath, selected.Count);
+    }
+
+    private async void ExportOrders(List<OfsOrderItem> orderItems, CourierMaster courier, string filePath, int selectedCount)
+    {
+        Cursor = Cursors.WaitCursor;
+        _statusLabel.Text = $"'{courier.CourierName}' 양식으로 내보내는 중...";
+
+        try
+        {
+            var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+            var overflowGroups = await _courierExporter.ExportAsync(orderItems, courier, filePath, channelConfigsByCode);
+            _statusLabel.Text = $"선택한 {selectedCount}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
+
+            if (overflowGroups.Count > 0)
+            {
+                MessageBox.Show(
+                    $"다음 묶음은 품목이 4줄을 초과해 송장에 다 표시되지 못할 수 있습니다:\n{string.Join(", ", overflowGroups)}",
+                    "품목 줄 수 초과 안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ex.Message}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.Text = "내보내기 오류 발생";
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)

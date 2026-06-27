@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -200,19 +199,9 @@ public class CourierConfigForm : Form
         _txtCourierName.Text = courier.CourierName;
         _txtCourierName.ReadOnly = true;
 
-        var rows = new List<HeaderMappingRow>();
-        try
-        {
-            var mapping = JsonSerializer.Deserialize<Dictionary<string, string>>(courier.HeaderMappingJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (mapping != null)
-            {
-                rows.AddRange(mapping.Select(kv => new HeaderMappingRow { Header = kv.Key, PropertyName = kv.Value }));
-            }
-        }
-        catch (JsonException)
-        {
-            // 기존 데이터가 비어있거나 손상된 경우 빈 그리드로 시작
-        }
+        var rows = CourierHeaderMapping.Parse(courier.HeaderMappingJson)
+            .Select(en => new HeaderMappingRow { Header = en.Header, PropertyName = en.PropertyName })
+            .ToList();
 
         EnsureComboItemsInclude("Header", rows.Select(r => r.Header));
         EnsureComboItemsInclude("PropertyName", rows.Select(r => r.PropertyName));
@@ -377,8 +366,9 @@ public class CourierConfigForm : Form
             return;
         }
 
-        var mapping = allRows.ToDictionary(r => r.Header, r => r.PropertyName);
-        var headerMappingJson = JsonSerializer.Serialize(mapping);
+        // 순서가 보장되는 형식으로 저장한다(샘플 양식에서 불러온 순서를 그대로 유지해야 택배사
+        // 프로그램이 파일을 인식할 수 있음 — CourierHeaderMapping 참고).
+        var headerMappingJson = CourierHeaderMapping.Serialize(allRows.Select(r => new HeaderMappingEntry(r.Header, r.PropertyName)));
 
         _courierRepository.Upsert(new CourierMaster
         {

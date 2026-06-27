@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -40,10 +39,16 @@ public class CourierExporter
     {
         return await Task.Run(() =>
         {
-            var headerMapping = JsonSerializer.Deserialize<Dictionary<string, string>>(courier.HeaderMappingJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                                ?? throw new InvalidOperationException("택배사 헤더 매핑 정보가 유효하지 않습니다.");
+            // 샘플 양식에서 불러온 순서 그대로 출력해야 택배사 프로그램이 파일을 인식할 수 있으므로,
+            // 순서가 보장되는 목록(CourierHeaderMapping)을 그대로 순회한다(Dictionary 키 순서에
+            // 의존하지 않음).
+            var entries = CourierHeaderMapping.Parse(courier.HeaderMappingJson);
+            if (entries.Count == 0)
+            {
+                throw new InvalidOperationException("택배사 헤더 매핑 정보가 유효하지 않습니다.");
+            }
 
-            var headers = headerMapping.Keys.ToList();
+            var headers = entries.Select(en => en.Header).ToList();
             var groups = orders.GroupBy(ShipmentGrouping.GetEffectiveGroupId).ToList();
             var overflowGroups = new List<string>();
 
@@ -70,9 +75,9 @@ public class CourierExporter
                     overflowGroups.Add(representative.OrderNo ?? group.Key);
                 }
 
-                for (int col = 0; col < headers.Count; col++)
+                for (int col = 0; col < entries.Count; col++)
                 {
-                    var header = headers[col];
+                    var (header, propertyName) = entries[col];
 
                     var fixedValue = GetFixedOverride(channelConfigsByCode, representative.ChannelCode, courier.CourierName, header);
                     if (fixedValue != null)
@@ -81,20 +86,19 @@ public class CourierExporter
                         continue;
                     }
 
-                    if (headerMapping.TryGetValue(header, out var propertyName))
-                    {
-                        if (ItemDescriptionProperties.Contains(propertyName))
-                        {
-                            worksheet.Cells[row, col + 1].Value = combinedDescription;
-                            continue;
-                        }
+                    if (string.IsNullOrEmpty(propertyName)) continue;
 
-                        // 리플렉션을 사용하여 OfsOrderItem의 속성 값을 가져옵니다(묶음의 대표 줄 기준).
-                        var property = typeof(OfsOrderItem).GetProperty(propertyName);
-                        if (property != null)
-                        {
-                            worksheet.Cells[row, col + 1].Value = property.GetValue(representative);
-                        }
+                    if (ItemDescriptionProperties.Contains(propertyName))
+                    {
+                        worksheet.Cells[row, col + 1].Value = combinedDescription;
+                        continue;
+                    }
+
+                    // 리플렉션을 사용하여 OfsOrderItem의 속성 값을 가져옵니다(묶음의 대표 줄 기준).
+                    var property = typeof(OfsOrderItem).GetProperty(propertyName);
+                    if (property != null)
+                    {
+                        worksheet.Cells[row, col + 1].Value = property.GetValue(representative);
                     }
                 }
                 row++;

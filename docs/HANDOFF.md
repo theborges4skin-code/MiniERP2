@@ -321,6 +321,39 @@ UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 Bu
 실제 운송장 결과 샘플 파일로 택배사 양식 설정 → 발주/출고 이력 관리창에서 불러오기 → 동명이인
 선택창 동작까지 사용자가 직접 확인해주길 권장.
 
+### 발주/출고 이력에서 임의선택 출력 + 택배사 양식 헤더 순서 보존 + ComboBoxCell 오류 수정
+
+위 발주/출고 이력 관리창을 실사용해보고 나온 후속 피드백 3건 + 추가요청 1건:
+
+1. **이력에서 임의선택해 택배사 양식 출력**: 발주확정만 해두고 OFS에서 택배사 양식 출력을
+   빠뜨린 건을 나중에 처리할 방법이 없었다. `OutboundHistoryForm`에 "선택 건 택배사 양식 출력"
+   버튼을 추가해, 그리드에서 다중선택한 `OutboundDetail`로 `OfsOrderItem`을 구성해 기존
+   `CourierExporter`로 그대로 출력한다. 단, `OutboundDetail`에는 연락처/배송메세지/CSKU
+   송장표시명이 저장되어 있지 않아(OFS 그리드 전용 데이터) 그 항목은 빈 칸으로 나간다 — 통상
+   택배사 양식에 필수인 수령인/주소/운송장번호/품목/수량은 정상 출력된다.
+2. **택배사 양식 출력 순서가 샘플과 달랐던 버그**: `CourierMaster.HeaderMappingJson`을
+   `Dictionary<string,string>`(헤더→속성)으로 저장하고 있었는데, JSON 객체(딕셔너리)의 키 순서는
+   사양상 보장되지 않아 저장/불러오기를 거치며 샘플에서 불러온 순서와 달라질 수 있었다. 택배사
+   프로그램은 그 파일의 열 순서로 데이터를 인식하므로 이건 실사용에 치명적인 버그였다.
+   `Utils/CourierHeaderMapping.cs`(신규)를 만들어 순서가 보장되는 **JSON 배열**
+   (`List<HeaderMappingEntry(Header, PropertyName)>`)로 저장 형식을 바꿨고,
+   `CourierConfigForm`/`CourierExporter` 둘 다 이걸 사용하도록 변경했다. 기존에 Dictionary
+   형식으로 저장된 구버전 데이터도 읽을 수 있게 폴백을 둬서(`CourierHeaderMapping.Parse`가 배열
+   파싱 실패 시 Dictionary로 재시도) 마이그레이션 없이 그대로 동작하고, 다음에 저장하면 새
+   형식으로 정규화된다. 회귀 테스트로 `CourierExporterTests.ExportAsync_PreservesSampleHeaderOrderExactly`
+   추가(헤더 5개를 일부러 섞은 순서로 줘서 출력 파일의 열 순서가 그 순서를 정확히 따르는지 확인).
+3. **발주/출고 이력 날짜 조회 시 DataGridViewComboBoxCell 오류**: 원인은 발주확정/출고확정
+   용어 변경 전("발송대기"/"발송완료")에 저장된 옛 상태값이 DB에 남아있는데, 이력 그리드의 상태
+   콤보 열(Items가 "발주확정"/"출고확정" 두 값뿐)이 그 값을 표시하려다 던지는 WinForms의 표준
+   예외였다. 두 겹으로 고쳤다: (a) `Database/DbSchema.cs`에 기동 시마다 실행되는 정규화
+   쿼리(`NormalizeLegacyOutboundStatus`)를 추가해 옛 값을 새 용어로 한 번에 바꾸고, (b)
+   `OutboundHistoryForm`이 조회한 데이터에 실제로 등장하는 값을 콤보 Items에 보강해두고
+   (`EnsureStatusItemsInclude`, `CourierConfigForm`의 기존 패턴과 동일), `DataGridView.DataError`를
+   구독해 혹시 모를 다른 값에도 창이 죽지 않게 방어했다. 회귀 테스트
+   `DbSchemaMigrationTests.EnsureCreated_OnLegacyOutboundStatus_NormalizesToCurrentTerminology` 추가.
+
+테스트 116/116 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에
