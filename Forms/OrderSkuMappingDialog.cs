@@ -14,12 +14,14 @@ public class OrderSkuMappingDialog : Form
 {
     private readonly ItemRepository _itemRepository = new();
     private readonly ChannelSkuRepository _channelSkuRepository = new();
+    private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly MappingRepository _mappingRepository = new();
     private readonly OfsOrderItem _orderItem;
     private readonly string? _channelCode;
 
     private TextBox _searchBox = new();
     private DataGridView _candidateGrid = new();
+    private TextBox _txtCskuCode = new();
     private TextBox _txtSupplyPrice = new();
     private RadioButton _radioVatIncluded = new();
     private RadioButton _radioVatExcluded = new();
@@ -43,10 +45,11 @@ public class OrderSkuMappingDialog : Form
         Size = new Size(680, 620);
         StartPosition = FormStartPosition.CenterParent;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 7, Padding = new Padding(10) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 8, Padding = new Padding(10) };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -78,6 +81,18 @@ public class OrderSkuMappingDialog : Form
             new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "제조원가(VAT포함)", DataPropertyName = "CostPrice", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
         _candidateGrid.SelectionChanged += (s, e) => PrefillFromExistingChannelSku();
+
+        var cskuCodePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        cskuCodePanel.Controls.Add(new Label { Text = "CSKU 코드(자동제안, 편집 가능):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+        _txtCskuCode = new TextBox { Width = 220 };
+        cskuCodePanel.Controls.Add(_txtCskuCode);
+        cskuCodePanel.Controls.Add(new Label
+        {
+            Text = "같은 마스터SKU도 채널 옵션에 따라 CSKU 코드를 다르게 부여할 수 있습니다.",
+            AutoSize = true,
+            Padding = new Padding(10, 6, 0, 0),
+            ForeColor = Color.DimGray,
+        });
 
         var pricePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         pricePanel.Controls.Add(new Label { Text = "납품단가(선택):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
@@ -111,33 +126,48 @@ public class OrderSkuMappingDialog : Form
         layout.Controls.Add(infoPanel, 0, 0);
         layout.Controls.Add(searchPanel, 0, 1);
         layout.Controls.Add(_candidateGrid, 0, 2);
-        layout.Controls.Add(pricePanel, 0, 3);
-        layout.Controls.Add(invoiceNamePanel, 0, 4);
-        layout.Controls.Add(exactRulePanel, 0, 5);
-        layout.Controls.Add(buttonPanel, 0, 6);
+        layout.Controls.Add(cskuCodePanel, 0, 3);
+        layout.Controls.Add(pricePanel, 0, 4);
+        layout.Controls.Add(invoiceNamePanel, 0, 5);
+        layout.Controls.Add(exactRulePanel, 0, 6);
+        layout.Controls.Add(buttonPanel, 0, 7);
 
         Controls.Add(layout);
         CancelButton = btnClose;
     }
 
     /// <summary>
-    /// 후보 목록에서 SKU를 선택하면, 그 채널에 이미 저장된 CSKU(납품가/송장표시명)가 있을 경우
+    /// 후보 목록에서 SKU를 선택하면 "채널명 앞 3글자_마스터SKU" 형태의 CSKU 코드를 기본값으로
+    /// 제안합니다(편집 가능). 그 기본 코드로 이미 저장된 CSKU(납품가/송장표시명)가 있으면 함께
     /// 미리 채워 보여줍니다. 매번 빈 칸에서 다시 입력하지 않고 기존 설정을 바로 확인/수정할 수 있게 합니다.
     /// </summary>
     private void PrefillFromExistingChannelSku()
     {
+        _txtCskuCode.Text = string.Empty;
         _txtSupplyPrice.Text = string.Empty;
         _txtInvoiceDisplayName.Text = string.Empty;
         _radioVatIncluded.Checked = true;
 
-        if (string.IsNullOrEmpty(_channelCode)) return;
         if (_candidateGrid.CurrentRow?.DataBoundItem is not ItemModel selected) return;
 
-        var existing = _channelSkuRepository.GetByChannelAndMsku(_channelCode, selected.Sku);
+        var defaultCode = BuildDefaultCskuCode(selected.Sku);
+        _txtCskuCode.Text = defaultCode;
+
+        if (string.IsNullOrEmpty(_channelCode)) return;
+
+        var existing = _channelSkuRepository.GetByChannelAndCskuCode(_channelCode, defaultCode);
         if (existing == null) return;
 
         _txtSupplyPrice.Text = existing.SupplyPrice.ToString();
         _txtInvoiceDisplayName.Text = existing.InvoiceDisplayName ?? string.Empty;
+    }
+
+    private string BuildDefaultCskuCode(string masterSku)
+    {
+        if (string.IsNullOrEmpty(_channelCode)) return masterSku;
+
+        var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == _channelCode)?.ChannelName ?? _channelCode;
+        return CskuCodeGenerator.BuildDefault(channelName, masterSku);
     }
 
     private void RunSearch()
@@ -160,10 +190,13 @@ public class OrderSkuMappingDialog : Form
             return;
         }
 
-        SaveChannelSkuInfoIfEntered(selected.Sku);
-        SaveAsExactRuleIfChecked(selected.Sku);
+        var cskuCode = ResolveCskuCodeOrShowError();
+        if (cskuCode == null) return;
 
-        ResultMappedSku = selected.Sku;
+        SaveChannelSkuInfoIfEntered(cskuCode, selected.Sku);
+        SaveAsExactRuleIfChecked(cskuCode);
+
+        ResultMappedSku = cskuCode;
         ResultStatus = "수동 매핑";
         DialogResult = DialogResult.OK;
         Close();
@@ -186,43 +219,64 @@ public class OrderSkuMappingDialog : Form
             CostPrice = 0m,
         });
 
-        SaveChannelSkuInfoIfEntered(tempSku);
-        SaveAsExactRuleIfChecked(tempSku);
+        var cskuCode = string.IsNullOrWhiteSpace(_txtCskuCode.Text) ? BuildDefaultCskuCode(tempSku) : _txtCskuCode.Text.Trim();
 
-        ResultMappedSku = tempSku;
+        SaveChannelSkuInfoIfEntered(cskuCode, tempSku);
+        SaveAsExactRuleIfChecked(cskuCode);
+
+        ResultMappedSku = cskuCode;
         ResultStatus = "임시 매핑";
         DialogResult = DialogResult.OK;
         Close();
     }
 
-    /// <summary>
-    /// 납품단가/송장표시명 중 하나라도 입력된 경우 채널-SKU(CSKU) 설정으로 저장합니다.
-    /// 납품단가는 VAT별도로 선택했으면 1.1을 곱해 VAT포함 기준으로 변환합니다
-    /// (마스터DB 제조원가와 동일하게 VAT포함 기준으로 통일).
-    /// </summary>
-    private void SaveChannelSkuInfoIfEntered(string msku)
+    private string? ResolveCskuCodeOrShowError()
     {
-        var hasPrice = decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice);
-        var invoiceDisplayName = string.IsNullOrWhiteSpace(_txtInvoiceDisplayName.Text) ? null : _txtInvoiceDisplayName.Text.Trim();
+        var code = _txtCskuCode.Text.Trim();
+        if (string.IsNullOrEmpty(code))
+        {
+            MessageBox.Show("CSKU 코드를 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+        return code;
+    }
 
-        if (!hasPrice && invoiceDisplayName == null) return;
+    /// <summary>
+    /// CSKU(채널+CSKU코드)가 이미 존재하면 "기존 CSKU에 조건을 추가"하는 것으로 간주해 그 CSKU의
+    /// 납품가/송장표시명은 그대로 두고 매핑 규칙만 추가한다(아래 OnMapClick/OnRegisterTempSkuClick의
+    /// SaveAsExactRuleIfChecked가 처리). 존재하지 않으면 입력된 납품단가/송장표시명으로 새로 만든다.
+    /// 납품단가는 VAT별도로 선택했으면 1.1을 곱해 VAT포함 기준으로 변환한다.
+    /// </summary>
+    private void SaveChannelSkuInfoIfEntered(string cskuCode, string masterSku)
+    {
         if (string.IsNullOrEmpty(_channelCode))
         {
-            MessageBox.Show("채널 정보가 없어 채널별 SKU 설정(납품단가/송장표시명)을 저장하지 못했습니다. SKU 매핑만 적용됩니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("채널 정보가 없어 CSKU 설정(납품단가/송장표시명)을 저장하지 못했습니다. SKU 매핑만 적용됩니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        var existing = _channelSkuRepository.GetByChannelAndMsku(_channelCode, msku);
+        var existing = _channelSkuRepository.GetByChannelAndCskuCode(_channelCode, cskuCode);
+        if (existing != null)
+        {
+            MessageBox.Show(
+                $"기존 CSKU '{cskuCode}'가 이미 존재합니다. 이 상품명/옵션명 조합을 그 CSKU에 매핑하는 조건을 추가합니다.",
+                "기존 CSKU 존재", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var hasPrice = decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice);
+        var invoiceDisplayName = string.IsNullOrWhiteSpace(_txtInvoiceDisplayName.Text) ? null : _txtInvoiceDisplayName.Text.Trim();
         var supplyPrice = hasPrice
             ? (_radioVatExcluded.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
-            : existing?.SupplyPrice ?? 0m;
+            : 0m;
 
         _channelSkuRepository.Upsert(new ChannelSkuModel
         {
             ChannelCode = _channelCode,
-            Msku = msku,
+            CskuCode = cskuCode,
+            Msku = masterSku,
             SupplyPrice = supplyPrice,
-            InvoiceDisplayName = invoiceDisplayName ?? existing?.InvoiceDisplayName,
+            InvoiceDisplayName = invoiceDisplayName,
         });
     }
 

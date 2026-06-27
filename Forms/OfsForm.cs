@@ -386,7 +386,7 @@ public class OfsForm : Form
                 {
                     if (string.IsNullOrEmpty(order.ChannelCode) || string.IsNullOrEmpty(order.MappedSku)) continue;
 
-                    var csku = _channelSkuRepository.GetByChannelAndMsku(order.ChannelCode, order.MappedSku);
+                    var csku = _channelSkuRepository.GetByChannelAndCskuCode(order.ChannelCode, order.MappedSku);
                     if (csku != null)
                     {
                         outboundDetails.Add(new OutboundDetail

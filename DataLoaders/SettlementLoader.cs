@@ -26,10 +26,15 @@ public class SettlementLoader
     /// <param name="channelConfig">데이터를 해석할 채널 설정</param>
     /// <param name="filePath">엑셀 파일 경로</param>
     /// <param name="password">암호로 보호된 파일일 경우의 비밀번호. 모르면 생략하고, 실패 시 EncryptedExcelFileException을 받아 재시도하세요.</param>
-    public async Task<List<SettlementData>> LoadFromFileAsync(SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, string filePath, string? password = null)
+    /// <param name="channelSkuRepository">
+    /// CSKU 코드 → 마스터SKU 변환을 위한 Repository. 매핑 규칙의 TargetSku가 CSKU 코드인 경우
+    /// 원가 조회 전에 실제 마스터SKU로 바꿔야 한다. 생략하면 새로 생성한다.
+    /// </param>
+    public async Task<List<SettlementData>> LoadFromFileAsync(SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, string filePath, string? password = null, ChannelSkuRepository? channelSkuRepository = null)
     {
         LastLoadHeaderRowLooksEmpty = false;
         var rows = new List<SettlementData>();
+        channelSkuRepository ??= new ChannelSkuRepository();
 
         await Task.Run(() =>
         {
@@ -150,7 +155,7 @@ public class SettlementLoader
                     }
                 }
 
-                ApplyMappingAndProfit(settlementData, skuMapper, itemRepository, channelConfig);
+                ApplyMappingAndProfit(settlementData, skuMapper, itemRepository, channelConfig, channelSkuRepository);
                 rows.Add(settlementData);
             }
 
@@ -161,7 +166,7 @@ public class SettlementLoader
         return rows;
     }
 
-    private static void ApplyMappingAndProfit(SettlementData data, SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig)
+    private static void ApplyMappingAndProfit(SettlementData data, SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, ChannelSkuRepository channelSkuRepository)
     {
         var orderItem = new OfsOrderItem
         {
@@ -178,7 +183,10 @@ public class SettlementLoader
             return;
         }
 
-        var item = itemRepository.GetBySku(data.Msku);
+        // data.Msku는 매핑 규칙의 TargetSku 값이며, CSKU로 등록되어 있다면 그 자체는 마스터SKU가
+        // 아니라 채널 전용 코드일 수 있다. 원가는 항상 실제 마스터SKU 기준이어야 하므로 변환한다.
+        var masterSku = channelSkuRepository.ResolveMasterSku(channelConfig.ChannelCode, data.Msku);
+        var item = itemRepository.GetBySku(masterSku);
         if (item == null)
         {
             data.Status = "원가 정보 없음";

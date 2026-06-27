@@ -16,7 +16,7 @@ public class SkuMapper
 
     private readonly Dictionary<MappingRuleType, List<MappingRule>> _rules;
     private readonly Dictionary<long, List<MappingConditionDetail>> _conditionDetailsByRuleId;
-    private readonly Dictionary<string, ChannelSkuModel> _channelSkusByMsku;
+    private readonly Dictionary<string, ChannelSkuModel> _channelSkusByCskuCode;
 
     /// <summary>
     /// 지정된 채널의 모든 매핑 규칙을 로드하여 SkuMapper를 초기화합니다.
@@ -37,9 +37,11 @@ public class SkuMapper
             [MappingRuleType.Condition] = mappingRepository.GetRules(MappingRuleType.Condition, channelCode)
         };
         _conditionDetailsByRuleId = mappingRepository.GetConditionDetailsByChannel(channelCode);
-        _channelSkusByMsku = (channelSkuRepository ?? new ChannelSkuRepository())
+        // item.MappedSku(=매핑 규칙의 TargetSku)는 CSKU 코드이므로, CskuCode를 키로 묶어야
+        // BuildInvoiceLabel에서 item.MappedSku로 바로 조회할 수 있다.
+        _channelSkusByCskuCode = (channelSkuRepository ?? new ChannelSkuRepository())
             .GetAllByChannel(channelCode)
-            .ToDictionary(c => c.Msku, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -102,7 +104,7 @@ public class SkuMapper
     private string? BuildInvoiceLabel(OfsOrderItem item)
     {
         if (string.IsNullOrEmpty(item.MappedSku)) return null;
-        if (!_channelSkusByMsku.TryGetValue(item.MappedSku, out var csku)) return null;
+        if (!_channelSkusByCskuCode.TryGetValue(item.MappedSku, out var csku)) return null;
         if (string.IsNullOrWhiteSpace(csku.InvoiceDisplayName)) return null;
 
         return $"{csku.InvoiceDisplayName} {item.Quantity}개";

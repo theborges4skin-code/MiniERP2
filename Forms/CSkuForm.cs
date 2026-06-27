@@ -14,6 +14,7 @@ namespace MiniERP2.Forms;
 public class CSkuForm : Form
 {
     private readonly ChannelSkuRepository _cskuRepository = new();
+    private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly SettingsService _settingsService = new();
     private readonly string _masterSku;
     private ExcelLikeDataGridView _cskuGrid = new();
@@ -63,9 +64,15 @@ public class CSkuForm : Form
         };
 
         _cskuGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널 코드", DataPropertyName = "ChannelCode", Width = 200 },
-            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 150 }
+            new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널 코드", DataPropertyName = "ChannelCode", Width = 130 },
+            new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 150 },
+            new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 100 }
         );
+
+        // 같은 채널 안에서도 옵션별로 CSKU 코드를 다르게 해야 할 수 있으므로, 채널 코드를 입력/수정하면
+        // CSKU 코드가 비어있는 경우에만 "채널명 앞 3글자_마스터SKU" 기본값을 채워준다(직접 수정 가능).
+        _cskuGrid.CellEndEdit += OnCskuGridCellEndEdit;
 
         SetupContextMenu();
 
@@ -108,7 +115,23 @@ public class CSkuForm : Form
         }
 
         // Open the history form as a dialog.
-        new ChannelSkuPriceHistoryForm(csku.ChannelCode, csku.Msku).ShowDialog(this);
+        new ChannelSkuPriceHistoryForm(csku.ChannelCode, csku.CskuCode).ShowDialog(this);
+    }
+
+    /// <summary>
+    /// 채널 코드 칸 편집이 끝났을 때, CSKU 코드가 비어있으면 "채널명 앞 3글자_마스터SKU" 기본값을
+    /// 제안해준다. 이미 값이 있으면(직접 입력했거나 기존 데이터) 건드리지 않는다.
+    /// </summary>
+    private void OnCskuGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (_cskuGrid.Columns[e.ColumnIndex].Name != "ChannelCode") return;
+        if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
+        if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+        if (!string.IsNullOrWhiteSpace(csku.CskuCode) || string.IsNullOrWhiteSpace(csku.ChannelCode)) return;
+
+        var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == csku.ChannelCode)?.ChannelName ?? csku.ChannelCode;
+        csku.CskuCode = CskuCodeGenerator.BuildDefault(channelName, _masterSku);
+        _cskuGrid.InvalidateRow(e.RowIndex);
     }
 
     private void LoadData()
@@ -130,6 +153,13 @@ public class CSkuForm : Form
                 if (string.IsNullOrWhiteSpace(csku.Msku))
                 {
                     csku.Msku = _masterSku;
+                }
+
+                // CSKU 코드를 직접 입력하지 않은 행은 저장 시점에 기본값을 채운다(편집 중 놓친 경우 대비).
+                if (string.IsNullOrWhiteSpace(csku.CskuCode))
+                {
+                    var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == csku.ChannelCode)?.ChannelName ?? csku.ChannelCode;
+                    csku.CskuCode = CskuCodeGenerator.BuildDefault(channelName, _masterSku);
                 }
 
                 _cskuRepository.Upsert(csku);
@@ -162,7 +192,7 @@ public class CSkuForm : Form
 
         if (result == DialogResult.Yes)
         {
-            _cskuRepository.Delete(cskuToDelete.ChannelCode, cskuToDelete.Msku);
+            _cskuRepository.Delete(cskuToDelete.ChannelCode, cskuToDelete.CskuCode);
         }
         else
         {
@@ -214,7 +244,14 @@ public class CSkuForm : Form
                     supplyPrice = 0; // Default to 0 if parsing fails.
                 }
 
-                cskusToImport.Add(new ChannelSkuModel { ChannelCode = channelCode, Msku = _masterSku, SupplyPrice = supplyPrice });
+                var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == channelCode)?.ChannelName ?? channelCode;
+                cskusToImport.Add(new ChannelSkuModel
+                {
+                    ChannelCode = channelCode,
+                    CskuCode = CskuCodeGenerator.BuildDefault(channelName, _masterSku),
+                    Msku = _masterSku,
+                    SupplyPrice = supplyPrice,
+                });
             }
 
             if (cskusToImport.Count == 0)
@@ -280,9 +317,11 @@ public class CSkuForm : Form
             for (var rowIndex = 0; rowIndex < _cskus.Count; rowIndex++)
             {
                 var csku = _cskus[rowIndex];
-                // This assumes the column order in the grid is ChannelCode, SupplyPrice
+                // 그리드의 열 순서(ChannelCode, CskuCode, InvoiceDisplayName, SupplyPrice)와 맞춘다.
                 worksheet.Cells[rowIndex + 2, 1].Value = csku.ChannelCode;
-                worksheet.Cells[rowIndex + 2, 2].Value = csku.SupplyPrice;
+                worksheet.Cells[rowIndex + 2, 2].Value = csku.CskuCode;
+                worksheet.Cells[rowIndex + 2, 3].Value = csku.InvoiceDisplayName;
+                worksheet.Cells[rowIndex + 2, 4].Value = csku.SupplyPrice;
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();

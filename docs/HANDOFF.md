@@ -4,7 +4,7 @@
 바로 이어받을 수 있도록 진행 상황을 정리한 것이다. 프로젝트 전체 배경/아키텍처는
 [PLAN.md](PLAN.md) 참고. 2026-06-26 세션 작업 내역은 git log(커밋 `1322618`~`f7db495`) 참고.
 
-**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **84/84 통과**.
+**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **89/89 통과**.
 전부 `origin/main`에 푸시됨(마지막 커밋은 git log 참고).
 
 ## auto-compact 이후 추가로 한 일
@@ -101,6 +101,43 @@
   주문 단위가 아니라 그 묶음 단위로 1행씩 출력하도록 바꿔야 할 것으로 보인다. 그 위에 OFS
   그리드의 컨텍스트 메뉴(분리/합포장 지정)와, 4줄 초과 시 수동 줄합침 편집 UI를 얹는 두 단계
   작업이 될 것 같다. PLAN.md 5.5절에도 신규설계 항목으로 언급되어 있던 것과 같은 맥락.
+
+## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
+
+사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에
+전용 코드를 도입했다. **이건 단순 UI 추가가 아니라 데이터 모델 변경**이라 영향 범위를 정리해둔다.
+
+- **무엇이 바뀌었나**: `ChannelSkuModel`에 `CskuCode`(고유키, 채널+CskuCode가 PK)가 새로 생기고
+  기존 `Msku` 필드는 "이 CSKU가 원가 조회를 위해 연결되는 실제 마스터SKU"라는 의미로 남았다.
+  매핑 규칙(`MappingRule.TargetSku`)과 `OfsOrderItem.MappedSku`가 실제로 담는 값은 이제
+  **CSKU 코드**다(예전에는 마스터SKU를 그대로 담았음). 기본 CSKU 코드는
+  `Utils/CskuCodeGenerator.BuildDefault`로 "채널명 앞 3글자_마스터SKU"(예: `AAA_BBB`) 형태로
+  자동 제안되지만, `OrderSkuMappingDialog`/`MappingForm`의 "미매핑 처리" 탭에서 직접 편집할 수
+  있다(같은 마스터SKU라도 옵션1/2/3마다 다른 코드를 줄 수 있음).
+- **기존 CSKU와 코드가 같으면**: 새로 만들지 않고 "기존 CSKU 존재. 이 조합을 매핑 조건으로
+  추가합니다" 안내만 띄우고, 그 CSKU의 납품가/송장표시명은 그대로 둔 채 매핑 규칙(1:1 또는
+  조건부)만 추가한다(`SaveChannelSkuInfoFromUnmappedPanel`/`OrderSkuMappingDialog.
+  SaveChannelSkuInfoIfEntered` 참고).
+- **DB 마이그레이션**: `ChannelSkuTable`의 기본키가 `(ChannelCode, Msku)`에서
+  `(ChannelCode, CskuCode)`로 바뀌어야 해서(같은 Msku로 여러 CskuCode가 공존해야 하므로)
+  ALTER로 처리할 수 없었다. `Database/DbSchema.MigrateChannelSkuTableToCskuCodeIfNeeded`가
+  앱 시작 시 옛 스키마를 감지하면 테이블을 이름변경 → 새 스키마로 재생성 → 데이터 복사
+  (CskuCode = 옛 Msku 값) → 옛 테이블 삭제 순으로 처리한다. 검증:
+  `Tests/DbSchemaMigrationTests.EnsureCreated_OnLegacyChannelSkuTable_MigratesDataToCskuCodeSchema`.
+- **원가 조회(이익계산)에 미친 영향 — 가장 중요한 부분**: `SettlementLoader.ApplyMappingAndProfit`이
+  예전엔 `orderItem.MappedSku`를 마스터SKU로 간주해 곧바로 `ItemRepository.GetBySku`를 호출했다.
+  이제는 `ChannelSkuRepository.ResolveMasterSku(channelCode, mappedSku)`를 거쳐 "CSKU 코드면 그
+  CSKU의 Msku로, CSKU가 아니면(과거 방식 단순 1:1 규칙) 입력값을 그대로 마스터SKU로" 변환한 뒤
+  원가를 조회한다. 이 변환을 빼먹으면 CSKU로 매핑된 모든 건이 "원가 정보 없음"으로 잘못
+  처리된다 — `Tests/SettlementLoaderCskuResolutionTests`로 회귀 방지 검증해둠.
+  `SkuMapper`의 `InvoiceLabel` 계산용 내부 딕셔너리도 `Msku` 키에서 `CskuCode` 키로 바꿨다
+  (`_channelSkusByCskuCode`).
+- **하위 호환**: 레거시 DB 마이그레이션(`LegacyMigrationService.MigrateChannelSkus`)과 마이그레이션
+  데이터는 CskuCode를 별도로 몰랐으므로 CskuCode = Msku로 채운다(기존 동작과 동일하게 보임).
+  과거에 만들어진 단순 1:1/조건부 규칙(TargetSku가 마스터SKU를 그대로 가리키고 CSKU 레코드가
+  없는 경우)도 `ResolveMasterSku`가 그대로 통과시켜주므로 별도 마이그레이션 없이 계속 동작한다.
+- **CSkuForm(마스터SKU 관리창 → "채널 SKU 관리")**: 그리드에 CSKU 코드/송장표시명 열이 추가됨.
+  채널 코드를 입력하면 CskuCode가 비어있을 때만 기본값을 자동 제안한다.
 
 ## 이 세션의 배경
 

@@ -29,14 +29,15 @@ public class ChannelSkuRepositoryTests
     public void Upsert_ThenGet_ReturnsSavedItem()
     {
         var repository = new ChannelSkuRepository();
-        var csku = new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-001", SupplyPrice = 5000m };
+        var csku = new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-001", Msku = "MSKU-001", SupplyPrice = 5000m };
         repository.Upsert(csku);
 
-        var saved = repository.GetByChannelAndMsku("COUPANG", "CSKU-001");
+        var saved = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-001");
 
         Assert.IsNotNull(saved);
         Assert.AreEqual("COUPANG", saved.ChannelCode);
-        Assert.AreEqual("CSKU-001", saved.Msku);
+        Assert.AreEqual("CSKU-001", saved.CskuCode);
+        Assert.AreEqual("MSKU-001", saved.Msku);
         Assert.AreEqual(5000m, saved.SupplyPrice);
     }
 
@@ -45,12 +46,12 @@ public class ChannelSkuRepositoryTests
     {
         var repository = new ChannelSkuRepository();
         var beforeChange = DateTime.UtcNow;
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-002", SupplyPrice = 5000m });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-002", SupplyPrice = 5500m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-002", Msku = "MSKU-002", SupplyPrice = 5000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-002", Msku = "MSKU-002", SupplyPrice = 5500m });
         var afterChange = DateTime.UtcNow;
 
         var history = repository.GetPriceHistory("COUPANG", "CSKU-002");
-        var saved = repository.GetByChannelAndMsku("COUPANG", "CSKU-002");
+        var saved = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-002");
 
         Assert.HasCount(1, history);
         Assert.AreEqual(5000m, history[0].OldPrice);
@@ -63,29 +64,70 @@ public class ChannelSkuRepositoryTests
     public void Upsert_WithInvoiceDisplayName_PersistsAndCanBeUpdated()
     {
         var repository = new ChannelSkuRepository();
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-003", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml" });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-003", Msku = "MSKU-003", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml" });
 
-        var saved = repository.GetByChannelAndMsku("COUPANG", "CSKU-003");
+        var saved = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-003");
         Assert.AreEqual("샴푸 500ml", saved!.InvoiceDisplayName);
 
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-003", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml(수정)" });
-        var updated = repository.GetByChannelAndMsku("COUPANG", "CSKU-003");
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-003", Msku = "MSKU-003", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml(수정)" });
+        var updated = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-003");
         Assert.AreEqual("샴푸 500ml(수정)", updated!.InvoiceDisplayName);
+    }
+
+    [TestMethod]
+    public void Upsert_MultipleCskuCodesForSameMsku_CoexistInSameChannel()
+    {
+        // 채널 안에서 같은 마스터SKU라도 옵션별로 CSKU 코드가 다를 수 있다(옵션1/2/3 분화).
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CPG_PRODA_1", Msku = "PRODA", SupplyPrice = 1000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CPG_PRODA_2", Msku = "PRODA", SupplyPrice = 1200m });
+
+        var option1 = repository.GetByChannelAndCskuCode("COUPANG", "CPG_PRODA_1");
+        var option2 = repository.GetByChannelAndCskuCode("COUPANG", "CPG_PRODA_2");
+
+        Assert.IsNotNull(option1);
+        Assert.IsNotNull(option2);
+        Assert.AreEqual("PRODA", option1!.Msku);
+        Assert.AreEqual("PRODA", option2!.Msku);
+        Assert.AreEqual(1000m, option1.SupplyPrice);
+        Assert.AreEqual(1200m, option2.SupplyPrice);
+    }
+
+    [TestMethod]
+    public void ResolveMasterSku_WithExistingCsku_ReturnsLinkedMsku()
+    {
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CPG_PRODA_1", Msku = "PRODA", SupplyPrice = 1000m });
+
+        var resolved = repository.ResolveMasterSku("COUPANG", "CPG_PRODA_1");
+
+        Assert.AreEqual("PRODA", resolved);
+    }
+
+    [TestMethod]
+    public void ResolveMasterSku_WithNoMatchingCsku_FallsBackToInputCode()
+    {
+        // CSKU로 등록되지 않은(과거 방식의 단순 1:1 규칙) 코드는 그대로 마스터SKU로 간주한다.
+        var repository = new ChannelSkuRepository();
+
+        var resolved = repository.ResolveMasterSku("COUPANG", "PRODA");
+
+        Assert.AreEqual("PRODA", resolved);
     }
 
     [TestMethod]
     public void GetAllByChannel_ReturnsOnlyThatChannelsCskus()
     {
         var repository = new ChannelSkuRepository();
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-A", SupplyPrice = 1000m, InvoiceDisplayName = "A" });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = "CSKU-B", SupplyPrice = 2000m });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", Msku = "CSKU-A", SupplyPrice = 1500m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-A", Msku = "MSKU-A", SupplyPrice = 1000m, InvoiceDisplayName = "A" });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-B", Msku = "MSKU-B", SupplyPrice = 2000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", CskuCode = "CSKU-A", Msku = "MSKU-A", SupplyPrice = 1500m });
 
         var results = repository.GetAllByChannel("COUPANG");
 
         Assert.HasCount(2, results);
         Assert.IsTrue(results.All(c => c.ChannelCode == "COUPANG"));
-        Assert.AreEqual("A", results.Single(c => c.Msku == "CSKU-A").InvoiceDisplayName);
+        Assert.AreEqual("A", results.Single(c => c.CskuCode == "CSKU-A").InvoiceDisplayName);
     }
 
     [TestMethod]
@@ -94,9 +136,9 @@ public class ChannelSkuRepositoryTests
         var repository = new ChannelSkuRepository();
         var targetMsku = "MSKU-TARGET-01";
 
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", Msku = targetMsku, SupplyPrice = 1000m });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", Msku = targetMsku, SupplyPrice = 1100m });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "NAVER", Msku = "MSKU-OTHER-02", SupplyPrice = 2000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-T1", Msku = targetMsku, SupplyPrice = 1000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", CskuCode = "CSKU-T2", Msku = targetMsku, SupplyPrice = 1100m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "NAVER", CskuCode = "CSKU-T3", Msku = "MSKU-OTHER-02", SupplyPrice = 2000m });
 
         var results = repository.GetAllByMsku(targetMsku);
 
@@ -109,23 +151,23 @@ public class ChannelSkuRepositoryTests
     public void Delete_RemovesChannelSkuAndHistory()
     {
         var repository = new ChannelSkuRepository();
-        var msku = "MSKU-DEL-01";
+        var cskuCode = "CSKU-DEL-01";
         var channelCode = "COUPANG";
 
         // Create data to delete and its history
-        repository.Upsert(new ChannelSkuModel { ChannelCode = channelCode, Msku = msku, SupplyPrice = 1000m });
-        repository.Upsert(new ChannelSkuModel { ChannelCode = channelCode, Msku = msku, SupplyPrice = 1100m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = channelCode, CskuCode = cskuCode, Msku = "MSKU-DEL-01", SupplyPrice = 1000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = channelCode, CskuCode = cskuCode, Msku = "MSKU-DEL-01", SupplyPrice = 1100m });
         // Create data to keep
-        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", Msku = msku, SupplyPrice = 1200m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", CskuCode = cskuCode, Msku = "MSKU-DEL-01", SupplyPrice = 1200m });
 
         // Act
-        repository.Delete(channelCode, msku);
+        repository.Delete(channelCode, cskuCode);
 
         // Assert
-        var deletedItem = repository.GetByChannelAndMsku(channelCode, msku);
-        var deletedHistory = repository.GetPriceHistory(channelCode, msku);
+        var deletedItem = repository.GetByChannelAndCskuCode(channelCode, cskuCode);
+        var deletedHistory = repository.GetPriceHistory(channelCode, cskuCode);
         Assert.IsNull(deletedItem, "Deleted item should not be found.");
         Assert.IsEmpty(deletedHistory, "History of deleted item should be empty.");
-        Assert.IsNotNull(repository.GetByChannelAndMsku("11ST", msku), "Other channel's item should not be deleted.");
+        Assert.IsNotNull(repository.GetByChannelAndCskuCode("11ST", cskuCode), "Other channel's item should not be deleted.");
     }
 }

@@ -254,6 +254,7 @@ public class LegacyMigrationService
             _channelSkuRepository.Upsert(new ChannelSkuModel
             {
                 ChannelCode = channelCode,
+                CskuCode = skuName, // 레거시 DB에는 CSKU 코드 개념이 없었으므로 마스터SKU를 그대로 코드로 사용
                 Msku = skuName,
                 SupplyPrice = GetDecimalOrDefault(reader, "SupplyPrice", 0m),
             });

@@ -1,9 +1,27 @@
 namespace MiniERP2.Models;
 
+/// <summary>
+/// CSKU(채널별 SKU) — 채널 안에서 실제 매핑/송장 출력 단위가 되는 식별자입니다.
+/// 마스터DB의 SKU는 1개라도, 채널의 옵션 구성에 따라 여러 CSKU로 나뉠 수 있습니다
+/// (예: 마스터SKU "상품A" 1개가 채널에서는 옵션1/2/3별로 CskuCode가 다른 CSKU 3개로 관리됨).
+/// </summary>
 public class ChannelSkuModel
 {
     public required string ChannelCode { get; set; }
+
+    /// <summary>
+    /// 이 채널 안에서 매핑 규칙(TargetSku)/OfsOrderItem.MappedSku가 실제로 가리키는 코드입니다.
+    /// 기본값은 "채널명 앞 3글자_마스터SKU"로 자동 생성되지만 사용자가 직접 편집할 수 있습니다
+    /// (Utils/CskuCodeGenerator.BuildDefault 참고). (ChannelCode, CskuCode)가 고유키입니다.
+    /// </summary>
+    public required string CskuCode { get; set; }
+
+    /// <summary>
+    /// 이 CSKU가 원가 조회를 위해 연결되는 마스터DB의 실제 SKU입니다(ItemTable.Sku).
+    /// 여러 CSKU가 같은 Msku를 가리킬 수 있습니다(채널 옵션 분화).
+    /// </summary>
     public required string Msku { get; set; }
+
     public decimal SupplyPrice { get; set; }
 
     /// <summary>

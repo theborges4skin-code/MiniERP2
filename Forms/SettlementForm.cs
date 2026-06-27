@@ -21,6 +21,7 @@ public class SettlementForm : Form
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly MappingRepository _mappingRepository = new();
     private readonly ItemRepository _itemRepository = new();
+    private readonly ChannelSkuRepository _channelSkuRepository = new();
     private readonly SettlementRepository _settlementRepository = new();
     private readonly OutboundRepository _outboundRepository = new();
     private readonly SettlementLoader _settlementLoader = new();
@@ -179,14 +180,14 @@ public class SettlementForm : Form
     {
         try
         {
-            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file);
+            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file, channelSkuRepository: _channelSkuRepository);
         }
         catch (EncryptedExcelFileException)
         {
             using var dialog = new PasswordPromptDialog(Path.GetFileName(file));
             if (dialog.ShowDialog(this) != DialogResult.OK) return null;
 
-            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file, dialog.Password);
+            return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file, dialog.Password, _channelSkuRepository);
         }
     }
 

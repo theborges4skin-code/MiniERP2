@@ -114,7 +114,7 @@ public class SkuMapperTests
         mappingRepository.SaveRules(MappingRuleType.Exact, "CH1", [new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-1" }]);
 
         var channelSkuRepository = new ChannelSkuRepository();
-        channelSkuRepository.Upsert(new ChannelSkuModel { ChannelCode = "CH1", Msku = "SKU-1", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml" });
+        channelSkuRepository.Upsert(new ChannelSkuModel { ChannelCode = "CH1", CskuCode = "SKU-1", Msku = "SKU-1", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml" });
 
         var mapper = new SkuMapper(mappingRepository, "CH1", channelSkuRepository);
         var item = new OfsOrderItem { ProductName = "상품A", OptionName = "옵션1", Quantity = 3 };

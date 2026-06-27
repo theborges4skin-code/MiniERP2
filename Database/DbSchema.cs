@@ -6,6 +6,11 @@ public static class DbSchema
 {
     public static void EnsureCreated(SqliteConnection connection)
     {
+        // ChannelSkuTable의 기본키를 (ChannelCode, Msku)에서 (ChannelCode, CskuCode)로 바꿔야 해서
+        // (한 마스터SKU가 채널 안에서 여러 CSKU로 분화될 수 있게) ALTER로는 처리할 수 없다.
+        // 아래 CREATE TABLE IF NOT EXISTS가 실행되기 전에 먼저 옛 스키마를 감지해 옮겨준다.
+        MigrateChannelSkuTableToCskuCodeIfNeeded(connection);
+
         using var command = connection.CreateCommand();
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS ItemTable (
@@ -28,9 +33,11 @@ public static class DbSchema
 
             CREATE TABLE IF NOT EXISTS ChannelSkuTable (
                 ChannelCode TEXT NOT NULL,
+                CskuCode TEXT NOT NULL,
                 Msku TEXT NOT NULL,
                 SupplyPrice REAL NOT NULL,
-                PRIMARY KEY (ChannelCode, Msku)
+                InvoiceDisplayName TEXT,
+                PRIMARY KEY (ChannelCode, CskuCode)
             );
 
             CREATE TABLE IF NOT EXISTS ChannelSkuPriceHistory (
@@ -153,6 +160,15 @@ public static class DbSchema
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)
     {
+        if (HasColumn(connection, tableName, columnName)) return;
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnType}";
+        alterCommand.ExecuteNonQuery();
+    }
+
+    private static bool HasColumn(SqliteConnection connection, string tableName, string columnName)
+    {
         using var checkCommand = connection.CreateCommand();
         checkCommand.CommandText = $"PRAGMA table_info({tableName})";
         using var reader = checkCommand.ExecuteReader();
@@ -161,13 +177,53 @@ public static class DbSchema
             // PRAGMA table_info 결과의 두 번째 컬럼(인덱스 1)이 컬럼 이름이다.
             if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
             {
-                return; // 이미 존재함
+                return true;
             }
         }
-        reader.Close();
+        return false;
+    }
 
-        using var alterCommand = connection.CreateCommand();
-        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnType}";
-        alterCommand.ExecuteNonQuery();
+    /// <summary>
+    /// 옛 버전의 ChannelSkuTable(기본키 ChannelCode+Msku)을 새 스키마(기본키 ChannelCode+CskuCode)로
+    /// 옮긴다. SQLite는 기존 테이블의 기본키를 ALTER로 바꿀 수 없어 이름 변경 → 새 테이블 생성 →
+    /// 데이터 복사(CskuCode는 옛 Msku 값을 그대로 사용) → 옛 테이블 삭제 순으로 처리한다.
+    /// 신규 DB(테이블이 아예 없음)거나 이미 마이그레이션된 DB는 아무 일도 하지 않는다.
+    /// </summary>
+    private static void MigrateChannelSkuTableToCskuCodeIfNeeded(SqliteConnection connection)
+    {
+        using var checkExistsCommand = connection.CreateCommand();
+        checkExistsCommand.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name='ChannelSkuTable'";
+        if (checkExistsCommand.ExecuteScalar() == null) return;
+
+        if (HasColumn(connection, "ChannelSkuTable", "CskuCode")) return;
+
+        var hasInvoiceDisplayName = HasColumn(connection, "ChannelSkuTable", "InvoiceDisplayName");
+
+        using var renameCommand = connection.CreateCommand();
+        renameCommand.CommandText = "ALTER TABLE ChannelSkuTable RENAME TO ChannelSkuTable_Legacy";
+        renameCommand.ExecuteNonQuery();
+
+        using var createCommand = connection.CreateCommand();
+        createCommand.CommandText = """
+            CREATE TABLE ChannelSkuTable (
+                ChannelCode TEXT NOT NULL,
+                CskuCode TEXT NOT NULL,
+                Msku TEXT NOT NULL,
+                SupplyPrice REAL NOT NULL,
+                InvoiceDisplayName TEXT,
+                PRIMARY KEY (ChannelCode, CskuCode)
+            )
+            """;
+        createCommand.ExecuteNonQuery();
+
+        using var copyCommand = connection.CreateCommand();
+        copyCommand.CommandText = hasInvoiceDisplayName
+            ? "INSERT INTO ChannelSkuTable (ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName) SELECT ChannelCode, Msku, Msku, SupplyPrice, InvoiceDisplayName FROM ChannelSkuTable_Legacy"
+            : "INSERT INTO ChannelSkuTable (ChannelCode, CskuCode, Msku, SupplyPrice) SELECT ChannelCode, Msku, Msku, SupplyPrice FROM ChannelSkuTable_Legacy";
+        copyCommand.ExecuteNonQuery();
+
+        using var dropCommand = connection.CreateCommand();
+        dropCommand.CommandText = "DROP TABLE ChannelSkuTable_Legacy";
+        dropCommand.ExecuteNonQuery();
     }
 }

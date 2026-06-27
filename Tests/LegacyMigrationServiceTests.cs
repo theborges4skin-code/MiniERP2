@@ -112,7 +112,7 @@ public class LegacyMigrationServiceTests
         Assert.IsNotNull(tempItem);
         Assert.AreEqual(2000m, tempItem.CostPrice);
 
-        var csku = new ChannelSkuRepository().GetByChannelAndMsku("CH01", "SKU1");
+        var csku = new ChannelSkuRepository().GetByChannelAndCskuCode("CH01", "SKU1");
         Assert.IsNotNull(csku);
         Assert.AreEqual(5000m, csku.SupplyPrice);
     }

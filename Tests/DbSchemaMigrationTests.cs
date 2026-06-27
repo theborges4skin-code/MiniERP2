@@ -56,4 +56,46 @@ public class DbSchemaMigrationTests
         Assert.IsNotNull(saved);
         Assert.AreEqual("그룹A", saved.ProductGroup);
     }
+
+    /// <summary>
+    /// 구버전 ChannelSkuTable(기본키 ChannelCode+Msku, CskuCode 컬럼 없음)을 가진 DB를 열었을 때,
+    /// 기존 데이터를 잃지 않고 새 스키마(기본키 ChannelCode+CskuCode)로 옮겨지는지 검증한다.
+    /// 기존 행은 CskuCode = 옛 Msku 값으로 채워져, 매핑 규칙의 TargetSku가 그대로 유효해야 한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_OnLegacyChannelSkuTable_MigratesDataToCskuCodeSchema()
+    {
+        using (var legacyConnection = new SqliteConnection($"Data Source={PathProvider.DatabaseFilePath}"))
+        {
+            legacyConnection.Open();
+            using var command = legacyConnection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE ChannelSkuTable (
+                    ChannelCode TEXT NOT NULL,
+                    Msku TEXT NOT NULL,
+                    SupplyPrice REAL NOT NULL,
+                    InvoiceDisplayName TEXT,
+                    PRIMARY KEY (ChannelCode, Msku)
+                );
+                INSERT INTO ChannelSkuTable (ChannelCode, Msku, SupplyPrice, InvoiceDisplayName)
+                VALUES ('CH01', 'SKU-LEGACY', 5000, '레거시 표시명');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var repository = new ChannelSkuRepository();
+
+        // 옛 데이터는 CskuCode = 옛 Msku 값으로 그대로 조회되어야 한다.
+        var migrated = repository.GetByChannelAndCskuCode("CH01", "SKU-LEGACY");
+        Assert.IsNotNull(migrated);
+        Assert.AreEqual("SKU-LEGACY", migrated.Msku);
+        Assert.AreEqual(5000m, migrated.SupplyPrice);
+        Assert.AreEqual("레거시 표시명", migrated.InvoiceDisplayName);
+
+        // 마이그레이션 이후로는 같은 마스터SKU에 다른 CskuCode를 추가할 수 있어야 한다(옵션 분화).
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "CH01", CskuCode = "SKU-LEGACY_2", Msku = "SKU-LEGACY", SupplyPrice = 5500m });
+        var secondOption = repository.GetByChannelAndCskuCode("CH01", "SKU-LEGACY_2");
+        Assert.IsNotNull(secondOption);
+        Assert.AreEqual("SKU-LEGACY", secondOption.Msku);
+    }
 }
