@@ -36,6 +36,65 @@ public class MappingRepository
         return rules;
     }
 
+    /// <summary>채널 불문하고 지정된 유형의 모든 단순 규칙(1:1/임시/예외)을 가져옵니다(데이터 관리창용).</summary>
+    public List<MappingRule> GetAllRules(MappingRuleType ruleType)
+    {
+        var tableName = GetTableName(ruleType);
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName}";
+
+        var rules = new List<MappingRule>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rules.Add(new MappingRule
+            {
+                Id = reader.GetInt64(0),
+                RuleType = ruleType,
+                ChannelCode = reader.GetString(1),
+                Key = reader.GetString(2),
+                TargetSku = reader.GetString(3),
+            });
+        }
+        return rules;
+    }
+
+    /// <summary>단순 규칙(1:1/임시/예외) 1건을 Id로 삭제합니다(데이터 관리창의 그리드 직접삭제용).</summary>
+    public void DeleteRule(MappingRuleType ruleType, long id)
+    {
+        var tableName = GetTableName(ruleType);
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"DELETE FROM {tableName} WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>채널 불문하고 모든 조건부 매핑 규칙과 그 상세조건을 가져옵니다(데이터 관리창용).</summary>
+    public List<(MappingRule Rule, List<MappingConditionDetail> Details)> GetAllConditionRulesWithDetails()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Id, ChannelCode, Key, TargetSku FROM RuleCondition";
+
+        var rules = new List<MappingRule>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rules.Add(new MappingRule
+            {
+                Id = reader.GetInt64(0),
+                RuleType = MappingRuleType.Condition,
+                ChannelCode = reader.GetString(1),
+                Key = reader.GetString(2),
+                TargetSku = reader.GetString(3),
+            });
+        }
+
+        return rules.Select(r => (r, GetConditionDetails(r.Id))).ToList();
+    }
+
     public void SaveRules(MappingRuleType ruleType, string channelCode, IEnumerable<MappingRule> rules)
     {
         var tableName = GetTableName(ruleType);

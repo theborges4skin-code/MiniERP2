@@ -86,6 +86,10 @@ public class MainHub : Form
         legacyImportButton.Enabled = true;
         sidebarPanel.Controls.Add(legacyImportButton);
 
+        var dataManagementButton = CreateMenuButton("데이터 관리", (s, e) => { FormManager.Show<DataManagementForm>(); });
+        dataManagementButton.Enabled = true;
+        sidebarPanel.Controls.Add(dataManagementButton);
+
         return sidebarPanel;
     }
 

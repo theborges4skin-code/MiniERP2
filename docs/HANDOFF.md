@@ -505,6 +505,79 @@ UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같�
 `ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
 `CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
 
+## 데이터 관리창 신설 — 마스터SKU/CSKU/매핑규칙 통합 백업·엑셀 가져오기·내보내기
+
+MainHub에 "데이터 관리" 버튼을 추가해 여는 새 창(`Forms/DataManagementForm.cs`). 마스터SKU,
+CSKU, 매핑규칙(1:1/임시/예외/조건부) 6개 탭 + "백업/롤백" 탭 + "내보내기 로그" 탭으로 구성된다.
+이번 1단계 범위는 사용자가 직접 확정: **마스터SKU + CSKU + 매핑 4종만** 포함하고(채널/택배사
+양식은 이미 전용 설정 창이 있어 제외), **백업/롤백 단위는 테이블별이 아니라 DB 파일 전체
+스냅샷**(SQLite가 단일 파일이라 이게 훨씬 단순하고 트랜잭션적으로 안전함)로 정했다.
+
+### 아키텍처 — `DataManagement/` 폴더(신규)
+
+- **`IManagedDataTable`**: 한 종류의 DB 테이블을 `System.Data.DataTable`로 노출하는 어댑터
+  인터페이스(`LoadCurrent`/`Insert`/`Update`/`Delete` + 중복판단용 `KeyColumns`). 화면은
+  `DataTable`/`DataGridView`만 알면 되고, 실제 SQL은 어댑터 구현체(`MasterSkuManagedTable`,
+  `CskuManagedTable`, `SimpleMappingManagedTable`(1:1/임시/예외 공용, 생성자에 RuleType 전달),
+  `ConditionalMappingManagedTable`)에 위임한다.
+- **`System.Data.DataTable`을 스테이징 매체로 채택한 이유**: `DataRow.RowState`(Added/Modified/
+  Deleted/Unchanged)가 "불러오고 바로 반영 안 됨 → 변경내역 저장을 눌러야 반영" 요구사항을
+  공짜로 구현해준다. `DataGridView`도 `DataTable` 바인딩을 기본 지원해 직접 추가/삭제(행 추가,
+  Delete 키)까지 자연스럽게 된다.
+- **`ManagedTableChangeApplier.Apply`**: `table.GetChanges()`를 순회하며 RowState별로
+  어댑터의 Insert/Update/Delete를 호출한다. 자연키(KeyColumns) 값 자체가 수정된 행(이름변경)은
+  Update만으로 매칭이 안 되므로(매칭 대상이 사라짐), 옛 키로 Delete + 새 키로 Insert 두 단계로
+  자동 분리한다.
+- **`ConditionalMappingManagedTable`**: 한 규칙이 다중 상세조건(AND/OR)을 가질 수 있어, 엑셀
+  한 행 = 한 규칙으로 맞추려고 상세조건 목록을 `"AND ProductName Contains "셔츠" ; OR ..."`
+  형식의 텍스트로 직렬화해 "Condition" 한 열에 담는다(가져오기 시 역직렬화). 자연키는
+  (ChannelCode, Key) — DB에 유니크 제약은 없지만 이 창에서는 Key를 규칙 구분용 고유 설명으로
+  취급한다고 문서화해둠.
+- **`ManagedTableExcelIO`**: `DataTable` → 선택된 열만(+선택적 1열=값 필터) 엑셀로 내보내기,
+  엑셀 → 헤더/행 텍스트 딕셔너리로 읽기, 셀 텍스트 → 컬럼 타입 변환(`ConvertValue`, 숫자 파싱
+  실패 시 DBNull로 안전 처리).
+
+### 가져오기 흐름(중복 안내 + 스테이징)
+
+`DataManagementForm.OnImportClick`: 엑셀을 읽고 각 행의 자연키로 `DataTable.Rows.Find`를 호출해
+기존 행과 매칭 — 매칭되면 "중복", 안 되면 "신규". 중복이 있으면
+`"엑셀 N건 중 M건이 이미 존재합니다. 예: 덮어쓰기 / 아니오: 신규만 추가 / 취소"`로 확인하고,
+신규 행은 항상 추가, 중복 행은 선택에 따라 덮어쓰거나 그대로 둔다. 이 시점에는 `DataTable`만
+바뀌고(Added/Modified로 표시) DB에는 전혀 쓰지 않으며, "변경내역 저장"을 눌러야
+`ManagedTableChangeApplier`가 실제로 반영한다. 저장 직전에 항상 `DbBackupService.CreateBackup`
+(테이블명 태그)을 호출한다.
+
+### 백업/롤백 — `Database/DbBackupService.cs`(신규)
+
+DB 파일(`ERP_Database.sqlite`) 전체를 타임스탬프 이름으로 `backups/` 폴더에 복사하고, 보관
+개수를 초과하면 가장 오래된 것부터 삭제해 항상 최신 3개만 남긴다. 복원은 단순 파일 교체
+(`SqliteConnection.ClearAllPools()`로 커넥션을 비운 뒤 덮어쓰기)이며, 복원 후에는 이미 열린
+화면들의 메모리 상태가 옛 DB 기준이라 **앱 재시작이 필수**임을 안내하고 `Application.Exit()`을
+호출한다. "백업/롤백" 탭에서 수동 백업 + 목록에서 골라 복원할 수 있다.
+
+### 내보내기 로그 — `ExportLogTable`(신규) / `Database/ExportLogRepository.cs`
+
+엑셀 내보내기마다 시각/테이블명/파일경로/건수/내보낸 헤더 목록을 기록한다("내보내기 로그" 탭에서
+조회 가능).
+
+### 알아둘 제약/추후 과제
+
+- 매핑규칙 단순 3종(1:1/임시/예외)과 조건부 매핑 모두 **자연키는 (ChannelCode, Key)** — DB에
+  유니크 제약이 없으므로 같은 채널에 같은 Key가 이미 중복으로 들어있는 기존 데이터가 있으면
+  매칭이 첫 번째 일치 행만 잡는다(드문 경우로 가정).
+  `MappingRepository`에 `GetAllRules(ruleType)`(채널 무관 전체 조회)/`DeleteRule`/
+  `GetAllConditionRulesWithDetails`를 새로 추가했다(기존 `SaveRules`는 채널 단위 전체교체라
+  이 기능엔 위험해서 쓰지 않고, 기존에 있던 `UpsertRule`/`AddConditionRuleWithDetails` 등 행
+  단위 메서드를 그대로 활용).
+- 채널/택배사양식/발주출고이력 등은 이번 범위에서 제외(전용 설정 창이 이미 있음) — 필요해지면
+  같은 `IManagedDataTable` 패턴으로 어댑터만 추가하면 됨.
+
+테스트: `DbBackupServiceTests`, `ExportLogRepositoryTests`, `ManagedDataTableTests`(4개 어댑터의
+Insert/Update/Delete/키변경 라우팅, 조건부 매핑 직렬화 라운드트립), `ManagedTableExcelIOTests`
+(선택열+필터 내보내기, 읽기, 타입 변환) 신규 추가. 147/147 통과. WinForms UI
+(`DataManagementForm` 자체)는 자동 테스트가 어려워 수동 확인 필요 — 실제로 마스터SKU 탭에서
+가져오기/중복 확인창/변경내역 저장/백업 탭에서 복원까지 한 번씩 직접 확인 권장.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

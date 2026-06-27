@@ -142,6 +142,15 @@ public static class DbSchema
                 MatchType TEXT NOT NULL,
                 ChangedAt TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS ExportLogTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ExportedAt TEXT NOT NULL,
+                TableName TEXT NOT NULL,
+                FilePath TEXT NOT NULL,
+                RowCount INTEGER NOT NULL,
+                Headers TEXT NOT NULL
+            );
             """;
         command.ExecuteNonQuery();
 

@@ -183,6 +183,22 @@ public class ChannelSkuRepository
         return cskus;
     }
 
+    /// <summary>채널 불문하고 모든 CSKU를 가져옵니다(데이터 관리창의 전체 내보내기/조회용).</summary>
+    public List<ChannelSkuModel> GetAll()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName FROM ChannelSkuTable";
+
+        var cskus = new List<ChannelSkuModel>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cskus.Add(ReadChannelSku(reader));
+        }
+        return cskus;
+    }
+
     private static ChannelSkuModel? GetByChannelAndCskuCode(SqliteConnection connection, string channelCode, string cskuCode)
     {
         using var command = connection.CreateCommand();
