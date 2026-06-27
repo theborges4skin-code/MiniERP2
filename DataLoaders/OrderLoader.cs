@@ -99,6 +99,7 @@ public class OrderLoader
                     Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
                     Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
                     DeliveryMessage = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
+                    OrderDate = GetDateValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderDate),
                     Status = "로드 완료"
                 };
 
@@ -118,5 +119,26 @@ public class OrderLoader
         return map.TryGetValue(field, out var colIndex)
             ? worksheet.Cells[row, colIndex].Value?.ToString()
             : null;
+    }
+
+    /// <summary>
+    /// 발주일처럼 날짜로 다뤄야 하는 필드를 읽는다. 엑셀에서 날짜 서식 셀은 EPPlus가 내부적으로
+    /// 일련번호(double)로 들고 있을 수 있어 GetValue&lt;DateTime?&gt;로 먼저 시도하고, 텍스트로
+    /// 입력된 날짜("2026-06-27" 등)는 문자열 파싱으로 한 번 더 시도한다.
+    /// </summary>
+    private DateTime? GetDateValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
+    {
+        if (fixedValues.TryGetValue(field, out var fixedValue))
+        {
+            return DateTime.TryParse(fixedValue, out var fixedDate) ? fixedDate : null;
+        }
+
+        if (!map.TryGetValue(field, out var colIndex)) return null;
+
+        var cell = worksheet.Cells[row, colIndex];
+        var dateValue = cell.GetValue<DateTime?>();
+        if (dateValue.HasValue) return dateValue;
+
+        return DateTime.TryParse(cell.Value?.ToString(), out var parsed) ? parsed : null;
     }
 }

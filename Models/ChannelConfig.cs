@@ -25,6 +25,13 @@ public class ChannelConfig
     [Description("아마존 등 외화 정산 채널의 이익분석에 사용할 환율입니다. 원화 채널은 1로 둡니다.")]
     public decimal ExchangeRate { get; set; } = 1m;
 
+    [Category("기본 정보")]
+    [DisplayName("누적발주서")]
+    [Description("이 채널의 발주서 파일이 과거 이력까지 누적해서 담겨 있으면 체크하세요. 체크하면 발주 " +
+        "파일을 불러올 때 발주일(발주서 매핑 탭에서 지정) 기준 최근 5일 이내 항목만 골라 선택창에서 " +
+        "처리할 건을 고르게 됩니다. 발주일을 매핑하지 않으면 이 옵션은 동작하지 않습니다.")]
+    public bool IsCumulativeOrderFile { get; set; }
+
     // 채널설정 창의 "발주서 매핑"/"정산서 매핑" 전용 탭에서 편집한다(PropertyGrid는 Dictionary를 지원하지 않음).
     [Browsable(false)]
     public Dictionary<StdField, FieldMapping> OrderFieldMappings { get; set; } = new();

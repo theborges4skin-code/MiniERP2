@@ -31,7 +31,7 @@ public class ChannelConfigForm : Form
     private static readonly StdField[] OrderMappingFields =
     [
         StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage,
+        StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
     ];
 
     private static readonly StdField[] SettlementMappingFields =
@@ -466,6 +466,7 @@ public class ChannelConfigForm : Form
         StdField.Phone => "연락처",
         StdField.Address => "주소",
         StdField.DeliveryMessage => "배송메세지",
+        StdField.OrderDate => "발주일(누적발주서용)",
         _ => field.ToString(),
     };
 

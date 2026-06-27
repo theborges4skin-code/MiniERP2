@@ -213,6 +213,34 @@ public class OfsForm : Form
                 allLoadedItems.AddRange(loadedItems);
             }
 
+            // 누적발주서 채널(과거 이력까지 누적해서 담긴 발주서 파일)이면, 매번 전체를 그대로
+            // 처리 대상으로 삼지 않고 발주일 기준 최근 5일 이내 항목만 골라 사용자가 직접 선택한
+            // 건만 추가한다. "발주일" 헤더가 매핑되어 있지 않으면(채널설정에서 미설정) 이 옵션은
+            // 동작하지 않고 평소처럼 전체를 그대로 추가한다.
+            if (channelConfig.IsCumulativeOrderFile && channelConfig.OrderFieldMappings.ContainsKey(StdField.OrderDate))
+            {
+                const int windowDays = 5;
+                var cutoff = DateTime.Today.AddDays(-windowDays);
+                var recentItems = allLoadedItems
+                    .Where(o => o.OrderDate is null || (o.OrderDate.Value.Date >= cutoff && o.OrderDate.Value.Date <= DateTime.Today))
+                    .ToList();
+
+                if (recentItems.Count == 0)
+                {
+                    MessageBox.Show($"발주일 기준 최근 {windowDays}일 이내({cutoff:M월 d일}~) 항목이 없습니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                using var picker = new CumulativeOrderSelectionDialog(recentItems, windowDays);
+                if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedItems.Count == 0)
+                {
+                    _statusLabel.Text = "선택한 항목이 없어 추가되지 않았습니다.";
+                    return;
+                }
+
+                allLoadedItems = picker.SelectedItems;
+            }
+
             foreach (var item in allLoadedItems) _orders.Add(item);
 
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";

@@ -427,6 +427,33 @@ UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 Bu
    고쳤다(`TrackingMatchPickerDialog.Selected` 단일 속성 → `SelectedItems` 목록으로 변경). 1건만
    선택하면 이전처럼 그 건에만 개별로 적용된다 — 선택은 항상 사용자가 직접 한다.
 
+### 누적발주서 채널 — 발주일 기준 최근 5일 이내 항목만 골라 선택 처리
+
+일부 판매채널은 발주서 파일이 그때그때의 신규 주문만 담는 게 아니라, 과거 이력까지 누적해서
+계속 쌓인 채로 내려온다(채널 자체 특성). 이런 채널에서 발주서를 그대로 불러오면 이미 처리된
+옛 주문까지 매번 다시 섞여 들어와 헷갈린다. 전체 채널에 적용할 필요는 없으므로(대부분은
+"이번에 새로 들어온 주문만" 담긴 파일) 채널별로 켜고 끌 수 있는 옵션으로 만들었다.
+
+- `Models/ChannelConfig.cs`에 `IsCumulativeOrderFile`(bool) 추가 — "기본 정보" 탭 PropertyGrid에
+  체크박스로 자동 표시된다("누적발주서").
+- `Models/StdField.cs`에 `OrderDate` 추가, `Forms/ChannelConfigForm.cs`의 "발주서 매핑" 탭
+  필드 목록에 포함시켜 기존 매핑 UI(시트/헤더행/엑셀 헤더/고정값)를 그대로 재사용 — 새 UI를
+  따로 만들 필요가 없었다.
+- `DataLoaders/OrderLoader.cs`가 발주일을 `OfsOrderItem.OrderDate`(DateTime?)로 읽는다. 엑셀
+  날짜서식 셀(EPPlus가 내부적으로 일련번호로 들고 있을 수 있음)과 텍스트로 입력된 날짜
+  ("2026-06-20" 등) 둘 다 처리한다(`GetDateValue`, `GetValue<DateTime?>` 우선 시도 후 텍스트
+  파싱 폴백).
+- `Forms/OfsForm.cs`의 `OnLoadOrdersClick`: 채널이 누적발주서로 체크되어 있고 발주일 헤더가
+  매핑되어 있으면(둘 다 충족해야 함 — 매핑이 없으면 평소처럼 전체를 그대로 추가), 불러온 항목을
+  발주일 기준 오늘로부터 5일 이내(발주일이 비어있는 행은 걸러내지 않고 항상 포함— 매핑 오류로
+  데이터가 누락되는 것보다는 나음)로 추려서 새 선택창
+  `Forms/CumulativeOrderSelectionDialog.cs`(신규)를 띄운다. 사용자가 거기서 다중선택(또는 "전체
+  선택")한 건만 실제로 OFS 그리드에 추가되고, 선택하지 않은 건은 이번에 처리되지 않는다(취소하면
+  아무것도 추가되지 않음).
+
+테스트: `Tests/OrderLoaderTests.cs`(신규) — 날짜서식 셀/텍스트 날짜 셀 파싱, 매핑 안 했을 때
+null로 남는지 검증. 126/126 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

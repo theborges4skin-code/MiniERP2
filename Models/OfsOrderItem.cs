@@ -15,6 +15,14 @@ public class OfsOrderItem
     public string? Phone { get; set; }
     public string? Address { get; set; }
     public string? DeliveryMessage { get; set; }
+
+    /// <summary>
+    /// 발주일(채널 설정에서 "발주일" 헤더를 매핑한 경우만 채워짐). 누적발주서 채널(과거 이력까지
+    /// 누적해서 담긴 발주서 파일)에서 발주 파일을 불러올 때 "최근 N일 이내" 항목만 골라 보여주는
+    /// 선택창(Forms.CumulativeOrderSelectionDialog)에 쓰인다.
+    /// </summary>
+    public DateTime? OrderDate { get; set; }
+
     // 매핑/변환 데이터
     public string? MappedSku { get; set; }
     public string? Status { get; set; }
