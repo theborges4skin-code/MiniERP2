@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -98,7 +99,7 @@ public class CourierConfigForm : Form
         samplePanel.Controls.Add(btnLoadSample);
         samplePanel.Controls.Add(new Label { Text = "엑셀 1행의 헤더를 읽어 아래 '엑셀 헤더' 후보로 채웁니다.", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
 
-        _mappingGrid = new DataGridView
+        _mappingGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

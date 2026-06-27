@@ -1,5 +1,6 @@
 using System.Data;
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.DataManagement;
 using MiniERP2.Database;
 using MiniERP2.Models;
@@ -38,7 +39,7 @@ public class DataManagementForm : Form
     {
         public IManagedDataTable Adapter { get; } = adapter;
         public DataTable Table { get; set; } = adapter.LoadCurrent();
-        public DataGridView Grid { get; } = new() { Dock = DockStyle.Fill, AllowUserToAddRows = true, AllowUserToDeleteRows = true };
+        public DataGridView Grid { get; } = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = true, AllowUserToDeleteRows = true };
         public Label StatusLabel { get; } = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
     }
 
@@ -340,7 +341,7 @@ public class DataManagementForm : Form
         toolStrip.Controls.Add(btnBackupNow);
         toolStrip.Controls.Add(btnRefresh);
 
-        _backupGrid = new DataGridView
+        _backupGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -423,7 +424,7 @@ public class DataManagementForm : Form
         btnRefresh.Click += (s, e) => RefreshExportLogGrid();
         toolStrip.Controls.Add(btnRefresh);
 
-        _exportLogGrid = new DataGridView
+        _exportLogGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

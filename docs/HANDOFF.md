@@ -6,8 +6,62 @@
 아래 본문은 작업 진행 순서대로 쌓아온 로그라 시간순(110/110→173/173)으로 읽으면 된다 — 최신
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
-**지금 빌드/테스트 상태(2026-06-28 새벽 기준)**: `dotnet build` 오류 0, `dotnet test`
-**173/173 통과**. 전부 `origin/main`에 푸시됨(최신 커밋 `9701238`).
+**지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
+**185/185 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 노션 체크리스트 99.우선개발(99.1/99.2) 구현 — 2026-06-28
+
+노션 "기능 테스트 체크리스트"의 "99. 우선개발" 항목(99.1 마감/이익분석 창, 99.2 공통 UX)을 구현했다.
+
+### 99.2 공통 UX (전체 그리드 공통 적용)
+
+`Controls/ExcelLikeDataGridView.cs`에 두 가지를 추가했다 — 이 컨트롤을 쓰는 모든 창에 자동 적용됨:
+- **헤더 클릭 정렬**: `Utils/GridSorter.cs` 신설. `DataGridView.Sort()`는 `BindingList<T>`처럼
+  `IBindingList.SupportsSorting=false`인 데이터소스에서 예외를 던지므로, 데이터소스 종류
+  (DataTable/DataView/BindingSource/일반 IList)별로 직접 들여다보고 정렬한다. 일반 List처럼
+  변경통지가 없는 데이터소스는 정렬 후 DataSource를 다시 설정해 그리드를 갱신시킨다.
+- **우클릭 메뉴에 "이 창의 기능" 자동 추가**: 메뉴가 열릴 때마다(`ContextMenuStrip.Opening`)
+  그 그리드가 속한 Form을 재귀적으로 훑어 보이고 활성화된 모든 Button을 찾아 메뉴 항목으로
+  추가한다(클릭하면 `button.PerformClick()`). 복사/붙여넣기 등 고정 항목은 그대로 유지. 파생
+  폼이 나중에 `ContextMenuStrip`을 통째로 교체해도(virtual 프로퍼티를 오버라이드해 가로챔)
+  동적 메뉴가 새 메뉴에도 따라붙는다.
+- 또한 **남아있던 모든 plain `DataGridView` 인스턴스를 `ExcelLikeDataGridView`로 교체**했다
+  (AdMappingForm/ChannelConfigForm/CourierConfigForm/DataManagementForm/MappingForm/
+  OrderSkuMappingDialog/OfsForm/SettlementForm/ChannelSkuPriceHistoryForm/CostHistoryForm —
+  필드 타입은 `DataGridView`로 그대로 두고 생성식만 바꿔 변경 범위를 최소화). 이제 앱 전체에서
+  정렬+동적 버튼메뉴가 일관되게 동작한다.
+- **다중선택**: `ExcelLikeDataGridView` 생성자가 기본값 `MultiSelect = true`라 위 교체만으로
+  대부분 그리드가 다중선택 가능해졌다. 다만 아래 9곳은 "하나를 골라야 그 상세를 다른 패널에
+  보여준다"는 선택→상세연동 패턴이라 다중선택이 의미가 없어 의도적으로 `MultiSelect = false`로
+  남겨뒀다(체크리스트의 "다중선택을 안 해야 할 것 같은 기능은 안내" 항목에 따른 것):
+  `MappingForm`의 미매핑목록/마스터DB후보/CSKU검색결과/조건부규칙목록, `AdMappingForm`의
+  조건부규칙목록/임시규칙목록, `DataManagementForm`의 백업목록, `OrderSkuMappingDialog`의
+  후보목록. (단, `MappingForm`의 "전체 규칙 관리" 탭은 그리드 MultiSelect 대신 체크박스 컬럼으로
+  다중선택을 이미 구현해뒀던 것이라 그대로 둠.)
+
+### 99.1 마감/이익분석 창(`Forms/SettlementForm.cs`)
+
+- **미매핑건 상단노출 + 미매핑건만 보기 토글**: `RefreshProfitAnalysisView()` 신설. 기본은
+  "미매핑건만 보기" 체크(`_unmappedOnlyCheckBox`, 기본 ON) — 체크 해제 시 전체를 보되 미매핑이
+  항상 위로 정렬된다. `Utils/SettlementRowStatus.IsUnresolved`로 "확인 필요"(Msku 공란/매핑
+  실패/매핑 키 없음/원가 정보 없음) 판정 — 매핑테이블 예외규칙으로 의도적으로 제외된
+  "제외(배송비 등)" 행은 문제로 보지 않는다. 그리드는 `_settlementRows`의 필터된 *복사본*에
+  바인딩하지만 같은 SettlementData 객체 참조를 공유하므로, 셀 편집은 그대로 원본에 반영되고
+  "결과 저장"/"내보내기"는 항상 `_settlementRows` 전체(필터 무관)를 대상으로 한다.
+- **이익분석(=정산파일 로드) 완료 시 미매핑 건이 있으면 안내창** 표시.
+- **상품그룹별 요약**: 하단에 `PersistentSplitContainer`로 분리된 요약 그리드 신설(상품그룹은
+  `Msku`→`ChannelSkuRepository.ResolveMasterSku`→`ItemRepository.GetBySku().ProductGroup`로
+  역추적). 매출액/수량/순이익/배송비/입출고비 합계를 라벨로도 표시. **광고비/택배비는 현재
+  파이프라인에 조인되어 있지 않아 합계에 포함되지 않음을 명시**해뒀다(AdMapping/택배비 데이터를
+  이익분석에 조인하는 건 더 큰 별도 작업이라 이번 범위에서 제외 — 다음 우선작업 후보).
+  "결과 저장" 성공 시에도 이 요약을 메시지박스로 한 번 더 보여준다.
+- **엑셀 내보내기 4종 시트**(SalesManagerV2의 다중 시트 결과 양식을 참고): "분석결과상세"(기존과
+  동일) / "분석요약(상품그룹별)"(합계 행 포함) / "미매핑·예외건"(확인 필요 + 제외규칙 적용 행) /
+  "원본데이터"(정산 파일에서 읽은 헤더→값 원본 그대로, 표준필드로 매핑되지 않은 열도 포함).
+  "원본데이터"를 만들기 위해 `SettlementData.RawValues`(Dictionary&lt;string,string&gt;?) 필드를
+  신설하고 `SettlementLoader`가 각 행을 읽을 때 함께 채우도록 했다.
+- 새 테스트: `GridSorterTests`(6개), `SettlementRowStatusTests`(5개),
+  `SettlementLoaderRawValuesTests`(1개). 185/185 통과.
 
 **다음 작업자가 알아야 할 것**: 라이브 DB(`bin/Debug/net10.0-windows/ERP_Database.sqlite`)에서
 한때 마이그레이션됐던 채널 16개/매핑규칙 750+건/CSKU 405건이 사라져 있는 게 확인됨(마스터SKU

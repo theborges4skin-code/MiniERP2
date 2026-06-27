@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
@@ -341,7 +342,7 @@ public class ChannelConfigForm : Form
             Padding = new Padding(0, 6, 0, 0),
         });
 
-        _courierOverrideGrid = new DataGridView
+        _courierOverrideGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

@@ -16,4 +16,10 @@ public class SettlementData
     public decimal Fee { get; set; }
     public decimal Profit { get; set; }
     public string? Status { get; set; }
+
+    /// <summary>
+    /// 정산 파일 원본 행의 (헤더명 -> 값) 전체. "원본데이터" 시트 내보내기 및 추후 디버깅용으로
+    /// SettlementLoader가 채워준다. 표준 필드로 매핑되지 않은 열도 모두 포함된다.
+    /// </summary>
+    public Dictionary<string, string>? RawValues { get; set; }
 }

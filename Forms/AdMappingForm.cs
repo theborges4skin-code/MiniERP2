@@ -423,7 +423,7 @@ public class AdMappingForm : Form
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         var leftPanel = new Panel { Dock = DockStyle.Fill };
-        _conditionRuleGrid = new DataGridView
+        _conditionRuleGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -467,7 +467,7 @@ public class AdMappingForm : Form
         _conditionPreviewLabel = new Label { Text = "예상 매칭 건수: -", AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.Blue, Font = new Font(Font, FontStyle.Bold) };
         summaryPanel.Controls.Add(_conditionPreviewLabel);
 
-        _conditionDetailGrid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false };
+        _conditionDetailGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false };
         var headerFieldColumn = new DataGridViewComboBoxColumn { Name = "HeaderField", HeaderText = "비교할 항목", DataPropertyName = "HeaderField", DataSource = Enum.GetValues(typeof(AdStdField)), Width = 130 };
         var operatorColumn = new DataGridViewComboBoxColumn { Name = "Operator", HeaderText = "조건", DataPropertyName = "Operator", DataSource = Enum.GetValues(typeof(AdConditionOperator)), Width = 130 };
         var targetValueColumn = new DataGridViewTextBoxColumn { Name = "TargetValue", HeaderText = "비교할 값", DataPropertyName = "TargetValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
@@ -651,7 +651,7 @@ public class AdMappingForm : Form
             Padding = new Padding(0, 6, 0, 0),
         });
 
-        _exceptionGrid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false, AllowUserToDeleteRows = true };
+        _exceptionGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false, AllowUserToDeleteRows = true };
         var headerFieldColumn = new DataGridViewComboBoxColumn { Name = "HeaderField", HeaderText = "헤더 항목", DataPropertyName = "HeaderField", DataSource = Enum.GetValues(typeof(AdStdField)), Width = 130 };
         var operatorColumn = new DataGridViewComboBoxColumn { Name = "Operator", HeaderText = "조건", DataPropertyName = "Operator", DataSource = Enum.GetValues(typeof(AdConditionOperator)), Width = 130 };
         var targetValueColumn = new DataGridViewTextBoxColumn { Name = "TargetValue", HeaderText = "비교할 값", DataPropertyName = "TargetValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
@@ -708,7 +708,7 @@ public class AdMappingForm : Form
             Padding = new Padding(0, 6, 0, 0),
         });
 
-        _fieldMappingGrid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false, AllowUserToDeleteRows = false };
+        _fieldMappingGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false, AllowUserToDeleteRows = false };
         _fieldMappingGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 130, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 110 },

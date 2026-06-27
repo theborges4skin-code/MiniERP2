@@ -144,6 +144,9 @@ public class SettlementLoader
                     Settlement = settlement,
                     Shipping = shipping,
                     Fee = fee,
+                    RawValues = headerToIndexMap.ToDictionary(
+                        kv => kv.Key,
+                        kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
                 };
 
                 foreach (var (targetStdField, valueMap) in auxValueMaps)

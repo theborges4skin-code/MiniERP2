@@ -193,7 +193,7 @@ public class MappingForm : Form
         _masterSearchBox.TextChanged += (s, e) => { RunMasterSearch(); RunCskuSearch(); };
         searchPanel.Controls.Add(_masterSearchBox);
 
-        _masterCandidateGrid = new DataGridView
+        _masterCandidateGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -215,7 +215,7 @@ public class MappingForm : Form
         masterPanel.Controls.Add(new Label { Text = "마스터DB 후보", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
         masterPanel.Controls.Add(_masterCandidateGrid, 0, 1);
 
-        _cskuHistoryGrid = new DataGridView
+        _cskuHistoryGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -787,7 +787,7 @@ public class MappingForm : Form
     {
         var tabPage = new TabPage("충돌 감지");
 
-        _conflictGrid = new DataGridView
+        _conflictGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -842,7 +842,7 @@ public class MappingForm : Form
         _unifiedSearchTextBox.TextChanged += (s, e) => ApplyUnifiedRuleFilter();
         filterPanel.Controls.Add(_unifiedSearchTextBox);
 
-        _unifiedRulesGrid = new DataGridView
+        _unifiedRulesGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -1115,7 +1115,7 @@ public class MappingForm : Form
         // 좌측: 규칙 목록
         var leftPanel = new Panel { Dock = DockStyle.Fill };
 
-        _conditionRuleGrid = new DataGridView
+        _conditionRuleGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -1174,7 +1174,7 @@ public class MappingForm : Form
             ForeColor = Color.DimGray,
         });
 
-        _conditionDetailGrid = new DataGridView
+        _conditionDetailGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

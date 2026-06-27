@@ -856,7 +856,7 @@ public class OfsForm : Form
         btnUndoPreview.Click += OnUndoPreviewEditClick;
         toolStrip.Controls.Add(btnUndoPreview);
 
-        _previewGrid = new DataGridView
+        _previewGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 
 namespace MiniERP2.Forms;
@@ -20,7 +21,7 @@ public class CostHistoryForm : Form
         Size = new Size(600, 400);
         StartPosition = FormStartPosition.CenterParent;
 
-        var grid = new DataGridView
+        var grid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

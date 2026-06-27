@@ -31,6 +31,10 @@ public class SettlementForm : Form
     private BindingList<SettlementData> _settlementRows = new();
     private ToolStripStatusLabel _statusLabel = new();
 
+    private ExcelLikeDataGridView _summaryGrid = new();
+    private CheckBox _unmappedOnlyCheckBox = new();
+    private Label _summaryTotalsLabel = new();
+
     private ExcelLikeDataGridView _outboundGrid = new();
     private DataGridView _statementGrid = new();
     private DateTimePicker _fromDatePicker = new();
@@ -85,6 +89,11 @@ public class SettlementForm : Form
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
 
+        // 99.1: 기본값은 미매핑/확인필요 건만 보이게 — 체크 해제하면 전체(미매핑이 위로 정렬된 채)를 본다.
+        _unmappedOnlyCheckBox = new CheckBox { Text = "미매핑건만 보기", AutoSize = true, Checked = true, Padding = new Padding(10, 7, 0, 0) };
+        _unmappedOnlyCheckBox.CheckedChanged += (s, e) => RefreshProfitAnalysisView();
+        toolStrip.Controls.Add(_unmappedOnlyCheckBox);
+
         _settlementGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -103,19 +112,104 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "이익액", Name = "Profit", DataPropertyName = "Profit", Width = 100 },
             new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true }
         );
-        _settlementGrid.DataSource = _settlementRows;
         _settlementGrid.RowPrePaint += OnSettlementGridRowPrePaint;
+
+        // 99.1: 상단(전체/필터된 목록) + 하단(상품그룹별 요약) 분할. 사용자가 조절한 폭은 기억된다.
+        var split = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420, PersistenceKey = "SettlementForm.ProfitSplit" };
+        split.Panel1.Controls.Add(_settlementGrid);
+
+        var summaryLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        summaryLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        summaryLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        _summaryTotalsLabel = new Label { Dock = DockStyle.Fill, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
+
+        _summaryGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            PersistenceKey = "SettlementForm.SummaryGrid",
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+        };
+        _summaryGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 180 },
+            new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70 },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Settlement", DataPropertyName = "Settlement", Width = 110 },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110 }
+        );
+
+        summaryLayout.Controls.Add(_summaryTotalsLabel, 0, 0);
+        summaryLayout.Controls.Add(_summaryGrid, 0, 1);
+        split.Panel2.Controls.Add(WithGroupLabel("상품그룹별 요약 (광고비/택배비는 별도 집계라 미포함)", summaryLayout));
 
         var statusStrip = new StatusStrip { Dock = DockStyle.Bottom };
         _statusLabel = new ToolStripStatusLabel("준비");
         statusStrip.Items.Add(_statusLabel);
 
         mainLayout.Controls.Add(toolStrip, 0, 0);
-        mainLayout.Controls.Add(_settlementGrid, 0, 1);
+        mainLayout.Controls.Add(split, 0, 1);
         mainLayout.Controls.Add(statusStrip, 0, 2);
 
         tabPage.Controls.Add(mainLayout);
+        RefreshProfitAnalysisView();
         return tabPage;
+    }
+
+    /// <summary>
+    /// 99.1: 미매핑건만 보기 토글/정렬을 그리드에 반영하고, 하단 상품그룹별 요약을 다시 집계한다.
+    /// "결과 저장"/"엑셀로 내보내기"는 항상 <see cref="_settlementRows"/>(원본 전체)을 직접 참조하므로
+    /// 여기서 그리드에 보여주는 필터링된 뷰와 무관하게 항상 전체 데이터를 대상으로 동작한다.
+    /// </summary>
+    private void RefreshProfitAnalysisView()
+    {
+        var view = _unmappedOnlyCheckBox.Checked
+            ? _settlementRows.Where(SettlementRowStatus.IsUnresolved)
+            : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved);
+        _settlementGrid.DataSource = new BindingList<SettlementData>(view.ToList());
+
+        var groups = _settlementRows
+            .GroupBy(ResolveProductGroup)
+            .Select(g => new ProfitGroupSummary
+            {
+                ProductGroup = g.Key,
+                RowCount = g.Count(),
+                Qty = g.Sum(x => x.Qty),
+                Settlement = g.Sum(x => x.Settlement),
+                Shipping = g.Sum(x => x.Shipping),
+                Fee = g.Sum(x => x.Fee),
+                Profit = g.Sum(x => x.Profit),
+            })
+            .OrderByDescending(s => s.Profit)
+            .ToList();
+        _summaryGrid.DataSource = new BindingList<ProfitGroupSummary>(groups);
+
+        _summaryTotalsLabel.Text = BuildTotalsText(groups, _settlementRows.Count(SettlementRowStatus.IsUnresolved));
+    }
+
+    private string BuildTotalsText(List<ProfitGroupSummary> groups, int unresolvedCount)
+    {
+        if (_settlementRows.Count == 0) return "전체 0건";
+
+        return $"전체 {_settlementRows.Count}건 (미매핑/확인필요 {unresolvedCount}건) | " +
+               $"매출액 합계 {groups.Sum(g => g.Settlement):N0} | 수량 합계 {groups.Sum(g => g.Qty):N0}개 | " +
+               $"순이익 합계 {groups.Sum(g => g.Profit):N0} | 배송비 합계 {groups.Sum(g => g.Shipping):N0} | 입출고비 합계 {groups.Sum(g => g.Fee):N0}";
+    }
+
+    /// <summary>
+    /// SettlementData.Msku는 매핑 규칙의 TargetSku(CSKU 코드일 수 있음)이므로, 마스터SKU로 변환한
+    /// 뒤 마스터DB의 상품그룹을 찾는다.
+    /// </summary>
+    private string ResolveProductGroup(SettlementData data)
+    {
+        if (string.IsNullOrWhiteSpace(data.Msku)) return "(미매핑)";
+
+        var masterSku = _channelSkuRepository.ResolveMasterSku(data.ChannelCode, data.Msku);
+        var item = _itemRepository.GetBySku(masterSku);
+        return string.IsNullOrWhiteSpace(item?.ProductGroup) ? "(미지정)" : item.ProductGroup!;
     }
 
     private async void OnLoadSettlementClick(object? sender, EventArgs e)
@@ -160,7 +254,18 @@ public class SettlementForm : Form
                 foreach (var row in loadedRows) _settlementRows.Add(row);
             }
 
-            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다.";
+            RefreshProfitAnalysisView();
+
+            var unresolvedCount = _settlementRows.Count(SettlementRowStatus.IsUnresolved);
+            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건)";
+
+            // 99.1: 미매핑/원가없음 등 확인이 필요한 건이 있으면 안내한다(목록 상단/필터로 이미 노출됨).
+            if (unresolvedCount > 0)
+            {
+                MessageBox.Show(
+                    $"미매핑/원가없음 등 확인이 필요한 건이 {unresolvedCount}건 있습니다.\n목록 상단에 자동으로 표시했습니다(\"미매핑건만 보기\" 체크 해제 시 전체 확인 가능).",
+                    "확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
         catch (Exception ex)
         {
@@ -223,6 +328,12 @@ public class SettlementForm : Form
             var rowsToSave = _settlementRows.ToList();
             await Task.Run(() => _settlementRepository.Insert(rowsToSave));
             _statusLabel.Text = $"{rowsToSave.Count}건 저장 완료.";
+
+            // 99.1: 저장 시 분석 결과 요약을 별도로 보여준다(하단 상품그룹별 요약 그리드는 항상 떠 있음).
+            RefreshProfitAnalysisView();
+            MessageBox.Show(
+                $"{rowsToSave.Count}건 저장 완료.\n\n{_summaryTotalsLabel.Text}",
+                "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -258,28 +369,12 @@ public class SettlementForm : Form
         {
             ExcelLicense.Ensure();
             using var package = new ExcelPackage();
-            var sheet = package.Workbook.Worksheets.Add("이익분석");
 
-            string[] headers = ["채널", "상품명", "옵션명", "매핑SKU", "수량", "정산액", "배송비", "입출고비", "이익액", "상태"];
-            for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
+            WriteDetailSheet(package, "분석결과상세", _settlementRows);
+            WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"));
+            WriteDetailSheet(package, "미매핑·예외건", _settlementRows.Where(d => SettlementRowStatus.IsUnresolved(d) || SettlementRowStatus.IsExcludedByExceptionRule(d)).ToList());
+            WriteRawDataSheet(package, "원본데이터");
 
-            int row = 2;
-            foreach (var data in _settlementRows)
-            {
-                sheet.Cells[row, 1].Value = data.ChannelCode;
-                sheet.Cells[row, 2].Value = data.ProductName;
-                sheet.Cells[row, 3].Value = data.OptionName;
-                sheet.Cells[row, 4].Value = data.Msku;
-                sheet.Cells[row, 5].Value = data.Qty;
-                sheet.Cells[row, 6].Value = data.Settlement;
-                sheet.Cells[row, 7].Value = data.Shipping;
-                sheet.Cells[row, 8].Value = data.Fee;
-                sheet.Cells[row, 9].Value = data.Profit;
-                sheet.Cells[row, 10].Value = data.Status;
-                row++;
-            }
-
-            sheet.Cells.AutoFitColumns();
             package.SaveAs(new FileInfo(filePath));
 
             ExportHelper.ShowPostExportDialog(this, filePath);
@@ -288,6 +383,109 @@ public class SettlementForm : Form
         {
             MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private static readonly string[] DetailHeaders = ["채널", "상품명", "옵션명", "매핑SKU", "수량", "정산액", "배송비", "입출고비", "이익액", "상태"];
+
+    /// <summary>
+    /// SalesManagerV2의 다중 시트 결과 저장 양식(상세/요약/미매핑/원본)을 참고해, "분석결과상세"와
+    /// "미매핑·예외건" 두 시트에 공통으로 쓰는 표 형식.
+    /// </summary>
+    private static void WriteDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows)
+    {
+        var sheet = package.Workbook.Worksheets.Add(sheetName);
+        for (int i = 0; i < DetailHeaders.Length; i++) sheet.Cells[1, i + 1].Value = DetailHeaders[i];
+
+        int row = 2;
+        foreach (var data in rows)
+        {
+            sheet.Cells[row, 1].Value = data.ChannelCode;
+            sheet.Cells[row, 2].Value = data.ProductName;
+            sheet.Cells[row, 3].Value = data.OptionName;
+            sheet.Cells[row, 4].Value = data.Msku;
+            sheet.Cells[row, 5].Value = data.Qty;
+            sheet.Cells[row, 6].Value = data.Settlement;
+            sheet.Cells[row, 7].Value = data.Shipping;
+            sheet.Cells[row, 8].Value = data.Fee;
+            sheet.Cells[row, 9].Value = data.Profit;
+            sheet.Cells[row, 10].Value = data.Status;
+            row++;
+        }
+        sheet.Cells.AutoFitColumns();
+    }
+
+    private void WriteSummarySheet(ExcelWorksheet sheet)
+    {
+        string[] headers = ["상품그룹", "건수", "수량", "매출액", "배송비", "입출고비", "순이익"];
+        for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
+
+        var groups = _settlementRows
+            .GroupBy(ResolveProductGroup)
+            .Select(g => new ProfitGroupSummary
+            {
+                ProductGroup = g.Key,
+                RowCount = g.Count(),
+                Qty = g.Sum(x => x.Qty),
+                Settlement = g.Sum(x => x.Settlement),
+                Shipping = g.Sum(x => x.Shipping),
+                Fee = g.Sum(x => x.Fee),
+                Profit = g.Sum(x => x.Profit),
+            })
+            .OrderByDescending(s => s.Profit)
+            .ToList();
+
+        int row = 2;
+        foreach (var g in groups)
+        {
+            sheet.Cells[row, 1].Value = g.ProductGroup;
+            sheet.Cells[row, 2].Value = g.RowCount;
+            sheet.Cells[row, 3].Value = g.Qty;
+            sheet.Cells[row, 4].Value = g.Settlement;
+            sheet.Cells[row, 5].Value = g.Shipping;
+            sheet.Cells[row, 6].Value = g.Fee;
+            sheet.Cells[row, 7].Value = g.Profit;
+            row++;
+        }
+
+        sheet.Cells[row, 1].Value = "합계";
+        sheet.Cells[row, 2].Value = groups.Sum(g => g.RowCount);
+        sheet.Cells[row, 3].Value = groups.Sum(g => g.Qty);
+        sheet.Cells[row, 4].Value = groups.Sum(g => g.Settlement);
+        sheet.Cells[row, 5].Value = groups.Sum(g => g.Shipping);
+        sheet.Cells[row, 6].Value = groups.Sum(g => g.Fee);
+        sheet.Cells[row, 7].Value = groups.Sum(g => g.Profit);
+        sheet.Cells[row, 1, row, 7].Style.Font.Bold = true;
+
+        sheet.Cells.AutoFitColumns();
+    }
+
+    /// <summary>
+    /// 정산 파일에서 읽은 원본 행(SettlementLoader가 RawValues에 채워둔 헤더->값)을 그대로 출력한다.
+    /// 파일마다 헤더 구성이 다를 수 있으므로, 전체 행에서 등장하는 모든 헤더의 합집합을 열로 쓴다.
+    /// </summary>
+    private void WriteRawDataSheet(ExcelPackage package, string sheetName)
+    {
+        var sheet = package.Workbook.Worksheets.Add(sheetName);
+        var rowsWithRaw = _settlementRows.Where(d => d.RawValues is { Count: > 0 }).ToList();
+        if (rowsWithRaw.Count == 0)
+        {
+            sheet.Cells[1, 1].Value = "원본 데이터가 없습니다.";
+            return;
+        }
+
+        var headers = rowsWithRaw.SelectMany(d => d.RawValues!.Keys).Distinct().ToList();
+        for (int i = 0; i < headers.Count; i++) sheet.Cells[1, i + 1].Value = headers[i];
+
+        int row = 2;
+        foreach (var data in rowsWithRaw)
+        {
+            for (int i = 0; i < headers.Count; i++)
+            {
+                sheet.Cells[row, i + 1].Value = data.RawValues!.GetValueOrDefault(headers[i], string.Empty);
+            }
+            row++;
+        }
+        sheet.Cells.AutoFitColumns();
     }
 
     private void OnSettlementGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
@@ -374,7 +572,7 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "확정일시", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130 }
         );
 
-        _statementGrid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = true, AllowUserToAddRows = false, ReadOnly = true };
+        _statementGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = true, AllowUserToAddRows = false, ReadOnly = true };
 
         var outboundPanel = new Panel { Dock = DockStyle.Fill };
         outboundPanel.Controls.Add(WithGroupLabel("출고내역(시스템)", _outboundGrid));
