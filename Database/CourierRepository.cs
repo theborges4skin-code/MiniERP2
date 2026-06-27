@@ -13,7 +13,11 @@ public class CourierRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT CourierName, HeaderMappingJson FROM CourierMasterTable ORDER BY CourierName";
+        command.CommandText = """
+            SELECT CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader
+            FROM CourierMasterTable
+            ORDER BY CourierName
+            """;
 
         var couriers = new List<CourierMaster>();
         using var reader = command.ExecuteReader();
@@ -29,13 +33,19 @@ public class CourierRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO CourierMasterTable (CourierName, HeaderMappingJson)
-            VALUES ($courierName, $headerMappingJson)
+            INSERT INTO CourierMasterTable (CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader)
+            VALUES ($courierName, $headerMappingJson, $trackingImportHeaderRow, $trackingImportRecipientHeader, $trackingImportTrackingNoHeader)
             ON CONFLICT(CourierName) DO UPDATE SET
-                HeaderMappingJson = excluded.HeaderMappingJson
+                HeaderMappingJson = excluded.HeaderMappingJson,
+                TrackingImportHeaderRow = excluded.TrackingImportHeaderRow,
+                TrackingImportRecipientHeader = excluded.TrackingImportRecipientHeader,
+                TrackingImportTrackingNoHeader = excluded.TrackingImportTrackingNoHeader
             """;
         command.Parameters.AddWithValue("$courierName", courier.CourierName);
         command.Parameters.AddWithValue("$headerMappingJson", courier.HeaderMappingJson);
+        command.Parameters.AddWithValue("$trackingImportHeaderRow", courier.TrackingImportHeaderRow);
+        command.Parameters.AddWithValue("$trackingImportRecipientHeader", courier.TrackingImportRecipientHeader);
+        command.Parameters.AddWithValue("$trackingImportTrackingNoHeader", courier.TrackingImportTrackingNoHeader);
         command.ExecuteNonQuery();
     }
 
@@ -51,6 +61,9 @@ public class CourierRepository
     private static CourierMaster ReadCourier(SqliteDataReader reader) => new()
     {
         CourierName = reader.GetString(0),
-        HeaderMappingJson = reader.GetString(1)
+        HeaderMappingJson = reader.GetString(1),
+        TrackingImportHeaderRow = reader.GetInt32(2),
+        TrackingImportRecipientHeader = reader.GetString(3),
+        TrackingImportTrackingNoHeader = reader.GetString(4),
     };
 }

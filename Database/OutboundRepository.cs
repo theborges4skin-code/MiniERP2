@@ -4,7 +4,7 @@ using MiniERP2.Models;
 namespace MiniERP2.Database;
 
 /// <summary>
-/// 출고 확정된 주문 상세 내역에 대한 데이터베이스 작업을 처리합니다.
+/// 출고 확정된 주문 상세 내역(=발주/출고 이력)에 대한 데이터베이스 작업을 처리합니다.
 /// </summary>
 public class OutboundRepository
 {
@@ -22,13 +22,16 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt)
-            VALUES ($channelCode, $orderNo, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt)
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName)
+            VALUES ($channelCode, $orderNo, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName)
             ON CONFLICT(OrderNo, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
                 TrackingNo = excluded.TrackingNo,
                 Qty = excluded.Qty,
                 SupplyPrice = excluded.SupplyPrice,
+                Recipient = excluded.Recipient,
+                Address = excluded.Address,
+                ProductName = excluded.ProductName,
                 Status = CASE WHEN excluded.TrackingNo <> '' THEN '출고확정' ELSE OutboundDetailTable.Status END,
                 ConfirmedAt = CASE WHEN excluded.TrackingNo <> '' AND OutboundDetailTable.ConfirmedAt IS NULL THEN excluded.ConfirmedAt ELSE OutboundDetailTable.ConfirmedAt END
             """;
@@ -48,6 +51,9 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$createdAt", now);
             command.Parameters.AddWithValue("$status", hasTracking ? "출고확정" : "발주확정");
             command.Parameters.AddWithValue("$confirmedAt", hasTracking ? now : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$recipient", detail.Recipient);
+            command.Parameters.AddWithValue("$address", detail.Address);
+            command.Parameters.AddWithValue("$productName", detail.ProductName);
             command.ExecuteNonQuery();
         }
 
@@ -78,52 +84,96 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 주문번호 기준으로 운송장번호를 일괄 업로드/갱신하고 "출고확정"으로 확정합니다(같은 주문번호의
-    /// 모든 SKU 줄에 적용됨). 일치하는 주문번호가 없으면 그 항목은 조용히 건너뜁니다.
+    /// 운송장 결과 가져오기로 특정 건의 운송장번호를 확정합니다(수령인 기준 매칭 후 사용자가 고른
+    /// 1건에 적용). 운송장번호가 채워지면 항상 "출고확정"으로 바뀝니다.
     /// </summary>
-    public int BulkUpdateTrackingNoByOrderNo(IReadOnlyDictionary<string, string> trackingNoByOrderNo)
+    public void ApplyTrackingNo(long id, string trackingNo)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt WHERE Id = $id";
+        command.Parameters.AddWithValue("$trackingNo", trackingNo);
+        command.Parameters.AddWithValue("$confirmedAt", DateTime.UtcNow);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 발주/출고 이력 관리창에서 수정한 내용(수량/납품가/운송장번호/상태)을 Id 기준으로 저장합니다.
+    /// </summary>
+    public void UpdateDetail(OutboundDetail detail)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE OutboundDetailTable
+            SET Qty = $qty, SupplyPrice = $supplyPrice, TrackingNo = $trackingNo, Status = $status,
+                ConfirmedAt = $confirmedAt
+            WHERE Id = $id
+            """;
+        command.Parameters.AddWithValue("$qty", detail.Qty);
+        command.Parameters.AddWithValue("$supplyPrice", detail.SupplyPrice);
+        command.Parameters.AddWithValue("$trackingNo", detail.TrackingNo);
+        command.Parameters.AddWithValue("$status", detail.Status);
+        command.Parameters.AddWithValue("$confirmedAt", (object?)detail.ConfirmedAt ?? DBNull.Value);
+        command.Parameters.AddWithValue("$id", detail.Id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 선택한 발주/출고 이력을 삭제합니다(되돌릴 수 없으므로 호출 측에서 사용자 확인을 받아야 합니다).
+    /// </summary>
+    public void DeleteByIds(IEnumerable<long> ids)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE OutboundDetailTable
-            SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt
-            WHERE OrderNo = $orderNo
-            """;
+        command.CommandText = "DELETE FROM OutboundDetailTable WHERE Id = $id";
 
-        var updatedCount = 0;
-        foreach (var (orderNo, trackingNo) in trackingNoByOrderNo)
+        foreach (var id in ids)
         {
-            if (string.IsNullOrWhiteSpace(orderNo) || string.IsNullOrWhiteSpace(trackingNo)) continue;
-
             command.Parameters.Clear();
-            command.Parameters.AddWithValue("$trackingNo", trackingNo);
-            command.Parameters.AddWithValue("$confirmedAt", DateTime.UtcNow);
-            command.Parameters.AddWithValue("$orderNo", orderNo);
-            updatedCount += command.ExecuteNonQuery();
+            command.Parameters.AddWithValue("$id", id);
+            command.ExecuteNonQuery();
         }
 
         transaction.Commit();
-        return updatedCount;
     }
 
     /// <summary>
-    /// 지정된 채널의, 지정된 기간(포함) 내 출고 상세 내역을 조회합니다(마감 대조/발주이력 추적용).
+    /// 지정된 채널의, 지정된 기간(포함) 내 출고 상세 내역을 조회합니다(마감 대조용).
     /// </summary>
     public List<OutboundDetail> GetByChannel(string channelCode, DateTime from, DateTime to)
     {
+        return GetHistory(channelCode, from, to);
+    }
+
+    /// <summary>
+    /// 발주/출고 이력을 조회합니다(발주/출고 이력 관리창용). channelCode가 null이면 전체 채널.
+    /// </summary>
+    public List<OutboundDetail> GetHistory(string? channelCode, DateTime from, DateTime to)
+    {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt
-            FROM OutboundDetailTable
-            WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
-            ORDER BY CreatedAt
-            """;
-        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.CommandText = string.IsNullOrEmpty(channelCode)
+            ? """
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+                FROM OutboundDetailTable
+                WHERE CreatedAt >= $from AND CreatedAt <= $to
+                ORDER BY CreatedAt
+                """
+            : """
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+                FROM OutboundDetailTable
+                WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
+                ORDER BY CreatedAt
+                """;
+        if (!string.IsNullOrEmpty(channelCode))
+        {
+            command.Parameters.AddWithValue("$channelCode", channelCode);
+        }
         command.Parameters.AddWithValue("$from", from);
         command.Parameters.AddWithValue("$to", to);
 
@@ -148,5 +198,8 @@ public class OutboundRepository
         CreatedAt = reader.GetDateTime(7),
         Status = reader.GetString(8),
         ConfirmedAt = reader.IsDBNull(9) ? null : reader.GetDateTime(9),
+        Recipient = reader.GetString(10),
+        Address = reader.GetString(11),
+        ProductName = reader.GetString(12),
     };
 }

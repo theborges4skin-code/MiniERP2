@@ -51,7 +51,10 @@ public static class DbSchema
 
             CREATE TABLE IF NOT EXISTS CourierMasterTable (
                 CourierName TEXT PRIMARY KEY,
-                HeaderMappingJson TEXT NOT NULL
+                HeaderMappingJson TEXT NOT NULL,
+                TrackingImportHeaderRow INTEGER NOT NULL DEFAULT 1,
+                TrackingImportRecipientHeader TEXT NOT NULL DEFAULT '',
+                TrackingImportTrackingNoHeader TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS SalesChannelTable (
@@ -86,7 +89,10 @@ public static class DbSchema
                 SupplyPrice REAL NOT NULL,
                 CreatedAt TEXT NOT NULL DEFAULT '',
                 Status TEXT NOT NULL DEFAULT '발송대기',
-                ConfirmedAt TEXT
+                ConfirmedAt TEXT,
+                Recipient TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                ProductName TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS RuleExact (
@@ -160,6 +166,12 @@ public static class DbSchema
         EnsureColumn(connection, "ChannelSkuTable", "InvoiceDisplayName", "TEXT");
         EnsureColumn(connection, "OutboundDetailTable", "Status", "TEXT NOT NULL DEFAULT '발송대기'");
         EnsureColumn(connection, "OutboundDetailTable", "ConfirmedAt", "TEXT");
+        EnsureColumn(connection, "OutboundDetailTable", "Recipient", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "OutboundDetailTable", "Address", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "OutboundDetailTable", "ProductName", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportHeaderRow", "INTEGER NOT NULL DEFAULT 1");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportRecipientHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
     }
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)

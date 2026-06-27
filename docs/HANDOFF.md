@@ -286,6 +286,41 @@
   OFS/매핑관리창에서 분할선을 조절한 뒤 창을 완전히 닫고 다시 열어 위치가 유지되는지 직접
   확인해주길 권장.
 
+## 발주/출고 이력 관리창 신설 (`Forms/OutboundHistoryForm.cs`)
+
+OFS 화면에 "발주/출고 이력" 버튼을 새로 추가해 여는 전용 창. 발주확정/출고확정 이력
+(`OutboundDetail`)을 채널/기간으로 조회하고, 택배사 프로그램에서 받은 운송장 결과 엑셀을
+불러와 자동으로 매칭·반영하는 기능을 담는다. 기존 `SettlementForm`의 "마감 대조(수기)" 탭에
+있던 "선택건 발송확인 처리"/"운송장번호 업로드" 버튼은 이 창으로 완전히 대체되어 제거했다
+(매칭 방식이 OrderNo 기반 → 수령인 기반으로 바뀌어 두 군데에 다른 로직을 두면 혼란스러움).
+
+- **수령인 기준 매칭**: 운송장 결과 파일에는 전체주소/품명 등이 불분명하게 나오는 경우가 많아,
+  사용자 요청대로 매칭은 **수령인 이름만으로** 한다. 동일 수령인의 발주확정 건이 여러 개면
+  `Forms/TrackingMatchPickerDialog.cs`(신규)로 후보 목록(주문번호/수령인/주소/품목명/발주확정
+  시점)을 보여주고 사용자가 직접 골라야 적용된다(자동 추정 안 함). 적용되면 운송장번호가
+  채워지고 실제 택배사 이동 여부와 무관하게 즉시 "출고확정"으로 바뀐다.
+- **운송장 결과 파일의 헤더 설정**: `Models/CourierMaster.cs`에 `TrackingImportHeaderRow`/
+  `TrackingImportRecipientHeader`/`TrackingImportTrackingNoHeader`를 추가해, 택배사 출력 양식
+  설정과 같은 방식(택배사 양식 관리 창 → "운송장 결과 가져오기 양식" 영역)으로 헤더 시작행과
+  수령인/운송장번호 열 헤더명을 지정할 수 있게 했다. 출력 양식과는 별개의 파일 형식이라
+  `HeaderMappingJson`과 분리해서 둔다.
+- **이력 매칭에 필요한 정보 보강**: `OutboundDetail`에 `Recipient`/`Address`/`ProductName`을
+  추가하고, `OfsForm.OnSaveClick`이 저장 시점에 함께 채운다(이전엔 이 정보가 없어서 수령인
+  매칭/동명이인 구분이 불가능했다).
+- **직접 편집/삭제**: 이력 그리드에서 수량/납품가/운송장번호/상태(콤보)를 바로 수정하면
+  `CellEndEdit`에서 즉시 `OutboundRepository.UpdateDetail`로 저장된다(상태를 출고확정으로 직접
+  바꾸면 확정일시가 없으면 현재 시각으로 채움). 여러 줄을 다중 선택해 "선택 삭제"하면 확인창을
+  거쳐 `DeleteByIds`로 삭제한다(되돌릴 수 없음을 안내).
+- `OutboundRepository`: `BulkUpdateTrackingNoByOrderNo`(OrderNo 기반, 구식)는 제거하고
+  `ApplyTrackingNo`(단일 건, 수령인 매칭 후 적용용)/`UpdateDetail`/`DeleteByIds`/`GetHistory`
+  (채널 null이면 전체 채널)를 추가했다.
+
+테스트: `Tests/OutboundRepositoryTests.cs`에 Recipient/Address/ProductName 저장, ApplyTrackingNo,
+UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 BulkUpdate 테스트는 제거.
+114/114 통과. UI 매칭/디스앰비규에이션 플로우는 자동 테스트로 검증하기 어려워 수동 확인 필요 —
+실제 운송장 결과 샘플 파일로 택배사 양식 설정 → 발주/출고 이력 관리창에서 불러오기 → 동명이인
+선택창 동작까지 사용자가 직접 확인해주길 권장.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

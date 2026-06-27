@@ -21,6 +21,9 @@ public class CourierConfigForm : Form
     private TextBox _txtCourierName = new();
     private DataGridView _mappingGrid = new();
     private Label _legendLabel = new();
+    private NumericUpDown _numTrackingHeaderRow = new();
+    private ComboBox _cmbTrackingRecipientHeader = new();
+    private ComboBox _cmbTrackingNoHeader = new();
 
     private static readonly (string Property, string Label)[] PropertyOptions =
     [
@@ -75,11 +78,12 @@ public class CourierConfigForm : Form
         leftPanel.Controls.Add(leftButtonPanel, 0, 1);
 
         // 우측: 선택한 택배사 편집
-        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, Padding = new Padding(10) };
+        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, Padding = new Padding(10) };
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         var namePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -137,6 +141,30 @@ public class CourierConfigForm : Form
             AutoSize = false,
         };
 
+        // 운송장 결과 가져오기(입수) 양식 — 출력 양식과는 별개의 파일이라 따로 설정한다.
+        // 발주/출고 이력 관리창에서 "운송장번호 불러오기" 시 이 설정으로 헤더 시작행과 수령인/
+        // 운송장번호 열을 찾는다.
+        var trackingImportGroup = new GroupBox { Text = "운송장 결과 가져오기 양식", Dock = DockStyle.Fill };
+        var trackingImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+
+        var btnLoadTrackingSample = new Button { Text = "샘플 양식 불러오기", Width = 130 };
+        btnLoadTrackingSample.Click += OnLoadTrackingImportSampleClick;
+        trackingImportPanel.Controls.Add(btnLoadTrackingSample);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "헤더 시작행:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _numTrackingHeaderRow = new NumericUpDown { Minimum = 1, Maximum = 100, Value = 1, Width = 50 };
+        trackingImportPanel.Controls.Add(_numTrackingHeaderRow);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "수령인 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingRecipientHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingRecipientHeader);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "운송장번호 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingNoHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingNoHeader);
+
+        trackingImportGroup.Controls.Add(trackingImportPanel);
+
         var saveButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnSave = new Button { Text = "저장", Width = 90 };
         btnSave.Click += OnSaveClick;
@@ -146,7 +174,8 @@ public class CourierConfigForm : Form
         rightPanel.Controls.Add(samplePanel, 0, 1);
         rightPanel.Controls.Add(_mappingGrid, 0, 2);
         rightPanel.Controls.Add(_legendLabel, 0, 3);
-        rightPanel.Controls.Add(saveButtonPanel, 0, 4);
+        rightPanel.Controls.Add(trackingImportGroup, 0, 4);
+        rightPanel.Controls.Add(saveButtonPanel, 0, 5);
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightPanel, 1, 0);
@@ -188,6 +217,10 @@ public class CourierConfigForm : Form
         EnsureComboItemsInclude("Header", rows.Select(r => r.Header));
         EnsureComboItemsInclude("PropertyName", rows.Select(r => r.PropertyName));
         _mappingGrid.DataSource = new BindingList<HeaderMappingRow>(rows);
+
+        _numTrackingHeaderRow.Value = Math.Clamp(courier.TrackingImportHeaderRow, (int)_numTrackingHeaderRow.Minimum, (int)_numTrackingHeaderRow.Maximum);
+        _cmbTrackingRecipientHeader.Text = courier.TrackingImportRecipientHeader;
+        _cmbTrackingNoHeader.Text = courier.TrackingImportTrackingNoHeader;
     }
 
     /// <summary>
@@ -214,7 +247,48 @@ public class CourierConfigForm : Form
         _txtCourierName.Text = string.Empty;
         _txtCourierName.ReadOnly = false;
         _mappingGrid.DataSource = new BindingList<HeaderMappingRow>();
+        _numTrackingHeaderRow.Value = 1;
+        _cmbTrackingRecipientHeader.Text = string.Empty;
+        _cmbTrackingNoHeader.Text = string.Empty;
         _txtCourierName.Focus();
+    }
+
+    private void OnLoadTrackingImportSampleClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*", Title = "운송장 결과 샘플 파일을 선택하세요" };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
+            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+            var headerRow = (int)_numTrackingHeaderRow.Value;
+            if (worksheet?.Dimension == null || headerRow > worksheet.Dimension.End.Row)
+            {
+                MessageBox.Show("엑셀 파일에서 헤더를 찾을 수 없습니다(헤더 시작행을 확인하세요).", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var headers = new List<string>();
+            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[headerRow, col].Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(header)) headers.Add(header);
+            }
+
+            _cmbTrackingRecipientHeader.Items.Clear();
+            _cmbTrackingRecipientHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingNoHeader.Items.Clear();
+            _cmbTrackingNoHeader.Items.AddRange(headers.Cast<object>().ToArray());
+
+            MessageBox.Show($"{headers.Count}개의 헤더를 읽었습니다. '수령인 헤더'/'운송장번호 헤더'에서 선택하세요.", "샘플 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnDeleteCourierClick(object? sender, EventArgs e)
@@ -306,7 +380,14 @@ public class CourierConfigForm : Form
         var mapping = allRows.ToDictionary(r => r.Header, r => r.PropertyName);
         var headerMappingJson = JsonSerializer.Serialize(mapping);
 
-        _courierRepository.Upsert(new CourierMaster { CourierName = courierName, HeaderMappingJson = headerMappingJson });
+        _courierRepository.Upsert(new CourierMaster
+        {
+            CourierName = courierName,
+            HeaderMappingJson = headerMappingJson,
+            TrackingImportHeaderRow = (int)_numTrackingHeaderRow.Value,
+            TrackingImportRecipientHeader = _cmbTrackingRecipientHeader.Text.Trim(),
+            TrackingImportTrackingNoHeader = _cmbTrackingNoHeader.Text.Trim(),
+        });
 
         MessageBox.Show("택배사 양식이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         LoadCouriers();

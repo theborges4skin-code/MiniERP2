@@ -6,6 +6,7 @@ using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -62,6 +63,7 @@ public class OfsForm : Form
         var btnUnmappedBatch = new Button { Text = "미매핑 일괄 처리", Size = new Size(130, 30) };
         var btnSave = new Button { Text = "저장 (발주확정)", Size = new Size(130, 30) };
         var btnExport = new Button { Text = "택배사 양식으로 내보내기", Size = new Size(180, 30) };
+        var btnOutboundHistory = new Button { Text = "발주/출고 이력", Size = new Size(120, 30) };
 
         btnLoadOrders.Click += OnLoadOrdersClick;
         btnExport.Click += OnExportClick;
@@ -69,12 +71,14 @@ public class OfsForm : Form
         btnAddManualOrder.Click += OnAddManualOrderClick;
         btnMappingAssistant.Click += OnMappingAssistantClick;
         btnUnmappedBatch.Click += OnUnmappedBatchClick;
+        btnOutboundHistory.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
 
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
         toolStrip.Controls.Add(btnMappingAssistant);
         toolStrip.Controls.Add(btnUnmappedBatch);
         toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(btnOutboundHistory);
         toolStrip.Controls.Add(btnExport);
 
         // 2. Data Grid
@@ -437,7 +441,12 @@ public class OfsForm : Form
                             TrackingNo = order.TrackingNo ?? string.Empty,
                             MskuCode = order.MappedSku,
                             Qty = order.Quantity,
-                            SupplyPrice = csku.SupplyPrice
+                            SupplyPrice = csku.SupplyPrice,
+                            // 운송장 결과를 나중에 수령인 기준으로 매칭하려면 이 시점의 수령인/주소/
+                            // 품목명을 함께 남겨둬야 한다(발주/출고 이력 관리창에서 사용).
+                            Recipient = order.Recipient ?? string.Empty,
+                            Address = order.Address ?? string.Empty,
+                            ProductName = order.ProductName ?? string.Empty,
                         });
                     }
                     else
