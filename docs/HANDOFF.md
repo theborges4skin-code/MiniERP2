@@ -505,6 +505,42 @@ UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같�
 `ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
 `CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
 
+## 채널설정(정산서 매핑) 레거시 이관 — SalesManagerV2 channels_config.json
+
+사용자가 "그 폴더의 채널설정값을 MiniERP2에 맞게 변형해 자동이식할 수 있는지" 질문. 분석 결과
+`config/channels_config.json`(레거시의 채널별 정산 헤더 매핑/환율/채널유형/쿠팡그로스 보조소스)이
+MiniERP2의 `ChannelConfig.SettlementFieldMappings`/`ExchangeRate`/`ChannelType`/
+`GrowthAuxSources`와 **거의 1:1로 대응**됨을 확인(특히 `GrowthAuxSource` 모델 필드가
+레거시 `growth_aux_sources` 항목과 이름까지 거의 동일 — MiniERP2가 원래 이 레거시 시스템을
+참고해 만들어졌기 때문). 레거시는 "정산서"만 다루는 도구라(발주서/택배 출력 개념이 없음)
+이관 대상은 항상 정산서 매핑이고, 수취인/연락처 등 발주서 전용 필드는 이관되지 않는다.
+
+`Database/SalesChannelLegacyMigrationService.cs`(신규) + 채널설정창에 "SalesManagerV2 채널
+가져오기" 버튼을 추가했다. config 폴더를 고르면:
+
+- 채널명이 **정확히 일치하는 기존 채널**은 설정(매핑/환율/유형/보조소스)을 덮어쓰고, 없는
+  채널명은 `ChannelCodeGenerator`로 새 코드("CH004" 등)를 부여해 새로 만든다(레거시의 임의
+  8자리 코드를 그대로 쓰지 않음 — 기존 MiniERP2 코드 체계를 따름).
+- 채널유형 매핑: `COUPANG_GROWTH→CoupangGrowth`, `COUPANG_NORMAL→CoupangGeneral`,
+  `COUPANG_ROCKET→CoupangRocket`, `ETC_11ST→ElevenStreet`, `AMAZON_US→AmazonUs`,
+  `AMAZON_JP→AmazonJp`, `GENERAL→General`(레거시 12개 채널에서 실제 쓰인 7개 유형 모두 1:1
+  매칭 확인됨).
+- 표준필드 매핑: `STD_PRODUCT_NAME/STD_OPTION/STD_QTY/STD_SETTLEMENT/STD_SHIPPING/STD_FEE`
+  → `ProductName/OptionName/Quantity/SettlementAmount/ShippingFee/HandlingFee`(헤더 행은
+  레거시의 `global_header_row`를 그대로 사용). `STD_TAX_DATE/STD_TAX_NO/STD_PRODUCT_ID/
+  STD_DATE/STD_ORDER_ID/STD_EXTRA1/STD_EXTRA2`는 MiniERP2 정산서 매핑에 대응 슬롯이 없어
+  이관되지 않음(정산 SKU매칭/이익계산에 쓰이지 않는 필드라 손실 없음).
+- **이관 한계 1건**: 레거시는 일부 필드(실제 데이터 기준 150여 개 필드-채널 조합 중 2건)에
+  "조건부 값 추출"(예: 옵션ID에 '배송' 포함 시 다른 열 값 사용)을 지원하는데, MiniERP2의
+  `FieldMapping`은 이 기능이 없어 해당 항목은 건너뛰고 결과 안내에 모아 보여준다(채널설정창
+  에서 직접 확인 필요).
+
+**실제 이관은 사용자가 채널설정창에서 직접 실행해야 함** — 라이브 DB에 채널을 새로 만들거나
+기존 채널 설정을 덮어쓰는 동작이라 이 세션에서 자동으로 실행하지 않았다.
+
+테스트: `SalesChannelLegacyMigrationServiceTests`(신규 채널 생성, 기존 채널 갱신, 조건부 필드
+건너뛰기+안내, 보조소스 이관, 파일 없음 케이스) 4건 추가. 173/173 통과.
+
 ## 광고 매핑 신설 — SalesManagerV2 광고매핑(ad_*.py) 인터페이스 포팅 + 레거시 JSON 이관
 
 매핑 UI 패턴 포팅(위 1·2단계)에 이어, 사용자가 같은 레거시 폴더의 광고매핑 파일들

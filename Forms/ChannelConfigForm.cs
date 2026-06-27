@@ -17,6 +17,7 @@ public class ChannelConfigForm : Form
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly CourierRepository _courierRepository = new();
+    private readonly SalesChannelLegacyMigrationService _legacyMigrationService = new();
 
     private List<SalesChannel> _channels = new();
     private List<ChannelConfig> _channelConfigs = new();
@@ -57,8 +58,9 @@ public class ChannelConfigForm : Form
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         // Left Panel (Channel List)
-        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
@@ -89,9 +91,15 @@ public class ChannelConfigForm : Form
         btnCourier.Click += (s, e) => FormManager.Show<CourierConfigForm>();
         courierPanel.Controls.Add(btnCourier);
 
+        var legacyImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
+        var btnLegacyImport = new Button { Text = "SalesManagerV2 채널 가져오기", Width = 180 };
+        btnLegacyImport.Click += OnLegacyChannelImportClick;
+        legacyImportPanel.Controls.Add(btnLegacyImport);
+
         leftPanel.Controls.Add(_channelTreeView, 0, 0);
         leftPanel.Controls.Add(buttonPanel, 0, 1);
         leftPanel.Controls.Add(courierPanel, 0, 2);
+        leftPanel.Controls.Add(legacyImportPanel, 0, 3);
 
         // Right Panel (Tabs: 기본 정보 / 발주서 매핑 / 정산서 매핑)
         var rightTabControl = new TabControl { Dock = DockStyle.Fill };
@@ -587,6 +595,48 @@ public class ChannelConfigForm : Form
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// SalesManagerV2(레거시 Python 도구)의 config 폴더에서 channels_config.json을 읽어 채널별
+    /// 정산서 매핑/환율/채널유형/쿠팡그로스 보조소스를 이식한다. 채널명이 일치하는 기존 채널은
+    /// 설정을 갱신하고, 없는 채널명은 새로 만든다(코드는 ChannelCodeGenerator로 자동 부여 —
+    /// 레거시의 임의 코드를 그대로 쓰지 않음). 레거시는 정산서만 다루는 도구라 발주서 매핑
+    /// (수취인/연락처 등)은 이관 대상에 없다 — 별도로 설정해야 한다.
+    /// </summary>
+    private void OnLegacyChannelImportClick(object? sender, EventArgs e)
+    {
+        using var folderDialog = new FolderBrowserDialog { Description = "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요" };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        if (MessageBox.Show(
+                "channels_config.json의 채널별 정산서 매핑/환율/채널유형/쿠팡그로스 보조소스를 이식합니다.\n" +
+                "채널명이 일치하는 기존 채널은 설정이 덮어써지고, 없는 채널명은 새로 만들어집니다. 계속하시겠습니까?",
+                "이관 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _legacyMigrationService.Migrate(folderDialog.SelectedPath);
+            LoadData();
+
+            var message = $"신규 채널 {result.CreatedChannels.Count}개, 기존 채널 갱신 {result.UpdatedChannels.Count}개를 이관했습니다.";
+            if (result.CreatedChannels.Count > 0) message += $"\n\n신규: {string.Join(", ", result.CreatedChannels)}";
+            if (result.UpdatedChannels.Count > 0) message += $"\n갱신: {string.Join(", ", result.UpdatedChannels)}";
+            if (result.UnsupportedConditionalFields.Count > 0)
+            {
+                message += $"\n\n다음 항목은 레거시의 조건부 값 추출 기능을 써서 자동 이관하지 못했습니다(직접 확인 필요):\n{string.Join(", ", result.UnsupportedConditionalFields)}";
+            }
+            if (result.Warnings.Count > 0) message += $"\n\n{string.Join("\n", result.Warnings)}";
+
+            MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"이관 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnAddClick(object? sender, EventArgs e)
