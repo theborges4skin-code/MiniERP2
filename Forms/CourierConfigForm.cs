@@ -316,22 +316,31 @@ public class CourierConfigForm : Form
                 if (!string.IsNullOrWhiteSpace(header)) headers.Add(header);
             }
 
+            // 택배사 프로그램이 열 순서로 파일을 인식하므로, 그리드의 행 순서를 샘플 헤더 순서와
+            // 항상 정확히 일치시킨다(단순히 빠진 헤더만 끝에 추가하던 이전 방식은, 기존 행 순서가
+            // 샘플과 어긋나 있어도 그대로 둬서 순서가 맞지 않을 수 있었다). 기존에 이미 지정해둔
+            // 매핑(헤더 → 속성)은 헤더 이름으로 그대로 이어받는다. 이번 샘플에 없는 기존 헤더(수동
+            // 추가분 등)는 잃지 않도록 샘플 헤더들 뒤에 그대로 이어붙인다.
+            var existingRows = (_mappingGrid.DataSource as BindingList<HeaderMappingRow>) ?? new BindingList<HeaderMappingRow>();
+            var existingMappingByHeader = existingRows
+                .GroupBy(r => r.Header, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().PropertyName, StringComparer.OrdinalIgnoreCase);
+            var sampleHeaderSet = new HashSet<string>(headers, StringComparer.OrdinalIgnoreCase);
+
+            var reorderedRows = new BindingList<HeaderMappingRow>(headers
+                .Select(h => new HeaderMappingRow { Header = h, PropertyName = existingMappingByHeader.GetValueOrDefault(h, string.Empty) })
+                .Concat(existingRows.Where(r => !string.IsNullOrWhiteSpace(r.Header) && !sampleHeaderSet.Contains(r.Header)))
+                .ToList());
+
             if (_mappingGrid.Columns["Header"] is DataGridViewComboBoxColumn headerColumn)
             {
                 headerColumn.Items.Clear();
-                headerColumn.Items.AddRange(headers.Cast<object>().ToArray());
+                headerColumn.Items.AddRange(reorderedRows.Select(r => r.Header).Distinct(StringComparer.OrdinalIgnoreCase).Cast<object>().ToArray());
             }
 
-            // 그리드에 아직 없는 헤더는 매핑할 데이터를 빈 채로 새 행에 추가해 바로 채울 수 있게 한다.
-            var rows = (_mappingGrid.DataSource as BindingList<HeaderMappingRow>) ?? new BindingList<HeaderMappingRow>();
-            var existingHeaders = new HashSet<string>(rows.Select(r => r.Header), StringComparer.OrdinalIgnoreCase);
-            foreach (var header in headers.Where(h => !existingHeaders.Contains(h)))
-            {
-                rows.Add(new HeaderMappingRow { Header = header, PropertyName = string.Empty });
-            }
-            _mappingGrid.DataSource = rows;
+            _mappingGrid.DataSource = reorderedRows;
 
-            MessageBox.Show($"{headers.Count}개의 헤더를 읽었습니다. '엑셀 헤더' 열에서 선택할 수 있습니다.", "샘플 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"{headers.Count}개의 헤더를 샘플 순서대로 읽었습니다. 저장 시에도 이 순서 그대로 출력됩니다.", "샘플 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
