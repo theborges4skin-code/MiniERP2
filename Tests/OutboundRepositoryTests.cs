@@ -260,4 +260,33 @@ public class OutboundRepositoryTests
 
         Assert.HasCount(2, results);
     }
+
+    [TestMethod]
+    public void FindByOrderNos_ReturnsOnlyMatchingOrders_IgnoringChannel()
+    {
+        var repository = new OutboundRepository();
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-14", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+            new OutboundDetail { ChannelCode = "CH-B", OrderNo = "ORDER-15", TrackingNo = "T900", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+            new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-16", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var results = repository.FindByOrderNos(["ORDER-14", "ORDER-15", "ORDER-NOT-EXIST"]);
+
+        Assert.HasCount(2, results);
+        Assert.IsTrue(results.Any(r => r.OrderNo == "ORDER-14" && r.Status == "발주확정"));
+        Assert.IsTrue(results.Any(r => r.OrderNo == "ORDER-15" && r.Status == "출고확정"));
+    }
+
+    [TestMethod]
+    public void FindByOrderNos_EmptyInput_ReturnsEmptyWithoutQuerying()
+    {
+        var repository = new OutboundRepository();
+
+        var results = repository.FindByOrderNos([]);
+
+        Assert.HasCount(0, results);
+    }
 }

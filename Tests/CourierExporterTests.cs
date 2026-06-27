@@ -1,3 +1,6 @@
+using Microsoft.Data.Sqlite;
+using MiniERP2.Config;
+using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -9,17 +12,23 @@ namespace MiniERP2.Tests;
 public class CourierExporterTests
 {
     private string _filePath = string.Empty;
+    private string _testFolder = string.Empty;
 
     [TestInitialize]
     public void Setup()
     {
         _filePath = Path.Combine(Path.GetTempPath(), $"CourierExporterTests_{Guid.NewGuid()}.xlsx");
+        _testFolder = Path.Combine(Path.GetTempPath(), "MiniERP2Tests_" + Guid.NewGuid());
+        Directory.CreateDirectory(_testFolder);
+        PathProvider.AppDataFolder = _testFolder;
     }
 
     [TestCleanup]
     public void Cleanup()
     {
         if (File.Exists(_filePath)) File.Delete(_filePath);
+        SqliteConnection.ClearAllPools();
+        Directory.Delete(_testFolder, recursive: true);
     }
 
     [TestMethod]
@@ -247,5 +256,50 @@ public class CourierExporterTests
         Assert.AreEqual("A열", sheet.Cells[1, 5].Value);
         Assert.AreEqual("홍길동", sheet.Cells[2, 2].Value);
         Assert.AreEqual("T001", sheet.Cells[2, 4].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_MappedSkuHeader_OutputsInvoiceDisplayNameInsteadOfCskuCode()
+    {
+        // "매핑된 SKU"는 내부 CSKU 코드일 뿐 실제 송장에 출력해서는 안 된다 — 그 CSKU에 설정된
+        // 송장표시명을 대신 출력해야 한다는 버그 수정의 회귀 테스트.
+        new ChannelSkuRepository().Upsert(new ChannelSkuModel
+        {
+            ChannelCode = "CH-A", CskuCode = "CSKU-001", Msku = "MASTER-1", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml",
+        });
+
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = CourierHeaderMapping.Serialize(new[] { new HeaderMappingEntry("상품명", "MappedSku") })
+        };
+        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-001" } };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+        Assert.AreEqual("샴푸 500ml", sheet.Cells[2, 1].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_MappedSkuHeader_FallsBackToCskuCodeWhenInvoiceDisplayNameNotSet()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = CourierHeaderMapping.Serialize(new[] { new HeaderMappingEntry("상품명", "MappedSku") })
+        };
+        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-NO-DISPLAY-NAME" } };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+        Assert.AreEqual("CSKU-NO-DISPLAY-NAME", sheet.Cells[2, 1].Value);
     }
 }

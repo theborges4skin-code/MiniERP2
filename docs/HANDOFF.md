@@ -383,6 +383,34 @@ UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 Bu
 샘플 헤더들 뒤에 그대로 이어붙인다. 이제 "샘플 양식 불러오기"를 누르면 항상 그 즉시 그리드가
 샘플과 같은 순서가 되고, 저장하면(JSON 배열 형식) 그 순서가 그대로 보존되어 출력된다.
 
+### "매핑된 SKU" 헤더가 CSKU 코드를 그대로 출력하던 버그 + 발주 중복 이력 안내
+
+두 가지 버그 신고 처리:
+
+1. **"매핑된 SKU" 출력 버그**: 택배사 출력 양식에서 헤더를 "매핑된 SKU"로 매핑하면
+   `CourierExporter`가 그 헤더에 내부 CSKU 코드(`OfsOrderItem.MappedSku`, 예: `"NAV_상품A"`)를
+   그대로 출력하고 있었다 — 실제 송장에는 코드가 아니라 그 CSKU에 설정된 송장표시명(상품명)이
+   나가야 한다. `CourierExporter.ExportAsync`가 `propertyName == "MappedSku"`인 헤더를 만나면
+   `ChannelSkuRepository.GetByChannelAndCskuCode`로 그 CSKU의 `InvoiceDisplayName`을 조회해
+   출력하도록 바꿨다(같은 CSKU가 여러 줄에 나와도 DB 조회가 한 번만 일어나게 그룹 처리 동안
+   캐싱). 송장표시명이 설정되어 있지 않은 CSKU는 빈 칸 대신 코드 그대로 출력해 무엇이 매핑 안
+   됐는지는 알아볼 수 있게 했다. `CourierConfigForm`의 "매핑된 SKU" 드롭다운 라벨에도 이 동작을
+   설명을 덧붙였다. `CourierExporter`가 이제 `ChannelSkuRepository`에 의존하므로 생성자에서
+   선택적으로 주입 가능하게 했다(기본값 `new()`).
+2. **발주서 중복 처리 안내**: 같은 발주서 파일을 실수로 다시 불러오거나, 의도적으로 같은 곳에
+   두 번 출고하는 경우를 구분할 방법이 없었다. "동일 주문"의 판단 기준은 `OutboundDetailTable`의
+   충돌 판단 키(UNIQUE INDEX)와 같은 **주문번호(OrderNo, 채널 무관)**로 정했다 — 처리 자체를
+   막으면 의도적인 재출고를 못 하게 되므로, 정책상 **항상 안내만 하고 발주 처리는 그대로
+   진행**한다(사용자 요구사항). `OutboundRepository.FindByOrderNos`(신규)로 불러온 발주서의
+   주문번호들 중 기존 발주확정/출고확정 이력이 있는 건을 찾고, `OfsForm.OnLoadOrdersClick`에서
+   로드 완료 직후(미매핑 안내보다 먼저) `WarnIfOrdersAlreadyHaveHistory`가 발견 시
+   "{N}건의 주문번호가 {M월 D일 H시경} 발주건과 동일한 이력이 있습니다(발주확정 X건, 출고확정
+   Y건). 동일한 곳으로 두 번 출고하는 경우일 수 있어 발주 처리는 그대로 진행됩니다." 형태의
+   안내창을 띄운다.
+
+테스트: `CourierExporterTests`에 InvoiceDisplayName 출력/미설정 시 코드 폴백 케이스,
+`OutboundRepositoryTests`에 `FindByOrderNos` 케이스 추가. 123/123 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

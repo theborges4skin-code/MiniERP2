@@ -218,6 +218,8 @@ public class OfsForm : Form
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
             RefreshExportPreview();
 
+            WarnIfOrdersAlreadyHaveHistory(allLoadedItems);
+
             var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
             if (unmappedCount > 0 && EnsureMasterDbNotEmpty())
             {
@@ -239,6 +241,39 @@ public class OfsForm : Form
             // UI 상태 복원
             Cursor = Cursors.Default;
         }
+    }
+
+    /// <summary>
+    /// 같은 발주서 파일을 실수로 다시 불러왔거나, 처리 이력이 꼬여 있을 가능성을 안내한다. 다만
+    /// 동일한 곳으로 두 번 출고하는 경우도 있을 수 있으므로 처리 자체를 막지는 않고(발주 프로세스는
+    /// 그대로 진행), 이미 발주확정/출고확정 이력이 있는 주문번호가 있으면 안내창만 띄운다. "동일
+    /// 주문"의 판단 기준은 OutboundDetailTable의 충돌 판단 키와 같은 OrderNo다(채널 무관).
+    /// </summary>
+    private void WarnIfOrdersAlreadyHaveHistory(List<OfsOrderItem> loadedItems)
+    {
+        var orderNos = loadedItems.Select(o => o.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
+        if (orderNos.Count == 0) return;
+
+        var existing = _outboundRepository.FindByOrderNos(orderNos!);
+        if (existing.Count == 0) return;
+
+        var distinctOrderCount = existing.Select(d => d.OrderNo).Distinct().Count();
+        var byStatus = existing
+            .GroupBy(d => d.Status)
+            .Select(g => $"{g.Key} {g.Count()}건")
+            .ToList();
+
+        var earliest = existing.Min(d => d.CreatedAt);
+        var latest = existing.Max(d => d.CreatedAt);
+        var whenText = earliest.Date == latest.Date
+            ? $"{earliest:M월 d일 H시}경"
+            : $"{earliest:M월 d일} ~ {latest:M월 d일}";
+
+        MessageBox.Show(
+            $"이번에 불러온 주문 중 {distinctOrderCount}건의 주문번호가 {whenText} 발주건과 동일한 발주확정/출고확정 이력이 이미 있습니다.\n" +
+            $"({string.Join(", ", byStatus)})\n\n" +
+            "동일한 곳으로 두 번 출고하는 경우일 수 있어 발주 처리는 그대로 진행됩니다. 중복 처리가 아닌지 한 번 확인해주세요.",
+            "동일 주문번호 이력 발견", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     /// <summary>

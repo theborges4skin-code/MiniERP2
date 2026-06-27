@@ -186,6 +186,39 @@ public class OutboundRepository
         return results;
     }
 
+    /// <summary>
+    /// 주어진 주문번호들 중 이미 발주확정/출고확정 이력이 있는 건을 찾는다(채널 무관 — 이력 저장 시의
+    /// 충돌 판단 키(OrderNo, MskuCode)와 같은 기준으로 "동일 주문"을 판단). 발주서를 다시 불러왔을 때
+    /// 같은 주문을 또 처리하는 건 아닌지 안내하는 데 사용한다(처리 자체를 막지는 않음).
+    /// </summary>
+    public List<OutboundDetail> FindByOrderNos(IEnumerable<string> orderNos)
+    {
+        var orderNoList = orderNos.Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
+        if (orderNoList.Count == 0) return [];
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+
+        var paramNames = orderNoList.Select((_, i) => $"$o{i}").ToList();
+        command.CommandText = $"""
+            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+            FROM OutboundDetailTable
+            WHERE OrderNo IN ({string.Join(",", paramNames)})
+            """;
+        for (var i = 0; i < orderNoList.Count; i++)
+        {
+            command.Parameters.AddWithValue(paramNames[i], orderNoList[i]);
+        }
+
+        var results = new List<OutboundDetail>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(ReadOutboundDetail(reader));
+        }
+        return results;
+    }
+
     private static OutboundDetail ReadOutboundDetail(SqliteDataReader reader) => new()
     {
         Id = reader.GetInt64(0),

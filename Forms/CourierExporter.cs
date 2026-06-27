@@ -1,3 +1,4 @@
+using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -9,6 +10,13 @@ namespace MiniERP2.Exporters;
 /// </summary>
 public class CourierExporter
 {
+    private readonly ChannelSkuRepository _channelSkuRepository;
+
+    public CourierExporter(ChannelSkuRepository? channelSkuRepository = null)
+    {
+        _channelSkuRepository = channelSkuRepository ?? new ChannelSkuRepository();
+    }
+
     /// <summary>
     /// "품목"란에 매핑됐을 가능성이 있는 속성들. 이 속성에 한해서만, 같은 묶음(송장) 안의 모든
     /// 줄을 줄바꿈으로 이어붙인 문자열로 출력한다(나머지 속성은 묶음의 대표 줄 값을 그대로 쓴다).
@@ -51,6 +59,9 @@ public class CourierExporter
             var headers = entries.Select(en => en.Header).ToList();
             var groups = orders.GroupBy(ShipmentGrouping.GetEffectiveGroupId).ToList();
             var overflowGroups = new List<string>();
+            // 채널코드+CSKU코드별 송장표시명 조회 결과를 캐싱한다(같은 CSKU가 여러 줄에 반복돼도
+            // DB 조회를 한 번만 하면 됨).
+            var invoiceDisplayNameCache = new Dictionary<(string ChannelCode, string CskuCode), string?>();
 
             ExcelLicense.Ensure();
             using var package = new ExcelPackage();
@@ -94,6 +105,16 @@ public class CourierExporter
                         continue;
                     }
 
+                    // "매핑된 SKU"는 내부 CSKU 코드일 뿐 실제 송장에 찍어서는 안 되는 값이다 —
+                    // 그 CSKU에 설정된 송장표시명(상품명)을 대신 출력한다(설정이 없으면 CSKU 코드
+                    // 그대로 출력해 빈 칸이 되는 것보다는 낫게 한다).
+                    if (string.Equals(propertyName, nameof(OfsOrderItem.MappedSku), StringComparison.OrdinalIgnoreCase))
+                    {
+                        var invoiceDisplayName = ResolveInvoiceDisplayName(representative, invoiceDisplayNameCache);
+                        worksheet.Cells[row, col + 1].Value = !string.IsNullOrWhiteSpace(invoiceDisplayName) ? invoiceDisplayName : representative.MappedSku;
+                        continue;
+                    }
+
                     // 리플렉션을 사용하여 OfsOrderItem의 속성 값을 가져옵니다(묶음의 대표 줄 기준).
                     var property = typeof(OfsOrderItem).GetProperty(propertyName);
                     if (property != null)
@@ -109,6 +130,18 @@ public class CourierExporter
 
             return overflowGroups;
         });
+    }
+
+    private string? ResolveInvoiceDisplayName(OfsOrderItem item, Dictionary<(string ChannelCode, string CskuCode), string?> cache)
+    {
+        if (string.IsNullOrEmpty(item.ChannelCode) || string.IsNullOrEmpty(item.MappedSku)) return null;
+
+        var key = (item.ChannelCode, item.MappedSku);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+
+        var name = _channelSkuRepository.GetByChannelAndCskuCode(item.ChannelCode, item.MappedSku)?.InvoiceDisplayName;
+        cache[key] = name;
+        return name;
     }
 
     private static string? GetFixedOverride(IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode, string? channelCode, string courierName, string header)
