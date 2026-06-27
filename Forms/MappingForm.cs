@@ -36,7 +36,7 @@ public class MappingForm : Form
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
     // 상단(미매핑 목록)/하단(마스터DB 검색+CSKU 입력)으로 분리되어 있다.
     private TabPage _unmappedTabPage = new();
-    private DataGridView _unmappedGrid = new();
+    private ExcelLikeDataGridView _unmappedGrid = new();
     private TextBox _masterSearchBox = new();
     private DataGridView _masterCandidateGrid = new();
     private DataGridView _cskuHistoryGrid = new();
@@ -129,9 +129,10 @@ public class MappingForm : Form
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220 };
 
-        _unmappedGrid = new DataGridView
+        _unmappedGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
+            PersistenceKey = "MappingForm.UnmappedGrid",
             AutoGenerateColumns = false,
             AllowUserToAddRows = false,
             ReadOnly = true,
@@ -139,26 +140,30 @@ public class MappingForm : Form
             MultiSelect = false,
             AllowUserToResizeColumns = true,
         };
+        // OptionName을 AutoSizeMode.Fill로 두면 사용자가 다른 열의 폭을 조절해도 Fill 열이 즉시
+        // 남는 공간을 다시 차지하면서 헤더 폭이 "고정"되지 않는 문제가 있었다. 모든 열에 고정 폭을
+        // 주고 PersistenceKey로 사용자가 조절한 폭을 다음에 열 때도 기억하게 한다.
         _unmappedGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "ProductName", HeaderText = "상품명", DataPropertyName = "ProductName", Width = 220, Resizable = DataGridViewTriState.True },
-            new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, Resizable = DataGridViewTriState.True },
+            new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", Width = 260, Resizable = DataGridViewTriState.True },
             new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "수량", DataPropertyName = "Quantity", Width = 60, Resizable = DataGridViewTriState.True },
             new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "상태", DataPropertyName = "Status", Width = 100, Resizable = DataGridViewTriState.True }
         );
         _unmappedGrid.SelectionChanged += OnUnmappedRowSelectionChanged;
         SetupUnmappedContextMenu();
 
-        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
-        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
-        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
 
         var searchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
-        searchPanel.Controls.Add(new Label { Text = "마스터DB 검색(SKU/상품명):", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
-        _masterSearchBox = new TextBox { Width = 300 };
-        _masterSearchBox.TextChanged += (s, e) => RunMasterSearch();
+        searchPanel.Controls.Add(new Label { Text = "검색(마스터DB SKU/상품명 + CSKU 코드/송장표시명):", AutoSize = true, Padding = new Padding(0, 5, 4, 0) });
+        _masterSearchBox = new TextBox { Width = 320 };
+        _masterSearchBox.TextChanged += (s, e) => { RunMasterSearch(); RunCskuSearch(); };
         searchPanel.Controls.Add(_masterSearchBox);
 
         _masterCandidateGrid = new DataGridView
@@ -177,25 +182,41 @@ public class MappingForm : Form
         );
         _masterCandidateGrid.SelectionChanged += (s, e) => OnMasterCandidateSelectionChanged();
 
+        var masterPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        masterPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+        masterPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        masterPanel.Controls.Add(new Label { Text = "마스터DB 후보", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
+        masterPanel.Controls.Add(_masterCandidateGrid, 0, 1);
+
         _cskuHistoryGrid = new DataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
             AllowUserToAddRows = false,
             ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
         };
         _cskuHistoryGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "이 SKU로 매핑된 상품명+옵션명 조합(1:1 규칙)", DataPropertyName = "Key", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+            new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 150 },
+            new DataGridViewTextBoxColumn { Name = "Msku", HeaderText = "마스터SKU", DataPropertyName = "Msku", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", Width = 180 },
+            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
+        _cskuHistoryGrid.SelectionChanged += (s, e) => OnCskuSearchResultSelectionChanged();
+        _cskuHistoryGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) ApplyExactMappingToSelectedUnmapped(); };
 
         var cskuPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         cskuPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
         cskuPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        cskuPanel.Controls.Add(new Label { Text = "CSKU 매핑 이력 — 같은 SKU에 매핑된 다른 상품명/옵션명 조합", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
+        cskuPanel.Controls.Add(new Label { Text = "CSKU 검색결과 — 더블클릭하면 바로 매핑됩니다", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
         cskuPanel.Controls.Add(_cskuHistoryGrid, 0, 1);
 
-        var infoAndActions = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-        var infoPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
+        var candidatesSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 430 };
+        candidatesSplit.Panel1.Controls.Add(masterPanel);
+        candidatesSplit.Panel2.Controls.Add(cskuPanel);
+
+        var infoPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
         infoPanel.Controls.Add(new Label { Text = "CSKU 코드(자동제안, 편집 가능):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
         _unmappedCskuCodeTextBox = new TextBox { Width = 150 };
         infoPanel.Controls.Add(_unmappedCskuCodeTextBox);
@@ -214,28 +235,38 @@ public class MappingForm : Form
         _invoicePreviewLabel = new Label { Dock = DockStyle.Fill, AutoSize = false, Padding = new Padding(5, 3, 0, 0), ForeColor = Color.DimGray };
         RefreshInvoicePreview();
 
-        var actionButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
-        var btnApplyExact = new Button { Text = "1:1 매핑 적용", Size = new Size(110, 30) };
+        // 미매핑건을 선택하고 위 정보를 입력한 뒤 누르는 핵심 동작이라 다른 보조 버튼들과
+        // 분리해 항상 보이는 자리에 둔다(이전에는 보조 버튼들과 같은 줄에 섞여 있어 좁은 창에서
+        // 잘려 보이지 않는 경우가 있었음).
+        var primaryButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 5, 0) };
+        var btnApplyExact = new Button { Text = "매핑하기", Size = new Size(120, 34), Font = new Font(Font, FontStyle.Bold) };
         btnApplyExact.Click += (s, e) => ApplyExactMappingToSelectedUnmapped();
+        primaryButtonPanel.Controls.Add(btnApplyExact);
+        primaryButtonPanel.Controls.Add(new Label
+        {
+            Text = "위에서 마스터DB 후보 또는 기존 CSKU를 선택하고 정보를 입력한 뒤 누르세요.",
+            AutoSize = true,
+            Padding = new Padding(10, 9, 0, 0),
+            ForeColor = Color.DimGray,
+        });
+
+        var secondaryButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
         var btnRegisterTemp = new Button { Text = "임시 SKU 등록 후 매핑", Size = new Size(150, 30) };
         btnRegisterTemp.Click += (s, e) => RegisterTempSkuAndMap();
         var btnAddCondition = new Button { Text = "조건부 매핑 규칙 추가", Size = new Size(150, 30) };
         btnAddCondition.Click += (s, e) => AddConditionRuleFromSelectedUnmapped();
         var btnExclude = new Button { Text = "예외 처리(매핑 제외)", Size = new Size(140, 30) };
         btnExclude.Click += (s, e) => ExcludeSelectedUnmapped();
-        actionButtonPanel.Controls.Add(btnApplyExact);
-        actionButtonPanel.Controls.Add(btnRegisterTemp);
-        actionButtonPanel.Controls.Add(btnAddCondition);
-        actionButtonPanel.Controls.Add(btnExclude);
-
-        infoAndActions.Controls.Add(infoPanel, 0, 0);
-        infoAndActions.Controls.Add(actionButtonPanel, 0, 1);
+        secondaryButtonPanel.Controls.Add(btnRegisterTemp);
+        secondaryButtonPanel.Controls.Add(btnAddCondition);
+        secondaryButtonPanel.Controls.Add(btnExclude);
 
         bottomLayout.Controls.Add(searchPanel, 0, 0);
-        bottomLayout.Controls.Add(_masterCandidateGrid, 0, 1);
-        bottomLayout.Controls.Add(cskuPanel, 0, 2);
-        bottomLayout.Controls.Add(infoAndActions, 0, 3);
-        bottomLayout.Controls.Add(_invoicePreviewLabel, 0, 4);
+        bottomLayout.Controls.Add(candidatesSplit, 0, 1);
+        bottomLayout.Controls.Add(infoPanel, 0, 2);
+        bottomLayout.Controls.Add(primaryButtonPanel, 0, 3);
+        bottomLayout.Controls.Add(secondaryButtonPanel, 0, 4);
+        bottomLayout.Controls.Add(_invoicePreviewLabel, 0, 5);
 
         split.Panel1.Controls.Add(_unmappedGrid);
         split.Panel2.Controls.Add(bottomLayout);
@@ -353,13 +384,39 @@ public class MappingForm : Form
         _masterCandidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }
 
+    /// <summary>
+    /// 검색창의 내용으로 마스터DB뿐 아니라 이미 만들어진 CSKU(코드/마스터SKU/송장표시명 기준)도
+    /// 함께 찾아 "CSKU 검색결과" 그리드에 보여준다. 기존 CSKU가 있으면 더블클릭(또는 선택 후
+    /// "매핑하기")으로 새로 만들지 않고 바로 그 CSKU에 매핑할 수 있다.
+    /// </summary>
+    private void RunCskuSearch()
+    {
+        if (string.IsNullOrEmpty(_unmappedChannelCode))
+        {
+            _cskuHistoryGrid.DataSource = null;
+            return;
+        }
+
+        var query = _masterSearchBox.Text.Trim();
+        var allCskus = _channelSkuRepository.GetAllByChannel(_unmappedChannelCode);
+
+        var matches = string.IsNullOrEmpty(query)
+            ? allCskus
+            : allCskus.Where(c =>
+                c.CskuCode.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                c.Msku.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (c.InvoiceDisplayName ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase))
+              .ToList();
+
+        _cskuHistoryGrid.DataSource = new BindingList<ChannelSkuModel>(matches);
+    }
+
     private void OnMasterCandidateSelectionChanged()
     {
         _unmappedCskuCodeTextBox.Text = string.Empty;
         _unmappedSupplyPriceTextBox.Text = string.Empty;
         _unmappedInvoiceNameTextBox.Text = string.Empty;
         _unmappedVatIncludedRadio.Checked = true;
-        _cskuHistoryGrid.DataSource = null;
 
         if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel selected) return;
 
@@ -374,8 +431,20 @@ public class MappingForm : Form
             _unmappedSupplyPriceTextBox.Text = existing.SupplyPrice.ToString();
             _unmappedInvoiceNameTextBox.Text = existing.InvoiceDisplayName ?? string.Empty;
         }
+    }
 
-        RefreshCskuHistoryGrid(defaultCode);
+    /// <summary>
+    /// CSKU 검색결과에서 행을 선택하면 그 CSKU의 코드/납품가/송장표시명을 입력란에 채워준다.
+    /// 이 상태로 "매핑하기"를 누르면 새 CSKU를 만들지 않고 그 CSKU에 매핑 조건만 추가된다.
+    /// </summary>
+    private void OnCskuSearchResultSelectionChanged()
+    {
+        if (_cskuHistoryGrid.CurrentRow?.DataBoundItem is not ChannelSkuModel csku) return;
+
+        _unmappedCskuCodeTextBox.Text = csku.CskuCode;
+        _unmappedSupplyPriceTextBox.Text = csku.SupplyPrice.ToString();
+        _unmappedInvoiceNameTextBox.Text = csku.InvoiceDisplayName ?? string.Empty;
+        _unmappedVatIncludedRadio.Checked = true;
     }
 
     /// <summary>
@@ -391,21 +460,15 @@ public class MappingForm : Form
     }
 
     /// <summary>
-    /// 선택된 CSKU 코드로 이미 매핑된 1:1 규칙들(즉, 다른 상품명+옵션명 조합이라도 같은 CSKU로 모이는
-    /// 사례)을 보여준다. 예: "상품A+옵션B"와 "상품A+옵션C"가 같은 CSKU라면 둘 다 이 목록에 나타난다.
+    /// 매핑 대상 마스터SKU를 결정한다. CSKU 검색결과에서 기존 CSKU를 고른 경우 그 CSKU가 연결된
+    /// 마스터SKU를 우선 쓰고(이미 있는 CSKU에 조건만 추가하는 빠른 경로), 그게 아니면 마스터DB
+    /// 후보 목록에서 고른 항목을 쓴다.
     /// </summary>
-    private void RefreshCskuHistoryGrid(string cskuCode)
+    private string? ResolveSelectedMasterSku()
     {
-        if (string.IsNullOrEmpty(_unmappedChannelCode))
-        {
-            _cskuHistoryGrid.DataSource = null;
-            return;
-        }
-
-        var rows = _mappingRepository.GetRules(MappingRuleType.Exact, _unmappedChannelCode)
-            .Where(r => r.TargetSku == cskuCode)
-            .ToList();
-        _cskuHistoryGrid.DataSource = new BindingList<MappingRule>(rows);
+        if (_cskuHistoryGrid.CurrentRow?.DataBoundItem is ChannelSkuModel csku) return csku.Msku;
+        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is ItemModel selected) return selected.Sku;
+        return null;
     }
 
     private void ApplyExactMappingToSelectedUnmapped()
@@ -415,16 +478,18 @@ public class MappingForm : Form
             MessageBox.Show("매핑할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel candidate)
+
+        var masterSku = ResolveSelectedMasterSku();
+        if (masterSku == null)
         {
-            MessageBox.Show("마스터DB에서 매핑할 SKU를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("마스터DB 후보 또는 CSKU 검색결과에서 매핑할 대상을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         var cskuCode = ResolveCskuCodeOrShowError();
         if (cskuCode == null) return;
 
-        ApplyMappingToItem(item, cskuCode, candidate.Sku, "매핑(1:1)", saveAsExactRule: true);
+        ApplyMappingToItem(item, cskuCode, masterSku, "매핑(1:1)", saveAsExactRule: true);
     }
 
     private void RegisterTempSkuAndMap()
@@ -472,21 +537,47 @@ public class MappingForm : Form
 
         SaveChannelSkuInfoFromUnmappedPanel(cskuCode, masterSku);
 
-        if (saveAsExactRule)
+        var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
+
+        if (saveAsExactRule && !string.IsNullOrWhiteSpace(key))
         {
-            var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                _mappingRepository.UpsertExactRule(_unmappedChannelCode, key, cskuCode);
-            }
+            _mappingRepository.UpsertExactRule(_unmappedChannelCode, key, cskuCode);
         }
 
         item.MappedSku = cskuCode;
         item.Status = status;
 
+        // 지금 로드되어 있는 발주서 안에 같은 상품명+옵션명 조합의 다른 미매핑 항목이 더 있으면,
+        // 다시 불러오지 않아도 바로 같은 결과로 자동 매핑해 매번 한 건씩 처리하는 수고를 없앤다.
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            ApplySameKeyToOtherUnmappedSiblings(key, cskuCode, status);
+        }
+
         RefreshUnmappedGrid();
-        RefreshCskuHistoryGrid(cskuCode);
+        RunCskuSearch();
         _onMappingApplied?.Invoke();
+    }
+
+    /// <summary>
+    /// 같은 채널에 로드된 다른 미매핑 항목 중 (상품명+옵션명) 키가 같은 건들을 찾아 같은 SKU/상태로
+    /// 즉시 매핑한다. 방금 저장한 1:1 규칙이 적용된 것과 같은 결과이지만, 발주서를 다시 불러오지
+    /// 않고도 지금 화면에 떠 있는 나머지 건들이 한꺼번에 처리되게 하기 위함이다.
+    /// </summary>
+    private void ApplySameKeyToOtherUnmappedSiblings(string key, string? targetSku, string status)
+    {
+        if (_sourceOrders == null) return;
+
+        var siblings = _sourceOrders.Where(o =>
+            o.ChannelCode == _unmappedChannelCode &&
+            (o.Status == "매핑 실패" || o.Status == "매핑 키 없음") &&
+            (o.ProductName ?? string.Empty) + (o.OptionName ?? string.Empty) == key);
+
+        foreach (var sibling in siblings)
+        {
+            sibling.MappedSku = targetSku;
+            sibling.Status = status;
+        }
     }
 
     /// <summary>
@@ -535,9 +626,10 @@ public class MappingForm : Form
             MessageBox.Show("조건부 매핑을 추가할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (_masterCandidateGrid.CurrentRow?.DataBoundItem is not ItemModel candidate)
+        var masterSku = ResolveSelectedMasterSku();
+        if (masterSku == null)
         {
-            MessageBox.Show("마스터DB에서 매핑할 SKU를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("마스터DB 후보 또는 CSKU 검색결과에서 매핑할 대상을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
@@ -561,7 +653,7 @@ public class MappingForm : Form
         var cskuCode = ResolveCskuCodeOrShowError();
         if (cskuCode == null) return;
 
-        SaveChannelSkuInfoFromUnmappedPanel(cskuCode, candidate.Sku);
+        SaveChannelSkuInfoFromUnmappedPanel(cskuCode, masterSku);
 
         var summaryKey = $"{item.ProductName} {item.OptionName}".Trim();
         var newRuleId = _mappingRepository.AddConditionRuleWithDetails(_unmappedChannelCode, summaryKey, cskuCode, details);
@@ -600,6 +692,7 @@ public class MappingForm : Form
 
         item.MappedSku = null;
         item.Status = "제외(배송비 등)";
+        ApplySameKeyToOtherUnmappedSiblings(key, null, "제외(배송비 등)");
 
         RefreshUnmappedGrid();
         _onMappingApplied?.Invoke();
@@ -1201,6 +1294,9 @@ public class MappingForm : Form
         if (!await PromptToSaveChanges())
         {
             e.Cancel = true;
+            return;
         }
+
+        _unmappedGrid.SaveLayout();
     }
 }

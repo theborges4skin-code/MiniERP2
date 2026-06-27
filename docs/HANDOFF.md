@@ -139,6 +139,35 @@
 - **CSkuForm(마스터SKU 관리창 → "채널 SKU 관리")**: 그리드에 CSKU 코드/송장표시명 열이 추가됨.
   채널 코드를 입력하면 CskuCode가 비어있을 때만 기본값을 자동 제안한다.
 
+## "미매핑 처리" 탭 UX 추가 개선 (CSKU 코드 신설 직후 사용자 피드백 반영)
+
+사용자가 실제로 써보면서 4가지를 추가로 요청해 처리함(`Forms/MappingForm.cs` 변경):
+
+1. **"매핑하기" 버튼이 안 보임(우클릭 메뉴는 동작)** — 원인은 레이아웃 버그였다. 정보 입력란
+   (CSKU코드/납품가/송장표시명)이 한 줄에 다 안 들어가 줄바꿈되면서, 같은 고정 높이 영역에
+   끼어 있던 버튼들이 화면 밖으로 밀려나 보이지 않는 경우가 있었다. 핵심 동작인 "매핑하기"
+   버튼을 별도 행으로 분리하고 굵은 글씨로 강조해 항상 보이게 했다(`primaryButtonPanel`).
+   나머지(임시SKU등록/조건부매핑추가/예외처리)는 `secondaryButtonPanel`로 분리.
+2. **검색에 CSKU 결과 통합** — 검색창(`_masterSearchBox`)이 마스터DB(SKU/상품명) 검색과 동시에
+   CSKU(코드/마스터SKU/송장표시명) 검색도 함께 수행하도록 `RunCskuSearch()`를 추가했다.
+   결과는 별도의 "CSKU 검색결과" 그리드(옛 `_cskuHistoryGrid`를 재활용, 컬럼을 CskuCode/Msku/
+   InvoiceDisplayName/SupplyPrice로 변경)에 나오고, 더블클릭하면 새로 만들지 않고 바로 그
+   CSKU에 매핑된다. `ResolveSelectedMasterSku()`가 "CSKU 검색결과에서 골랐으면 그 CSKU의
+   Msku, 아니면 마스터DB 후보에서 고른 Sku"를 우선순위대로 반환해 1:1매핑/조건부매핑 양쪽에서
+   재사용한다.
+3. **같은 발주서 안의 동일 조합 자동매핑** — 매핑/제외 처리를 하면(`ApplyMappingToItem`/
+   `ExcludeSelectedUnmapped`) `ApplySameKeyToOtherUnmappedSiblings`가 지금 로드된 `_sourceOrders`
+   안에서 같은 (상품명+옵션명) 키를 가진 다른 미매핑 항목을 찾아 즉시 같은 결과로 처리한다.
+   재로딩 없이 한 번의 조작으로 같은 조합 전체가 해결된다. (참고: 발주서를 다시 로드할 때는
+   `SkuMapper`가 항상 DB에서 최신 규칙을 다시 읽으므로 이미 자동 매핑되고 있었음 — 이번
+   추가분은 "같은 배치 안에서 재로딩 없이 즉시 반영"하는 부분만 새로 보강한 것.)
+4. **미매핑 리스트 헤더 폭이 고정되지 않음** — `OptionName` 컬럼에 `AutoSizeMode.Fill`을 쓰고
+   있어서, 사용자가 폭을 조절해도 Fill 컬럼이 즉시 남는 공간을 다시 채워가며 되돌리는 것처럼
+   보였다. 모든 컬럼을 고정 폭으로 바꾸고, 그리드를 `ExcelLikeDataGridView` +
+   `PersistenceKey = "MappingForm.UnmappedGrid"`로 교체해(앱의 다른 그리드들과 동일한 패턴)
+   사용자가 조절한 폭이 창을 닫을 때(`OnFormClosing`에서 `SaveLayout()`) 저장되고 다음에 열 때도
+   유지되게 했다.
+
 ## 이 세션의 배경
 
 사용자가 "Notion 기능 체크리스트 하단의 미구현/제약사항을 자동으로 구현, 필요한 권한은 자동 승인,
