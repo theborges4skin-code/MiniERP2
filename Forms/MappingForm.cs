@@ -127,7 +127,9 @@ public class MappingForm : Form
     {
         var tabPage = new TabPage("미매핑 처리");
 
-        var split = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220, PersistenceKey = "MappingForm.UnmappedSplit" };
+        // 기본값은 미매핑 목록이 위쪽 10줄 정도만 보이게 둔다(처음 실행 시에만 적용되고, 한 번
+        // 조절하면 PersistentSplitContainer가 그 값을 기억해 다음에도 유지한다).
+        var split = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 270, PersistenceKey = "MappingForm.UnmappedSplit" };
 
         _unmappedGrid = new ExcelLikeDataGridView
         {

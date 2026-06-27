@@ -382,28 +382,34 @@ public class OutboundHistoryForm : Form
                 continue;
             }
 
-            OutboundDetail target;
+            List<OutboundDetail> targets;
             if (candidates.Count == 1)
             {
-                target = candidates[0];
+                targets = [candidates[0]];
             }
             else
             {
+                // 동일 수령인이 여럿이면 택배사에서 합포장돼 한 운송장으로 함께 발송된 경우일 수
+                // 있다 — 여러 건을 선택하면 모두 같은 운송장번호로 처리하고, 1건만 선택하면 그
+                // 건에만 개별로 적용한다(선택은 항상 사용자가 직접 한다).
                 using var picker = new TrackingMatchPickerDialog(recipient, trackingNo, candidates);
-                if (picker.ShowDialog(this) != DialogResult.OK || picker.Selected is null)
+                if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedItems.Count == 0)
                 {
                     skippedByUser++;
                     continue;
                 }
-                target = picker.Selected;
+                targets = picker.SelectedItems;
             }
 
-            _outboundRepository.ApplyTrackingNo(target.Id, trackingNo);
-            target.TrackingNo = trackingNo;
-            target.Status = "출고확정";
-            target.ConfirmedAt = DateTime.UtcNow;
-            candidates.Remove(target); // 같은 수령인의 다른 건에 같은 운송장번호가 재적용되지 않게 한다.
-            appliedCount++;
+            foreach (var target in targets)
+            {
+                _outboundRepository.ApplyTrackingNo(target.Id, trackingNo);
+                target.TrackingNo = trackingNo;
+                target.Status = "출고확정";
+                target.ConfirmedAt = DateTime.UtcNow;
+                candidates.Remove(target); // 같은 수령인의 다른 건에 같은 운송장번호가 재적용되지 않게 한다.
+                appliedCount++;
+            }
         }
 
         _historyGrid.Refresh();

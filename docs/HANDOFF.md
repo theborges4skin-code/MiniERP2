@@ -411,6 +411,22 @@ UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 Bu
 테스트: `CourierExporterTests`에 InvoiceDisplayName 출력/미설정 시 코드 폴백 케이스,
 `OutboundRepositoryTests`에 `FindByOrderNos` 케이스 추가. 123/123 통과.
 
+### 미매핑 목록 기본 높이 + 운송장 동명이인 선택창에서 합포장 다중 적용
+
+1. **미매핑 목록 상단 기본 높이**: `MappingForm`의 "미매핑 처리" 탭 상단(미매핑 목록) 분할선이
+   조절해도 고정이 안 되는 것처럼 느껴진다는 피드백 — 이미 `PersistentSplitContainer`(이전
+   타이밍 버그 수정 적용됨)로 조절한 값은 정상적으로 기억되지만, 기본값(220px)이 너무 작아 몇 줄
+   만에 잘려 보였다. 기본값을 270px(약 10줄)로 늘렸다 — 사용자가 한 번 조절하면 그 값이 여전히
+   기억된다(`MappingForm.UnmappedSplit` 키).
+2. **운송장 동명이인 선택창에서 합포장(여러 건에 같은 운송장번호) 처리**: 발주/출고 이력
+   관리창의 "운송장번호 불러오기"에서 동일 수령인이 여럿이면 뜨는
+   `TrackingMatchPickerDialog`가 이제까지는 1건만 고를 수 있었다. 택배사에서 여러 주문을
+   합포장해 한 운송장으로 같이 보낸 경우 같은 수령인의 여러 건에 같은 운송장번호를 한 번에
+   넣어야 하는데 그게 불가능했다. 그리드를 다중선택(`MultiSelect = true`)으로 바꾸고, "선택 건에
+   적용"을 누르면 선택된 모든 건에 같은 운송장번호를 적용하도록 `OutboundHistoryForm.ImportTrackingFile`을
+   고쳤다(`TrackingMatchPickerDialog.Selected` 단일 속성 → `SelectedItems` 목록으로 변경). 1건만
+   선택하면 이전처럼 그 건에만 개별로 적용된다 — 선택은 항상 사용자가 직접 한다.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에
