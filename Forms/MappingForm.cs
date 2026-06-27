@@ -31,6 +31,7 @@ public class MappingForm : Form
     private DataGridView _conditionDetailGrid = new();
     private TextBox _conditionKeyTextBox = new();
     private TextBox _conditionTargetSkuTextBox = new();
+    private Label _conditionPreviewLabel = new();
     private long _selectedConditionRuleId = -1;
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
@@ -283,6 +284,7 @@ public class MappingForm : Form
         menu.Items.Add("1:1 매핑 적용", null, (s, e) => ApplyExactMappingToSelectedUnmapped());
         menu.Items.Add("임시 SKU 등록 후 매핑", null, (s, e) => RegisterTempSkuAndMap());
         menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => AddConditionRuleFromSelectedUnmapped());
+        menu.Items.Add("이 셀 값을 조건부 규칙에 조건으로 추가", null, (s, e) => AddCellAsConditionToRule());
         menu.Items.Add("예외 처리(매핑 제외)", null, (s, e) => ExcludeSelectedUnmapped());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("이 셀 내용을 CSKU 상품명으로 사용", null, (s, e) => UseCurrentCellAsInvoiceDisplayName());
@@ -671,6 +673,61 @@ public class MappingForm : Form
         _ruleTabControl.SelectedTab = _conditionDetailTabPage;
     }
 
+    private static readonly Dictionary<string, StdField> UnmappedGridColumnToStdField = new()
+    {
+        ["ProductName"] = StdField.ProductName,
+        ["OptionName"] = StdField.OptionName,
+        ["Quantity"] = StdField.Quantity,
+    };
+
+    /// <summary>
+    /// 우클릭한 셀(상품명/옵션명/수량)의 값을 조건부 매핑 조건으로 즉시 추가한다. SalesManagerV2의
+    /// "셀 클릭 → 조건 자동 주입" 패턴을 그대로 가져온 것 — "조건부 매핑(상세)" 탭에 이미 편집
+    /// 중인 규칙이 열려 있으면 그 규칙에 조건을 누적해서 추가하고(아직 저장 전, '상세조건 저장'을
+    /// 눌러야 반영), 편집 중인 규칙이 없으면 이 한 조건만으로 새 규칙을 만들어 그 탭으로 이동한다.
+    /// </summary>
+    private void AddCellAsConditionToRule()
+    {
+        if (_unmappedGrid.CurrentCell is null)
+        {
+            MessageBox.Show("조건으로 추가할 셀을 먼저 우클릭하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var columnName = _unmappedGrid.Columns[_unmappedGrid.CurrentCell.ColumnIndex].Name;
+        if (!UnmappedGridColumnToStdField.TryGetValue(columnName, out var field))
+        {
+            MessageBox.Show("이 열은 조건부 매핑 조건으로 사용할 수 없습니다(상품명/옵션명/수량만 가능합니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var value = _unmappedGrid.CurrentCell.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            MessageBox.Show("선택한 셀에 값이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var newDetail = new MappingConditionDetail { HeaderField = field, Operator = ConditionOperator.Contains, TargetValue = value, Logic = ConditionLogic.And };
+
+        if (_selectedConditionRuleId >= 0 && _conditionDetailGrid.DataSource is BindingList<MappingConditionDetail> details)
+        {
+            newDetail.RuleId = _selectedConditionRuleId;
+            details.Add(newDetail);
+            UpdateConditionPreview();
+        }
+        else
+        {
+            var newRuleId = _mappingRepository.AddConditionRuleWithDetails(_unmappedChannelCode, value, string.Empty, [newDetail]);
+            LoadConditionRules(_unmappedChannelCode);
+            SelectConditionRuleById(newRuleId);
+        }
+
+        _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+    }
+
     /// <summary>
     /// 선택한 미매핑 항목(상품명+옵션명 조합)을 매핑 대상에서 제외(배송비/수수료 등)하는
     /// 예외 규칙으로 저장한다.
@@ -784,6 +841,15 @@ public class MappingForm : Form
         summaryPanel.Controls.Add(new Label { Text = "대상 SKU:", AutoSize = true, Padding = new Padding(10, 7, 3, 0) });
         summaryPanel.Controls.Add(_conditionTargetSkuTextBox);
         summaryPanel.Controls.Add(btnSaveSummary);
+        _conditionPreviewLabel = new Label
+        {
+            Text = "예상 매칭 건수: -",
+            AutoSize = true,
+            Padding = new Padding(15, 7, 0, 0),
+            ForeColor = Color.Blue,
+            Font = new Font(Font, FontStyle.Bold),
+        };
+        summaryPanel.Controls.Add(_conditionPreviewLabel);
         summaryPanel.Controls.Add(new Label
         {
             Text = "※ 여기서 추가한 모든 조건은 AND/OR(Logic 열)로 차례대로 결합되어 평가됩니다.",
@@ -830,6 +896,13 @@ public class MappingForm : Form
             Width = 110,
         };
         _conditionDetailGrid.Columns.AddRange(headerFieldColumn, operatorColumn, targetValueColumn, logicColumn);
+        // 콤보 열(항목/조건/논리)을 고치는 즉시(셀에서 벗어나길 기다리지 않고) 미리보기가 갱신되도록
+        // 바로 커밋시킨다. 텍스트 입력(비교할 값)은 CellValueChanged만으로 충분하다(포커스 이동 시 커밋됨).
+        _conditionDetailGrid.CurrentCellDirtyStateChanged += (s, e) =>
+        {
+            if (_conditionDetailGrid.IsCurrentCellDirty) _conditionDetailGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
+        _conditionDetailGrid.CellValueChanged += (s, e) => UpdateConditionPreview();
 
         var detailButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         var btnAddDetail = new Button { Text = "조건 추가", Size = new Size(90, 28) };
@@ -866,6 +939,7 @@ public class MappingForm : Form
             _conditionTargetSkuTextBox.Text = string.Empty;
             _conditionDetailGrid.DataSource = null;
         }
+        UpdateConditionPreview();
     }
 
     private void LoadConditionRules(string channelCode)
@@ -892,6 +966,39 @@ public class MappingForm : Form
         var details = _mappingRepository.GetConditionDetails(rule.Id);
         _conditionDetailGrid.DataSource = new BindingList<MappingConditionDetail>(details);
         SetConditionDetailEditorEnabled(true);
+    }
+
+    /// <summary>
+    /// SalesManagerV2의 "N건 매칭예상" 실시간 미리보기를 가져온 기능. 조건을 추가/수정/삭제할
+    /// 때마다 현재 채널에 로드되어 있는 발주서(_sourceOrders, OFS에서 넘겨받은 것과 같은 인스턴스)에
+    /// 그 조건을 즉시 적용해 몇 건이 매칭되는지 보여준다. 발주서가 로드되어 있지 않으면(예: OFS를
+    /// 거치지 않고 매핑관리창만 단독으로 연 경우) 미리볼 데이터가 없다고 안내한다.
+    /// </summary>
+    private void UpdateConditionPreview()
+    {
+        if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details || details.Count == 0)
+        {
+            _conditionPreviewLabel.Text = "예상 매칭 건수: -";
+            return;
+        }
+
+        var channelCode = _channelComboBox.SelectedValue as string;
+        if (_sourceOrders is null || string.IsNullOrEmpty(channelCode))
+        {
+            _conditionPreviewLabel.Text = "예상 매칭 건수: (발주서를 불러와야 미리볼 수 있습니다)";
+            return;
+        }
+
+        var candidates = _sourceOrders.Where(o => o.ChannelCode == channelCode).ToList();
+        var validDetails = details.Where(d => !string.IsNullOrWhiteSpace(d.TargetValue)).ToList();
+        if (validDetails.Count == 0)
+        {
+            _conditionPreviewLabel.Text = $"예상 매칭 건수: 전체 {candidates.Count}건(조건 없음)";
+            return;
+        }
+
+        var matchCount = candidates.Count(o => ConditionEvaluator.Matches(validDetails, o));
+        _conditionPreviewLabel.Text = $"예상 매칭 건수: {matchCount}건 / 전체 {candidates.Count}건";
     }
 
     private void OnAddConditionRuleClick(object? sender, EventArgs e)
@@ -964,6 +1071,7 @@ public class MappingForm : Form
             TargetValue = string.Empty,
             Logic = ConditionLogic.And,
         });
+        UpdateConditionPreview();
     }
 
     private void OnDeleteConditionDetailClick(object? sender, EventArgs e)
@@ -972,6 +1080,7 @@ public class MappingForm : Form
         if (_conditionDetailGrid.CurrentRow?.DataBoundItem is not MappingConditionDetail detail) return;
 
         details.Remove(detail);
+        UpdateConditionPreview();
     }
 
     private void OnSaveConditionDetailsClick(object? sender, EventArgs e)
