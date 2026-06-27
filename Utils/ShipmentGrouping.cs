@@ -4,20 +4,21 @@ using MiniERP2.Models;
 namespace MiniERP2.Utils;
 
 /// <summary>
-/// 발주 항목이 어느 "묶음(송장 1건 단위)"에 속하는지 계산합니다. 기본값은 주문번호 단위(같은
-/// 주문은 한 송장)이며, 사용자가 OFS 그리드에서 분리배송/합포장을 지정하면
-/// <see cref="OfsOrderItem.ShipmentGroupId"/>에 실제 값이 채워져 이 기본값을 덮어씁니다.
+/// 발주 항목이 어느 "묶음(송장 1건 단위)"에 속하는지 계산합니다. 기본값은 그룹화하지 않음(줄마다
+/// 별도 송장)입니다 — 합포장은 택배사 프로그램이 다운스트림에서 주소 기준으로 자동 처리하므로,
+/// MiniERP2가 주문번호 등을 기준으로 임의로 합칠 필요가 없습니다. 사용자가 OFS 그리드/미리보기에서
+/// 명시적으로 합포장을 지정한 경우에만 <see cref="OfsOrderItem.ShipmentGroupId"/>에 같은 값이
+/// 채워져 그 줄들이 한 송장으로 묶입니다.
 /// </summary>
 public static class ShipmentGrouping
 {
     public static string GetEffectiveGroupId(OfsOrderItem item)
     {
         if (!string.IsNullOrWhiteSpace(item.ShipmentGroupId)) return item.ShipmentGroupId;
-        if (!string.IsNullOrWhiteSpace(item.OrderNo)) return item.OrderNo!;
 
-        // 주문번호조차 없는 경우(수동 추가 등) 그 줄 단독으로 취급한다. 내보내기 1회성 그룹 키일
-        // 뿐이라 영속성은 필요 없지만, 같은 인스턴스에 대해서는 항상 같은 값을 반환해야 한다
-        // (객체 식별 해시는 GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다).
+        // 명시적으로 합포장을 지정하지 않았으면 항상 그 줄 단독으로 취급한다(기본값 = 그룹화 없음).
+        // 내보내기 1회성 그룹 키일 뿐이라 영속성은 필요 없지만, 같은 인스턴스에 대해서는 항상 같은
+        // 값을 반환해야 한다(객체 식별 해시는 GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다).
         return $"__row_{RuntimeHelpers.GetHashCode(item)}";
     }
 

@@ -570,7 +570,6 @@ public class OfsForm : Form
             }
             // 변경된 상태를 그리드에 즉시 반영하기 위해 해당 행을 무효화합니다.
             _ordersGrid.InvalidateRow(e.RowIndex);
-            RefreshExportPreview();
         }
         // '운송장번호' 열이 수정되면 같은 묶음(송장)의 다른 줄에도 같은 운송장번호를 복사한다
         // (실제로는 한 패키지에 운송장 1개이므로, 묶음 안의 모든 줄이 같은 운송장번호를 가져야 함).
@@ -582,8 +581,10 @@ public class OfsForm : Form
                 sibling.TrackingNo = item.TrackingNo;
             }
             _ordersGrid.Invalidate();
-            RefreshExportPreview();
         }
+
+        // 어떤 열이 바뀌었든(상품명/옵션명/수량 등 포함) 출력 미리보기가 최신 상태를 보여주게 한다.
+        RefreshExportPreview();
     }
 
     /// <summary>
@@ -791,9 +792,9 @@ public class OfsForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("합포장(선택한 묶음들을 하나로 합치기)", null, OnMergePreviewGroupsClick);
-        menu.Items.Add("묶음 해제(주문번호 단위로 되돌리기)", null, OnResetPreviewGroupsClick);
+        menu.Items.Add("분리배송 처리(묶음 풀기)", null, OnResetPreviewGroupsClick);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("※ 특정 줄만 분리배송하려면 위 상세 목록에서 줄을 선택해 우클릭하세요.") { Enabled = false });
+        menu.Items.Add("이 줄 복사(상품명 공란 — 송장에 표시할 메시지용)", null, OnDuplicatePreviewRowClick);
         _previewGrid.ContextMenuStrip = menu;
     }
 
@@ -838,6 +839,53 @@ public class OfsForm : Form
         }
         _ordersGrid.Invalidate();
         RefreshExportPreview();
+    }
+
+    /// <summary>
+    /// 선택한 묶음에 새 줄을 하나 복사해서 추가한다. 상품명만 공란으로 두어, 운영자가 상품명 칸에
+    /// 자유 텍스트(CS 메시지, 안내문구 등)를 입력하면 그게 그대로 송장의 품목란에 한 줄로 같이
+    /// 나가게 하기 위함이다(택배사 양식엔 별도 메모란이 없는 경우가 많아서 이렇게 끼워 넣는다).
+    /// 새 줄은 원본과 같은 묶음으로 묶여 같은 송장에 함께 출력된다.
+    /// </summary>
+    private void OnDuplicatePreviewRowClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedPreviewRows();
+        if (selected.Count != 1)
+        {
+            MessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var template = selected[0].Items[0];
+        // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
+        // 송장으로 묶이게 한다(원본이 아직 기본값=그룹화 없음 상태였다면 지금 명시값으로 고정).
+        var groupId = ShipmentGrouping.GetEffectiveGroupId(template);
+        template.ShipmentGroupId = groupId;
+
+        var duplicate = new OfsOrderItem
+        {
+            ChannelCode = template.ChannelCode,
+            OrderNo = template.OrderNo,
+            ProductName = string.Empty, // 상품명만 공란 — 여기에 송장에 표시할 메시지를 직접 입력한다.
+            OptionName = template.OptionName,
+            Quantity = template.Quantity,
+            Recipient = template.Recipient,
+            Phone = template.Phone,
+            Address = template.Address,
+            DeliveryMessage = template.DeliveryMessage,
+            MappedSku = template.MappedSku,
+            Status = template.Status,
+            TrackingNo = template.TrackingNo,
+            ShipmentGroupId = groupId,
+        };
+
+        _orders.Add(duplicate);
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+
+        MessageBox.Show(
+            "줄을 복사했습니다. 위 상세 목록 맨 아래 새 줄의 '상품명' 칸에 송장에 표시할 메시지를 입력하세요.",
+            "복사 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     /// <summary>

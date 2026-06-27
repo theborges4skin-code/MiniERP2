@@ -85,8 +85,10 @@ public class CourierExporterTests
     }
 
     [TestMethod]
-    public async Task ExportAsync_SameOrderNo_CombinesIntoOneRowWithJoinedItemLines()
+    public async Task ExportAsync_SameOrderNoWithoutExplicitGroup_StaysAsTwoSeparateRows()
     {
+        // 합포장은 택배사 프로그램이 다운스트림에서 자동으로 처리하므로, MiniERP2는 같은 주문번호라도
+        // 명시적으로 합포장을 지정하지 않으면 임의로 합치지 않는다(기본값 = 줄마다 별도 송장).
         var courier = new CourierMaster
         {
             CourierName = "테스트택배",
@@ -107,8 +109,9 @@ public class CourierExporterTests
 
         Assert.IsEmpty(overflow);
         Assert.AreEqual("홍길동", sheet.Cells[2, 1].Value);
-        Assert.AreEqual("상품A 2개\n상품B 1개", sheet.Cells[2, 2].Value);
-        Assert.IsNull(sheet.Cells[3, 1].Value); // 한 주문이 합쳐져 2번째 데이터 행은 없어야 함
+        Assert.AreEqual("상품A 2개", sheet.Cells[2, 2].Value);
+        Assert.AreEqual("홍길동", sheet.Cells[3, 1].Value);
+        Assert.AreEqual("상품B 1개", sheet.Cells[3, 2].Value);
     }
 
     [TestMethod]
@@ -171,8 +174,10 @@ public class CourierExporterTests
             CourierName = "테스트택배",
             HeaderMappingJson = """{ "품목": "ProductName" }"""
         };
+        // 명시적으로 합포장(같은 ShipmentGroupId)을 지정한 경우에만 한 묶음으로 모여, 5줄짜리
+        // 묶음이 만들어질 수 있다(기본값으로는 합쳐지지 않으므로 일부러 합포장 상태를 만든다).
         var orders = Enumerable.Range(1, 5)
-            .Select(i => new OfsOrderItem { OrderNo = "ORDER-1", ProductName = $"상품{i}", Quantity = 1 })
+            .Select(i => new OfsOrderItem { OrderNo = "ORDER-1", ProductName = $"상품{i}", Quantity = 1, ShipmentGroupId = "BOX-1" })
             .ToList();
 
         var exporter = new CourierExporter();
