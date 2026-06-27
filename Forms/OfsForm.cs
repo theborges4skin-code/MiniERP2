@@ -93,7 +93,10 @@ public class OfsForm : Form
             // Mapped/Transformed Data
             new DataGridViewTextBoxColumn { HeaderText = "매핑된 SKU", Name = "MappedSku", DataPropertyName = "MappedSku", Width = 150 },
             new DataGridViewTextBoxColumn { HeaderText = "처리 상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true },
-            new DataGridViewTextBoxColumn { HeaderText = "운송장번호", Name = "TrackingNo", Width = 150 }
+            new DataGridViewTextBoxColumn { HeaderText = "운송장번호", Name = "TrackingNo", Width = 150 },
+            // 실제 데이터(ShipmentGroupId)는 보통 비어있고(주문번호 단위가 기본값), 화면에는 몇 줄이
+            // 묶여있는지만 보여주면 되므로 DataPropertyName 없이 OnOrdersGridCellFormatting에서 채운다.
+            new DataGridViewTextBoxColumn { HeaderText = "묶음", Name = "ShipmentGroup", Width = 90, ReadOnly = true }
         );
 
         // 데이터 바인딩
@@ -104,6 +107,10 @@ public class OfsForm : Form
 
         // 셀 값 변경 시 연관 데이터 자동 업데이트를 위한 이벤트 핸들러 등록
         _ordersGrid.CellValueChanged += OnOrdersGridCellValueChanged;
+
+        // "묶음" 열 표시 + 분리배송/합포장 컨텍스트 메뉴
+        _ordersGrid.CellFormatting += OnOrdersGridCellFormatting;
+        SetupShipmentGroupingContextMenu();
 
         // 3. Status Bar
         _statusStrip = new StatusStrip { Dock = DockStyle.Bottom };
@@ -344,8 +351,17 @@ public class OfsForm : Form
         try
         {
             var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
-            await _courierExporter.ExportAsync(ordersToExport, courier, filePath, channelConfigsByCode);
+            var overflowGroups = await _courierExporter.ExportAsync(ordersToExport, courier, filePath, channelConfigsByCode);
             _statusLabel.Text = $"{ordersToExport.Count}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
+
+            if (overflowGroups.Count > 0)
+            {
+                MessageBox.Show(
+                    $"다음 묶음은 품목이 4줄을 초과해 송장에 다 표시되지 못할 수 있습니다:\n{string.Join(", ", overflowGroups)}\n\n" +
+                    "그리드에서 일부 줄을 합쳐 4줄 이하로 줄여주세요. (내보내기는 그대로 완료되었습니다.)",
+                    "품목 줄 수 초과 안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
@@ -537,5 +553,115 @@ public class OfsForm : Form
             // 변경된 상태를 그리드에 즉시 반영하기 위해 해당 행을 무효화합니다.
             _ordersGrid.InvalidateRow(e.RowIndex);
         }
+        // '운송장번호' 열이 수정되면 같은 묶음(송장)의 다른 줄에도 같은 운송장번호를 복사한다
+        // (실제로는 한 패키지에 운송장 1개이므로, 묶음 안의 모든 줄이 같은 운송장번호를 가져야 함).
+        else if (changedColumnName == "TrackingNo")
+        {
+            var groupId = ShipmentGrouping.GetEffectiveGroupId(item);
+            foreach (var sibling in _orders.Where(o => o != item && ShipmentGrouping.GetEffectiveGroupId(o) == groupId))
+            {
+                sibling.TrackingNo = item.TrackingNo;
+            }
+            _ordersGrid.Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// "묶음" 열에 그 줄이 속한 묶음의 줄 수를 보여준다(1줄이면 빈칸, 2줄 이상이면 "N줄 묶음").
+    /// 묶음 키는 화면에 노출하지 않고 그 묶음에 몇 줄이 모여있는지만 보여주면 충분하다.
+    /// </summary>
+    private void OnOrdersGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (_ordersGrid.Columns[e.ColumnIndex].Name != "ShipmentGroup") return;
+        if (e.RowIndex < 0 || e.RowIndex >= _ordersGrid.Rows.Count) return;
+        if (_ordersGrid.Rows[e.RowIndex].DataBoundItem is not OfsOrderItem item) return;
+
+        var groupId = ShipmentGrouping.GetEffectiveGroupId(item);
+        var groupSize = _orders.Count(o => ShipmentGrouping.GetEffectiveGroupId(o) == groupId);
+
+        e.Value = groupSize > 1 ? $"{groupSize}줄 묶음" : string.Empty;
+        e.FormattingApplied = true;
+    }
+
+    /// <summary>
+    /// 분리배송(한 주문을 여러 송장으로 나누기)/합포장(여러 줄을 한 송장으로 합치기)/묶음 해제를
+    /// 그리드 우클릭 메뉴로 제공한다. 기존 ExcelLikeDataGridView의 복사/붙여넣기 메뉴는 그대로 두고
+    /// 구분선 아래에 추가한다.
+    /// </summary>
+    private void SetupShipmentGroupingContextMenu()
+    {
+        var menu = _ordersGrid.ContextMenuStrip!;
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("합포장으로 묶기", null, OnMergeIntoOneShipmentClick);
+        menu.Items.Add("분리배송으로 분리", null, OnSplitIntoNewShipmentClick);
+        menu.Items.Add("묶음 해제", null, OnResetShipmentGroupClick);
+    }
+
+    private List<OfsOrderItem> GetSelectedOrderItems()
+    {
+        return _ordersGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow)
+            .Select(r => r.DataBoundItem)
+            .OfType<OfsOrderItem>()
+            .ToList();
+    }
+
+    private void OnMergeIntoOneShipmentClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count < 2)
+        {
+            MessageBox.Show("합포장으로 묶을 줄을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (selected.Select(o => o.Recipient).Distinct().Count() > 1)
+        {
+            var confirm = MessageBox.Show(
+                "선택한 줄들의 수취인이 서로 다릅니다. 그래도 한 송장으로 합포장하시겠습니까?",
+                "수취인 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+        }
+
+        var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
+        foreach (var item in selected)
+        {
+            item.ShipmentGroupId = groupId;
+        }
+        _ordersGrid.Invalidate();
+    }
+
+    private void OnSplitIntoNewShipmentClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("분리배송으로 분리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var baseId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
+        var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+        foreach (var item in selected)
+        {
+            item.ShipmentGroupId = newGroupId;
+        }
+        _ordersGrid.Invalidate();
+    }
+
+    private void OnResetShipmentGroupClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        foreach (var item in selected)
+        {
+            item.ShipmentGroupId = null;
+        }
+        _ordersGrid.Invalidate();
     }
 }

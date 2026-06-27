@@ -83,4 +83,129 @@ public class CourierExporterTests
         Assert.AreEqual("홍길동", sheet.Cells[2, 1].Value); // 받는분: 고정값 없음 -> 주문 데이터 그대로
         Assert.AreEqual("DEPOT-01", sheet.Cells[2, 2].Value); // 도착지코드: 채널별 고정값 적용
     }
+
+    [TestMethod]
+    public async Task ExportAsync_SameOrderNo_CombinesIntoOneRowWithJoinedItemLines()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "받는분": "Recipient", "품목": "ProductName" }"""
+        };
+        var orders = new List<OfsOrderItem>
+        {
+            new() { OrderNo = "ORDER-1", Recipient = "홍길동", ProductName = "상품A", Quantity = 2 },
+            new() { OrderNo = "ORDER-1", Recipient = "홍길동", ProductName = "상품B", Quantity = 1 },
+        };
+
+        var exporter = new CourierExporter();
+        var overflow = await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.IsEmpty(overflow);
+        Assert.AreEqual("홍길동", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("상품A 2개\n상품B 1개", sheet.Cells[2, 2].Value);
+        Assert.IsNull(sheet.Cells[3, 1].Value); // 한 주문이 합쳐져 2번째 데이터 행은 없어야 함
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_DifferentOrderNoSameShipmentGroupId_MergesIntoOneRow()
+    {
+        // 합포장: 서로 다른 주문이라도 같은 ShipmentGroupId를 주면 한 송장으로 합쳐져야 한다.
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "품목": "ProductName" }"""
+        };
+        var orders = new List<OfsOrderItem>
+        {
+            new() { OrderNo = "ORDER-1", ProductName = "상품A", Quantity = 1, ShipmentGroupId = "BOX-1" },
+            new() { OrderNo = "ORDER-2", ProductName = "상품B", Quantity = 1, ShipmentGroupId = "BOX-1" },
+        };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.AreEqual("상품A 1개\n상품B 1개", sheet.Cells[2, 1].Value);
+        Assert.IsNull(sheet.Cells[3, 1].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_SameOrderNoDifferentShipmentGroupId_SplitsIntoTwoRows()
+    {
+        // 분리배송: 같은 주문이라도 ShipmentGroupId가 다르면 별도 송장(행)으로 나가야 한다.
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "품목": "ProductName" }"""
+        };
+        var orders = new List<OfsOrderItem>
+        {
+            new() { OrderNo = "ORDER-1", ProductName = "상품A", Quantity = 1, ShipmentGroupId = "ORDER-1-분리1" },
+            new() { OrderNo = "ORDER-1", ProductName = "상품B", Quantity = 1, ShipmentGroupId = "ORDER-1-분리2" },
+        };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.AreEqual("상품A 1개", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("상품B 1개", sheet.Cells[3, 1].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_GroupWithMoreThanFourLines_ReturnsOverflowWarningButStillExports()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "품목": "ProductName" }"""
+        };
+        var orders = Enumerable.Range(1, 5)
+            .Select(i => new OfsOrderItem { OrderNo = "ORDER-1", ProductName = $"상품{i}", Quantity = 1 })
+            .ToList();
+
+        var exporter = new CourierExporter();
+        var overflow = await exporter.ExportAsync(orders, courier, _filePath);
+
+        Assert.HasCount(1, overflow);
+        Assert.AreEqual("ORDER-1", overflow[0]);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+        Assert.AreEqual("상품1 1개\n상품2 1개\n상품3 1개\n상품4 1개\n상품5 1개", sheet.Cells[2, 1].Value);
+    }
+
+    [TestMethod]
+    public async Task ExportAsync_UsesInvoiceLabelOverProductNameWhenSet()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "테스트택배",
+            HeaderMappingJson = """{ "품목": "InvoiceLabel" }"""
+        };
+        var orders = new List<OfsOrderItem>
+        {
+            new() { OrderNo = "ORDER-1", ProductName = "원본상품명", InvoiceLabel = "샴푸 500ml 2개" },
+        };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+        Assert.AreEqual("샴푸 500ml 2개", sheet.Cells[2, 1].Value);
+    }
 }
