@@ -505,6 +505,69 @@ UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같�
 `ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
 `CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
 
+## 광고 매핑 신설 — SalesManagerV2 광고매핑(ad_*.py) 인터페이스 포팅 + 레거시 JSON 이관
+
+매핑 UI 패턴 포팅(위 1·2단계)에 이어, 사용자가 같은 레거시 폴더의 광고매핑 파일들
+(`ad_engine.py`/`ad_manager.py`/`ad_popups.py` + `config/ad_*.json`)을 분석해 MiniERP2에
+**새 기능으로** 들여와달라고 요청. 일반 매핑과 다른 점: 마스터SKU/CSKU가 아니라 **상품그룹
+단위**로만 분류하면 되고(1:1 매핑 단계 없음), 채널마다 광고 리포트 헤더 구성이 제각각이라
+"실제 파일로 테스트하며 설정할 예정"이라는 전제로 인터페이스 골격을 만드는 것이 목표.
+
+레거시 우선순위 확인(`ad_engine.py` `apply_mapping`): **예외(행 제외) > 임시(정확 키 일치) >
+조건부** — 일반 매핑의 "예외>1:1>임시>조건부"에서 1:1 단계만 빠진 것과 동일. MainHub에
+"광고 매핑" 버튼 신설, `Forms/AdMappingForm.cs`가 채널 콤보 + 5개 탭으로 구성:
+
+1. **광고비 데이터**: 광고비 엑셀을 불러와 매핑 결과(상품그룹/매핑타입/상태) + 합계 광고비를
+   보여준다. 우클릭으로 선택 행을 임시매핑/조건부매핑/예외처리로 즉시 등록 가능.
+2. **임시 매핑**: Key(상품명_옵션_상품번호) → 대상 상품그룹 단순 그리드.
+3. **조건부 매핑(상세)**: 일반 매핑과 동일한 구조(규칙 목록 + 다중 AND/OR 상세조건 편집기) +
+   **실시간 매칭예상 미리보기**(1단계에서 만든 패턴을 그대로 재사용, 현재 불러온 광고비 데이터
+   기준). 연산자는 일반 매핑보다 많다(`AdConditionOperator`: Contains/NotContains/Equals/
+   NotEquals/GreaterThan/LessThan/GreaterOrEqual/LessOrEqual/IsZero) — 레거시가 광고비 수치
+   비교/0원 제외까지 지원했기 때문.
+4. **예외 처리**: 합계/소계 등 계산 제외 행을 "헤더=값" 필터로 지정(레거시 ad_exception_rules.json
+   과 동일한 형태 — 일반 매핑의 상품 단위 예외처리와 달리 행 단위 필터).
+5. **필드 매핑**: 채널별로 광고비 파일의 어느 시트/헤더행/열에 각 표준 항목이 있는지 지정
+   (`ChannelConfig.AdFieldMappings`, 발주서/정산서 매핑과 같은 `FieldMapping` 모델 재사용).
+   레거시의 "여러 헤더명/여러 시트 fallback(sources)" 기능은 1단계 범위에서 제외 — 채널마다
+   직접 테스트하며 설정하는 것을 전제로 단순화.
+
+**새 DB 테이블**(`AdRuleTemp`/`AdRuleCondition`/`AdRuleConditionDetail`/`AdRuleException`) +
+`Database/AdMappingRepository.cs`, 새 매핑 엔진 `Mapping/AdMappingEngine.cs` +
+`Mapping/AdConditionEvaluator.cs`(일반 매핑의 ConditionEvaluator와 같은 AND/OR 결합 규칙,
+비교 대상만 AdSpendItem/AdStdField), 새 로더 `DataLoaders/AdSpendLoader.cs`(OrderLoader와 같은
+구조, 광고비 숫자 전처리 — 쉼표/통화표기/음수괄호 제거 — 포함).
+
+### 레거시 JSON 데이터 이관 — `Database/AdLegacyMigrationService.cs`(신규)
+
+광고 매핑창에 "SalesManagerV2 데이터 가져오기" 버튼을 추가해, 폴더 선택창으로 레거시
+`config/` 폴더를 고르면 `ad_condition_rules.json`/`ad_exception_rules.json`을 현재 선택된
+채널로 이관하고, `ad_channels_config.json`의 채널별 헤더 매핑은 **이름이 정확히 일치하는
+기존 채널에만** "필드 매핑" 탭 설정으로 채워준다(없는 채널명은 자동 생성하지 않고 결과
+안내에만 남김 — 채널 목록을 임의로 늘리지 않기 위한 안전장치).
+
+- **헤더 번역의 한계**: 레거시 조건부 규칙(`ad_condition_rules.json`)의 조건은 원본 헤더
+  텍스트(예: "광고집행 상품명")를 그대로 들고 있어 표준 필드(AdStdField)로 바로 매칭되지
+  않는다. `ad_channels_config.json`의 모든 채널 헤더 매핑을 모아 "원본 헤더 → AdStdField"
+  역방향 사전을 만들어 최대한 번역하고, 사전에 없는 헤더는 ProductName으로 잠정 배정한 뒤
+  결과 안내에 모아 보여준다(조건부 매핑(상세) 탭에서 드롭다운만 바로잡으면 됨 — 완전 자동화는
+  레거시 헤더가 표준화되어 있지 않아 애초에 불가능).
+- 예외 규칙(`ad_exception_rules.json`)의 헤더는 이미 표준 필드명(`AD_PRODUCT_ID` 등)이라
+  애매함 없이 직접 매칭된다.
+- 레거시 조건부/예외 규칙 파일엔 채널코드가 없는 **전체 공용 규칙**이라, 이관 시 사용자가
+  고른 단일 채널로 전부 가져온다(다른 채널에도 필요하면 추후 데이터 관리창 등으로 복제).
+
+**실제 이관은 사용자가 직접 광고매핑창에서 실행해야 함** — 라이브 DB에 실제 채널/규칙
+데이터를 추가하는 동작이라 이 세션에서 자동으로 실행하지 않았다(폴더 경로:
+`C:\00_CompanyWorks\회사폴더\02_견적,거래명세_보냄\온라인 매출내역\SalesManager_V2\config`).
+
+테스트: `AdConditionEvaluatorTests`/`AdMappingRepositoryTests`/`AdMappingEngineTests`
+(우선순위: 예외>임시>조건부 검증 포함)/`AdSpendLoaderTests`/`AdLegacyMigrationServiceTests`
+(실제 레거시 JSON 형태를 픽스처로 사용, 헤더 번역 성공/실패 양쪥 경로, 채널명 불일치 케이스
+포함) 신규 22건 추가. 169/169 통과. WinForms UI(`AdMappingForm`)는 자동 테스트가 어려워
+수동 확인 필요 — 실제 광고비 파일로 "필드 매핑" 탭 설정 후 불러오기, 조건부 매핑 미리보기,
+레거시 이관까지 사용자가 직접 확인해주길 권장.
+
 ## SalesManagerV2(레거시 Python) 매핑 UI 패턴 도입 — 2단계: 전체 규칙 관리 탭
 
 1단계(실시간 미리보기/셀클릭 자동주입)에 이어, 매핑관리창에 "전체 규칙 관리" 탭을 신설했다

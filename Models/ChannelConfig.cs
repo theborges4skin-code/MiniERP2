@@ -39,6 +39,11 @@ public class ChannelConfig
     [Browsable(false)]
     public Dictionary<StdField, FieldMapping> SettlementFieldMappings { get; set; } = new();
 
+    // 광고 매핑창("필드 매핑" 탭)에서 편집한다. 광고비 리포트는 발주서/정산서와 헤더 구성이 달라
+    // 별도 키(AdStdField)로 둔다.
+    [Browsable(false)]
+    public Dictionary<AdStdField, FieldMapping> AdFieldMappings { get; set; } = new();
+
     [Category("필드 매핑")]
     [DisplayName("보조 소스 설정 (쿠팡 그로스 등)")]
     [Description("메인 시트 외에 추가 비용(배송비, 입출고비 등)이 있는 보조 시트를 연결하는 설정입니다.")]

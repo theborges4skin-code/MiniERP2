@@ -151,6 +151,37 @@ public static class DbSchema
                 RowCount INTEGER NOT NULL,
                 Headers TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS AdRuleTemp (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                Key TEXT NOT NULL,
+                TargetGroup TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AdRuleCondition (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                Key TEXT NOT NULL,
+                TargetGroup TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AdRuleConditionDetail (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RuleId INTEGER NOT NULL,
+                HeaderField TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetValue TEXT NOT NULL,
+                Logic TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AdRuleException (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                HeaderField TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetValue TEXT NOT NULL
+            );
             """;
         command.ExecuteNonQuery();
 

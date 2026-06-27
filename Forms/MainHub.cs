@@ -90,6 +90,10 @@ public class MainHub : Form
         dataManagementButton.Enabled = true;
         sidebarPanel.Controls.Add(dataManagementButton);
 
+        var adMappingButton = CreateMenuButton("광고 매핑", (s, e) => { FormManager.Show<AdMappingForm>(); });
+        adMappingButton.Enabled = true;
+        sidebarPanel.Controls.Add(adMappingButton);
+
         return sidebarPanel;
     }
 
