@@ -18,4 +18,10 @@ public class AdSpendItem
     public string? MappedGroup { get; set; }
     public string? MatchType { get; set; }
     public string? Status { get; set; }
+
+    /// <summary>
+    /// 광고비 파일 원본 행의 (헤더명 -> 값) 전체. SalesManagerV2의 "광고매핑상세" 시트(원본 열 +
+    /// 매핑결과 열)를 그대로 이식하기 위해 AdSpendLoader가 채워준다.
+    /// </summary>
+    public Dictionary<string, string>? RawValues { get; set; }
 }

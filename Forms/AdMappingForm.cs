@@ -196,6 +196,10 @@ public class AdMappingForm : Form
         btnLoad.Click += OnLoadAdFileClick;
         toolStrip.Controls.Add(btnLoad);
 
+        var btnExport = new Button { Text = "분석결과 내보내기", Size = new Size(120, 30) };
+        btnExport.Click += OnExportAdResultClick;
+        toolStrip.Controls.Add(btnExport);
+
         _adDataGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -298,6 +302,101 @@ public class AdMappingForm : Form
         var excluded = _loadedAdItems.Count(i => i.MatchType == "예외처리");
         var totalCost = _loadedAdItems.Where(i => i.MatchType != "예외처리").Sum(i => i.Cost);
         _adSummaryLabel.Text = $"총 {_loadedAdItems.Count}건 | 매핑 {mapped}건 | 예외 {excluded}건 | 합계 광고비 {totalCost:N0}원";
+    }
+
+    /// <summary>
+    /// SalesManagerV2(ad_engine.py의 save_results)가 만들던 광고분석 결과 엑셀을 그대로 이식한다.
+    /// 시트 구성/열 이름/순서를 동일하게 맞춤: "광고매핑상세"(원본 열 전체 + 판매채널 + 표준화된
+    /// AD_* 열 + 매핑결과) / "그룹별_광고비"(판매채널/MAPPED_GROUP/AD_COST, 매핑된 행만 합산).
+    /// </summary>
+    private void OnExportAdResultClick(object? sender, EventArgs e)
+    {
+        if (_loadedAdItems.Count == 0)
+        {
+            MessageBox.Show("내보낼 광고비 분석 결과가 없습니다. 먼저 광고비 파일을 불러오세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var channelName = (_channelComboBox.SelectedItem as SalesChannel)?.ChannelName ?? "채널";
+        using var sfd = new SaveFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            FileName = $"{channelName}_광고분석_{DateTime.Now:yyMM}.xlsx",
+            InitialDirectory = _settingsService.GetLastFolder("AdMappingExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+        var filePath = sfd.FileName;
+        _settingsService.SetLastFolder("AdMappingExport", Path.GetDirectoryName(filePath)!);
+
+        try
+        {
+            ExcelLicense.Ensure();
+            using var package = new ExcelPackage();
+
+            WriteAdDetailSheet(package.Workbook.Worksheets.Add("광고매핑상세"), channelName);
+            WriteAdGroupSummarySheet(package.Workbook.Worksheets.Add("그룹별_광고비"), channelName);
+
+            package.SaveAs(new FileInfo(filePath));
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void WriteAdDetailSheet(ExcelWorksheet sheet, string channelName)
+    {
+        var rawHeaders = _loadedAdItems.Where(i => i.RawValues is { Count: > 0 }).SelectMany(i => i.RawValues!.Keys).Distinct().ToList();
+        string[] stdHeaders = ["AD_PRODUCT_NAME", "AD_PRODUCT_ID", "AD_OPTION", "AD_COST", "AD_EXTRA1", "AD_EXTRA2", "MAPPED_GROUP", "MATCH_TYPE", "MAPPING_STATUS"];
+        var headers = new List<string> { "판매채널" };
+        headers.AddRange(rawHeaders);
+        headers.AddRange(stdHeaders);
+
+        for (int i = 0; i < headers.Count; i++) sheet.Cells[1, i + 1].Value = headers[i];
+
+        int row = 2;
+        foreach (var item in _loadedAdItems)
+        {
+            int col = 1;
+            sheet.Cells[row, col++].Value = channelName;
+            foreach (var header in rawHeaders) sheet.Cells[row, col++].Value = item.RawValues?.GetValueOrDefault(header, string.Empty);
+            sheet.Cells[row, col++].Value = item.ProductName;
+            sheet.Cells[row, col++].Value = item.ProductId;
+            sheet.Cells[row, col++].Value = item.OptionName;
+            sheet.Cells[row, col++].Value = item.Cost;
+            sheet.Cells[row, col++].Value = item.Extra1;
+            sheet.Cells[row, col++].Value = item.Extra2;
+            sheet.Cells[row, col++].Value = item.MappedGroup;
+            sheet.Cells[row, col++].Value = item.MatchType;
+            sheet.Cells[row, col++].Value = string.IsNullOrEmpty(item.MappedGroup) ? "X" : "O";
+            row++;
+        }
+        sheet.Cells.AutoFitColumns();
+    }
+
+    private void WriteAdGroupSummarySheet(ExcelWorksheet sheet, string channelName)
+    {
+        string[] headers = ["판매채널", "MAPPED_GROUP", "AD_COST"];
+        for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
+
+        // 레거시와 동일하게, 매핑된(MAPPING_STATUS == 'O') 행만 그룹별로 합산한다.
+        var groups = _loadedAdItems
+            .Where(i => !string.IsNullOrEmpty(i.MappedGroup))
+            .GroupBy(i => i.MappedGroup!)
+            .Select(g => new { Group = g.Key, Cost = g.Sum(i => i.Cost) })
+            .ToList();
+
+        int row = 2;
+        foreach (var g in groups)
+        {
+            sheet.Cells[row, 1].Value = channelName;
+            sheet.Cells[row, 2].Value = g.Group;
+            sheet.Cells[row, 3].Value = g.Cost;
+            row++;
+        }
+        sheet.Cells.AutoFitColumns();
     }
 
     private void OnAddTempRuleFromSelectedAdItem()

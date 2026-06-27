@@ -80,6 +80,9 @@ public class AdSpendLoader
                     Cost = ParseCost(costText),
                     Extra1 = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, AdStdField.Extra1),
                     Extra2 = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, AdStdField.Extra2),
+                    RawValues = headerToIndexMap.ToDictionary(
+                        kv => kv.Key,
+                        kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
                 };
 
                 if (string.IsNullOrWhiteSpace(item.ProductName) && string.IsNullOrWhiteSpace(item.ProductId)) continue;

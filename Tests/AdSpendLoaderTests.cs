@@ -70,5 +70,11 @@ public class AdSpendLoaderTests
         Assert.AreEqual(1234m, items[0].Cost);
         Assert.AreEqual("14.면도", items[0].MappedGroup);
         Assert.AreEqual("조건부", items[0].MatchType);
+
+        // "광고매핑상세" 내보내기가 원본 열을 그대로 실어야 하므로, 표준필드로 매핑되지 않은
+        // "캠페인" 열도 RawValues에 남아있어야 한다.
+        Assert.IsNotNull(items[0].RawValues);
+        Assert.AreEqual("전기면도기", items[0].RawValues!["상품명"]);
+        Assert.AreEqual("CAMPAIGN-1", items[0].RawValues!["캠페인"]);
     }
 }
