@@ -387,7 +387,7 @@ public class MasterSkuForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"엑셀 내보내기 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"엑셀 내보내기 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

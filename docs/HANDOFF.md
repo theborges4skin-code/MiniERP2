@@ -354,6 +354,21 @@ UpdateDetail, DeleteByIds, GetHistory(전체 채널) 케이스 추가, 구식 Bu
 
 테스트 116/116 통과.
 
+### 엑셀 내보내기 "파일을 내보내는 중 오류가 발생했습니다" — 원인은 파일을 엑셀에서 이미 열어둔 상태
+
+발주/출고 이력 관리창에서 "선택 건 택배사 양식 출력"을 했을 때 오류가 났다고 보고됨. 확인해보니
+저장하려던 엑셀 파일을 이미 엑셀 프로그램에서 열어둔 상태였다 — Windows 파일 공유 위반
+(ERROR_SHARING_VIOLATION)으로 다른 모든 엑셀 저장 코드(`CourierExporter`, `OfsForm`,
+`SettlementForm`, `CSkuForm`, `MasterSkuForm`)에서도 똑같이 날 수 있는 문제였는데, 지금까지는
+`ex.Message`(영문 IO 예외 원문)를 그대로 보여줘서 사용자가 원인을 알기 어려웠다.
+
+`Utils/ExportHelper.cs`에 `DescribeSaveError(Exception ex)`를 추가했다 — 예외 체인(InnerException
+포함)에서 Win32 HResult가 공유 위반(0x80070020)/잠금 위반(0x80070021)인 `IOException`을 찾으면
+"파일이 이미 다른 프로그램(엑셀 등)에서 열려 있어 저장할 수 없습니다. 파일을 닫고 다시
+시도하세요."로 바꿔 보여주고, 그 외 예외는 원래 메시지를 그대로 보여준다. 위 5개 파일의 엑셀
+저장 관련 catch 블록을 모두 이 헬퍼를 쓰도록 바꿨다. 테스트
+`Tests/ExportHelperTests.cs`(HResult를 리플렉션으로 주입해 시뮬레이션) 추가. 119/119 통과.
+
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
 사용자가 "채널 안에서 같은 마스터SKU도 옵션별로 CSKU를 구분해야 한다"고 요청해, CSKU(채널별 SKU)에

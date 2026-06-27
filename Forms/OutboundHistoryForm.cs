@@ -246,7 +246,7 @@ public class OutboundHistoryForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ex.Message}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _statusLabel.Text = "내보내기 오류 발생";
         }
         finally
