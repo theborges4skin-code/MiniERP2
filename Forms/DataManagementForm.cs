@@ -1,4 +1,5 @@
 using System.Data;
+using MiniERP2.Config;
 using MiniERP2.DataManagement;
 using MiniERP2.Database;
 using MiniERP2.Models;
@@ -16,10 +17,15 @@ public class DataManagementForm : Form
 {
     private readonly DbBackupService _backupService = new();
     private readonly ExportLogRepository _exportLogRepository = new();
+    private readonly LegacyMigrationService _legacyMigrationService = new();
+    private readonly SalesChannelLegacyMigrationService _channelLegacyMigrationService = new();
+    private readonly AdLegacyMigrationService _adLegacyMigrationService = new();
+    private readonly SalesChannelRepository _salesChannelRepository = new();
 
     private readonly List<TableTabContext> _tableTabs = [];
     private DataGridView _backupGrid = new();
     private DataGridView _exportLogGrid = new();
+    private ComboBox _adImportChannelCombo = new();
     private Label _statusLabel = new();
 
     public DataManagementForm()
@@ -56,6 +62,7 @@ public class DataManagementForm : Form
         tabControl.TabPages.Add(CreateTableTab(new ConditionalMappingManagedTable()));
         tabControl.TabPages.Add(CreateBackupTab());
         tabControl.TabPages.Add(CreateExportLogTab());
+        tabControl.TabPages.Add(CreateLegacyImportTab());
 
         _statusLabel = new Label { Dock = DockStyle.Fill, Text = "준비됨.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
@@ -443,5 +450,211 @@ public class DataManagementForm : Form
     private void RefreshExportLogGrid()
     {
         _exportLogGrid.DataSource = _exportLogRepository.GetRecent();
+    }
+
+    // ===================== 레거시 가져오기 탭 =====================
+
+    /// <summary>
+    /// 다른 화면(채널설정창/광고매핑창)에 흩어져 있던 레거시 이관 진입점을 한 곳에 모아둔다 —
+    /// 사용자가 "데이터 관리창에 폴더 불러오기가 없다"고 지적한 것을 반영. 이 탭이 다루는 3가지는
+    /// 서로 다른 소스/대상이라 섹션을 나눠 보여준다.
+    /// </summary>
+    private TabPage CreateLegacyImportTab()
+    {
+        var tabPage = new TabPage("레거시 가져오기");
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, Padding = new Padding(10) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+
+        layout.Controls.Add(CreateLegacyImportSection(
+            "구버전 MiniERP(V3) 데이터 가져오기",
+            "구버전 C# MiniERP(V3)의 ERP_Database.sqlite 파일 1개를 선택하세요. 채널/마스터SKU/CSKU(채널별 납품가)/" +
+            "매핑규칙(1:1·예외·조건부)을 이 창의 각 탭에 바로 반영합니다. 기존 채널코드/SKU는 갱신되고, 1:1/예외 규칙은 " +
+            "병합되지만 조건부 매핑 규칙은 재실행 시 중복 추가될 수 있으니 같은 DB로 두 번 가져오지 마세요.",
+            "파일 선택...", OnLegacySqliteImportClick), 0, 0);
+
+        layout.Controls.Add(CreateLegacyImportSection(
+            "SalesManagerV2 채널 설정 가져오기",
+            "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요. 채널별 정산서 매핑/환율/" +
+            "채널유형/쿠팡그로스 보조소스를 채널설정에 반영합니다(이름이 일치하는 채널은 갱신, 없으면 새로 만듦).",
+            "폴더 선택...", OnLegacyChannelConfigImportClick), 0, 1);
+
+        layout.Controls.Add(CreateAdLegacyImportSection(), 0, 2);
+
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private Control CreateLegacyImportSection(string title, string description, string buttonText, EventHandler onClick)
+    {
+        var group = new GroupBox { Text = title, Dock = DockStyle.Fill };
+        var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(8) };
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+
+        inner.Controls.Add(new Label { Text = description, Dock = DockStyle.Fill, AutoSize = false }, 0, 0);
+        var button = new Button { Text = buttonText, Dock = DockStyle.Top, Height = 30 };
+        button.Click += onClick;
+        inner.Controls.Add(button, 1, 0);
+
+        group.Controls.Add(inner);
+        return group;
+    }
+
+    private Control CreateAdLegacyImportSection()
+    {
+        var group = new GroupBox { Text = "SalesManagerV2 광고매핑 가져오기", Dock = DockStyle.Fill };
+        var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(8) };
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+
+        inner.Controls.Add(new Label
+        {
+            Text = "같은 config 폴더의 ad_condition_rules.json/ad_exception_rules.json을 가져올 채널을 먼저 고르세요" +
+                   "(레거시 파일엔 채널코드가 없는 공용 규칙이라 한 채널로 모두 들어갑니다).",
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+        }, 0, 0);
+
+        var channels = new List<SalesChannel> { new() { ChannelCode = "", ChannelName = "(채널 선택)" } };
+        channels.AddRange(_salesChannelRepository.GetAll());
+        _adImportChannelCombo = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
+        _adImportChannelCombo.DataSource = channels;
+        _adImportChannelCombo.DisplayMember = "ChannelName";
+        _adImportChannelCombo.ValueMember = "ChannelCode";
+        inner.Controls.Add(_adImportChannelCombo, 1, 0);
+
+        var button = new Button { Text = "폴더 선택...", Dock = DockStyle.Top, Height = 30 };
+        button.Click += OnLegacyAdImportClick;
+        inner.Controls.Add(button, 2, 0);
+
+        group.Controls.Add(inner);
+        return group;
+    }
+
+    private void OnLegacySqliteImportClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "SQLite DB (*.sqlite)|*.sqlite|All files (*.*)|*.*",
+            Title = "구버전 MiniERP(V3) ERP_Database.sqlite 파일을 선택하세요",
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        if (MessageBox.Show(
+                "선택한 구버전 DB의 채널/마스터SKU/매핑규칙(1:1/예외/조건부)/CSKU(채널별 납품가)를 가져옵니다.\n" +
+                "조건부 매핑 규칙은 재실행 시 중복 추가될 수 있으니 같은 DB로 두 번 가져오지 마세요. 계속하시겠습니까?",
+                "가져오기 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            var result = _legacyMigrationService.Migrate(ofd.FileName);
+            foreach (var context in _tableTabs)
+            {
+                context.Table = context.Adapter.LoadCurrent();
+                context.Grid.DataSource = context.Table;
+                UpdateTabStatus(context);
+            }
+
+            MessageBox.Show(
+                $"가져오기 완료.\n\n채널: {result.ChannelsImported}개 / 마스터SKU: {result.ItemsImported}개 / " +
+                $"임시SKU(레거시): {result.TempSkusImported}개 / CSKU(채널별 납품가): {result.ChannelSkusImported}건 / " +
+                $"매핑 규칙(1:1+예외): {result.RulesImported}건 / 조건부 매핑 규칙: {result.ConditionRulesImported}건",
+                "가져오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = "구버전 MiniERP(V3) 데이터를 가져왔습니다.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"가져오는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+    }
+
+    private void OnLegacyChannelConfigImportClick(object? sender, EventArgs e)
+    {
+        using var folderDialog = new FolderBrowserDialog { Description = "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요" };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        if (MessageBox.Show(
+                "channels_config.json의 채널별 정산서 매핑/환율/채널유형/쿠팡그로스 보조소스를 이식합니다.\n" +
+                "채널명이 일치하는 기존 채널은 설정이 덮어써지고, 없는 채널명은 새로 만들어집니다. 계속하시겠습니까?",
+                "이관 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _channelLegacyMigrationService.Migrate(folderDialog.SelectedPath);
+
+            var message = $"신규 채널 {result.CreatedChannels.Count}개, 기존 채널 갱신 {result.UpdatedChannels.Count}개를 이관했습니다.";
+            if (result.CreatedChannels.Count > 0) message += $"\n\n신규: {string.Join(", ", result.CreatedChannels)}";
+            if (result.UpdatedChannels.Count > 0) message += $"\n갱신: {string.Join(", ", result.UpdatedChannels)}";
+            if (result.UnsupportedConditionalFields.Count > 0)
+            {
+                message += $"\n\n다음 항목은 자동 이관하지 못했습니다(직접 확인 필요):\n{string.Join(", ", result.UnsupportedConditionalFields)}";
+            }
+            if (result.Warnings.Count > 0) message += $"\n\n{string.Join("\n", result.Warnings)}";
+
+            MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = "SalesManagerV2 채널 설정을 가져왔습니다.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"이관 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OnLegacyAdImportClick(object? sender, EventArgs e)
+    {
+        var channelCode = _adImportChannelCombo.SelectedValue as string;
+        if (string.IsNullOrEmpty(channelCode))
+        {
+            MessageBox.Show("먼저 규칙을 이관할 채널을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var folderDialog = new FolderBrowserDialog { Description = "SalesManagerV2의 config 폴더(ad_condition_rules.json 등이 있는 폴더)를 선택하세요" };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var channelName = (_adImportChannelCombo.SelectedItem as SalesChannel)?.ChannelName ?? channelCode;
+        if (MessageBox.Show(
+                $"'{channelName}' 채널로 광고매핑 조건부/예외 규칙을 이관합니다(레거시 파일엔 채널코드가 없어 전체 규칙을 이 채널로 가져옵니다). 계속하시겠습니까?",
+                "이관 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _adLegacyMigrationService.Migrate(folderDialog.SelectedPath, channelCode);
+
+            var message = $"조건부 매핑 {result.ConditionRulesImported}건, 예외처리 {result.ExceptionRulesImported}건, " +
+                           $"채널 필드 매핑 {result.ChannelFieldMappingsImported}건을 가져왔습니다.";
+            if (result.UnmatchedChannelNames.Count > 0)
+            {
+                message += $"\n\n다음 레거시 채널명은 현재 채널 목록과 일치하지 않아 필드 매핑을 건너뛰었습니다:\n{string.Join(", ", result.UnmatchedChannelNames.Distinct())}";
+            }
+            if (result.UntranslatedHeaders.Count > 0)
+            {
+                message += $"\n\n다음 조건 헤더는 표준 필드로 자동 번역하지 못했습니다(광고매핑창의 조건부 매핑(상세) 탭에서 확인 필요):\n{string.Join(", ", result.UntranslatedHeaders.Distinct())}";
+            }
+
+            MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = $"'{channelName}' 채널로 광고매핑 데이터를 가져왔습니다.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"이관 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }

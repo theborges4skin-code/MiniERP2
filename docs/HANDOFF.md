@@ -505,6 +505,31 @@ UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같�
 `ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
 `CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
 
+## 데이터 관리창에 "레거시 가져오기" 탭 신설 — 3가지 이관 진입점 통합
+
+사용자가 실제 라이브 DB를 확인해보니, 이전 세션에서 마이그레이션됐다고 기록된 채널 16개/매핑규칙
+750+건/CSKU 405건이 **현재 DB 파일에는 없는 상태**였음(`bin` 폴더가 한 번 재생성되며 DB 파일이
+새로 만들어진 것으로 추정 — 원본 소스(구버전 C# MiniERP V3 DB)는 그대로 보존되어 있어 데이터
+손실은 아님). 이 과정에서 사용자가 "데이터 관리창에 폴더 불러오기가 없다"고 지적 — 확인해보니
+데이터관리창의 "엑셀 불러오기"는 파일(xlsx) 전용이고, 레거시 이관 3종(구버전 sqlite/SalesManagerV2
+채널설정/광고매핑)은 각각 MainHub·채널설정창·광고매핑창에 따로따로 있어 한 곳에 모여있지 않았다.
+
+`Forms/DataManagementForm.cs`에 **"레거시 가져오기" 탭**을 신설해 3가지를 한 곳에 모았다(기존
+MainHub/채널설정창/광고매핑창의 버튼은 그대로 둠 — 단순히 진입점을 하나 더 추가):
+
+1. **구버전 MiniERP(V3) 데이터 가져오기**: sqlite 파일 선택 → `LegacyMigrationService.Migrate` →
+   이 창의 마스터SKU/CSKU/매핑규칙 4종 탭을 즉시 다시 불러와 결과가 바로 보이게 함(다른 진입점들과
+   달리 이 창이 관리하는 테이블과 직접 겹쳐서, 가져오자마자 그 자리에서 확인 가능).
+2. **SalesManagerV2 채널 설정 가져오기**: config 폴더 선택 → `SalesChannelLegacyMigrationService.Migrate`.
+3. **SalesManagerV2 광고매핑 가져오기**: 채널 선택(이 탭에 채널 콤보 추가) + config 폴더 선택 →
+   `AdLegacyMigrationService.Migrate`.
+
+기존 서비스 코드는 전혀 건드리지 않고 호출부만 추가한 것이라 새 비즈니스 로직 없음(기존 테스트로
+이미 커버됨). `MainHub.OnLegacyImportClick`의 안내문 중 "조건부 매핑 규칙은 매핑관리창에 전용
+편집 UI가 아직 없다"는 문구도 정리(그 사이 "조건부 매핑(상세)" 탭이 만들어져 더 이상 사실이 아님).
+
+173/173 통과(신규 테스트 없음 — UI 배선만 추가, 모든 마이그레이션 서비스는 이미 별도로 테스트됨).
+
 ## 채널설정(정산서 매핑) 레거시 이관 — SalesManagerV2 channels_config.json
 
 사용자가 "그 폴더의 채널설정값을 MiniERP2에 맞게 변형해 자동이식할 수 있는지" 질문. 분석 결과

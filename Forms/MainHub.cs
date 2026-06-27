@@ -180,8 +180,7 @@ public class MainHub : Form
                 $"가져오기 완료.\n\n채널: {result.ChannelsImported}개\n마스터SKU: {result.ItemsImported}개\n" +
                 $"임시SKU(레거시): {result.TempSkusImported}개\n채널별 납품가: {result.ChannelSkusImported}건\n" +
                 $"매핑 규칙(1:1+예외): {result.RulesImported}건\n조건부 매핑 규칙(다중조건): {result.ConditionRulesImported}건\n\n" +
-                "※ 택배사 양식은 이번 가져오기에 포함되지 않았습니다. 필요하면 택배사양식관리창에서 직접 입력해주세요.\n" +
-                "※ 조건부 매핑 규칙은 매핑관리창에 전용 편집 UI가 아직 없습니다 — 그 채널의 '조건부 매핑' 탭에서 저장을 누르면 가져온 내용이 사라지니 주의하세요.",
+                "※ 택배사 양식은 이번 가져오기에 포함되지 않았습니다. 필요하면 택배사양식관리창에서 직접 입력해주세요.",
                 "가져오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
             RefreshSummary();
