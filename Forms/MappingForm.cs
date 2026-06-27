@@ -127,7 +127,7 @@ public class MappingForm : Form
     {
         var tabPage = new TabPage("미매핑 처리");
 
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220 };
+        var split = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220, PersistenceKey = "MappingForm.UnmappedSplit" };
 
         _unmappedGrid = new ExcelLikeDataGridView
         {
@@ -212,7 +212,7 @@ public class MappingForm : Form
         cskuPanel.Controls.Add(new Label { Text = "CSKU 검색결과 — 더블클릭하면 바로 매핑됩니다", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
         cskuPanel.Controls.Add(_cskuHistoryGrid, 0, 1);
 
-        var candidatesSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 430 };
+        var candidatesSplit = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 430, PersistenceKey = "MappingForm.CandidatesSplit" };
         candidatesSplit.Panel1.Controls.Add(masterPanel);
         candidatesSplit.Panel2.Controls.Add(cskuPanel);
 

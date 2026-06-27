@@ -33,6 +33,11 @@ public class OfsForm : Form
     private BindingList<OfsOrderItem> _orders = new();
     private string? _lastChannelCode;
 
+    // 택배사 출력 미리보기에서 직접 편집/합포장/분리배송/복사한 내용을 최근 5건까지 실행취소할 수
+    // 있게 보관한다. 각 항목은 그 조작 직전의 _orders 전체 스냅샷(복제본)이다.
+    private readonly List<List<OfsOrderItem>> _previewUndoStack = new();
+    private const int MaxPreviewUndoSteps = 5;
+
     public OfsForm()
     {
         InitializeComponent();
@@ -114,7 +119,7 @@ public class OfsForm : Form
         SetupShipmentGroupingContextMenu();
 
         // 2.5. 위(상세 줄)/아래(택배사 출력 미리보기) 분할
-        var gridSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420 };
+        var gridSplit = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420, PersistenceKey = "OfsForm.GridSplit" };
         gridSplit.Panel1.Controls.Add(_ordersGrid);
         gridSplit.Panel2.Controls.Add(CreateExportPreviewPanel());
 
@@ -769,6 +774,9 @@ public class OfsForm : Form
         var btnRefreshPreview = new Button { Text = "새로고침", Size = new Size(80, 24) };
         btnRefreshPreview.Click += (s, e) => RefreshExportPreview();
         toolStrip.Controls.Add(btnRefreshPreview);
+        var btnUndoPreview = new Button { Text = "실행취소", Size = new Size(80, 24) };
+        btnUndoPreview.Click += OnUndoPreviewEditClick;
+        toolStrip.Controls.Add(btnUndoPreview);
 
         _previewGrid = new DataGridView
         {
@@ -792,6 +800,9 @@ public class OfsForm : Form
             new DataGridViewTextBoxColumn { Name = "LineCount", HeaderText = "줄수", DataPropertyName = "LineCount", Width = 50, ReadOnly = true }
         );
         _previewGrid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        // 셀 편집을 시작하는 순간(커밋 전) 실행취소용 스냅샷을 떠둔다 — CellValueChanged는 값이
+        // 이미 바뀐 뒤에 발생해서 "편집 전" 상태를 잡을 수 없기 때문이다.
+        _previewGrid.CellBeginEdit += (s, e) => PushPreviewUndoSnapshot();
         _previewGrid.CellValueChanged += OnPreviewGridCellValueChanged;
         _previewGrid.CellFormatting += OnPreviewGridCellFormatting;
         SetupPreviewGridContextMenu();
@@ -832,6 +843,8 @@ public class OfsForm : Form
         menu.Items.Add("분리배송 처리(묶음 풀기)", null, OnResetPreviewGroupsClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("이 줄 복사(상품명 공란 — 송장에 표시할 메시지용)", null, OnDuplicatePreviewRowClick);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("실행취소", null, OnUndoPreviewEditClick);
         _previewGrid.ContextMenuStrip = menu;
     }
 
@@ -852,6 +865,8 @@ public class OfsForm : Form
             return;
         }
 
+        PushPreviewUndoSnapshot();
+
         var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
         foreach (var item in selected.SelectMany(r => r.Items))
         {
@@ -869,6 +884,8 @@ public class OfsForm : Form
             MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+
+        PushPreviewUndoSnapshot();
 
         foreach (var item in selected.SelectMany(r => r.Items))
         {
@@ -892,6 +909,8 @@ public class OfsForm : Form
             MessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+
+        PushPreviewUndoSnapshot();
 
         var template = selected[0].Items[0];
         // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
@@ -938,5 +957,64 @@ public class OfsForm : Form
             .ToList();
 
         _previewGrid.DataSource = new BindingList<ShipmentPreviewRow>(rows);
+    }
+
+    /// <summary>
+    /// 미리보기에서 직접 편집/합포장/분리배송/줄복사를 하기 직전에 _orders 전체를 복제해 쌓아둔다.
+    /// 최근 5건만 보관하며(그 이상이면 가장 오래된 것을 버림), "실행취소"를 누르면 가장 최근
+    /// 스냅샷으로 되돌린다.
+    /// </summary>
+    private void PushPreviewUndoSnapshot()
+    {
+        _previewUndoStack.Add(_orders.Select(CloneOrderItem).ToList());
+        if (_previewUndoStack.Count > MaxPreviewUndoSteps)
+        {
+            _previewUndoStack.RemoveAt(0);
+        }
+    }
+
+    private static OfsOrderItem CloneOrderItem(OfsOrderItem item) => new()
+    {
+        ChannelCode = item.ChannelCode,
+        OrderNo = item.OrderNo,
+        ProductName = item.ProductName,
+        OptionName = item.OptionName,
+        Quantity = item.Quantity,
+        Recipient = item.Recipient,
+        Phone = item.Phone,
+        Address = item.Address,
+        DeliveryMessage = item.DeliveryMessage,
+        MappedSku = item.MappedSku,
+        Status = item.Status,
+        TrackingNo = item.TrackingNo,
+        InvoiceLabel = item.InvoiceLabel,
+        ShipmentGroupId = item.ShipmentGroupId,
+    };
+
+    private void OnUndoPreviewEditClick(object? sender, EventArgs e)
+    {
+        if (_previewUndoStack.Count == 0)
+        {
+            MessageBox.Show("실행취소할 변경 내용이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var snapshot = _previewUndoStack[^1];
+        _previewUndoStack.RemoveAt(_previewUndoStack.Count - 1);
+
+        _orders.RaiseListChangedEvents = false;
+        try
+        {
+            _orders.Clear();
+            foreach (var item in snapshot) _orders.Add(item);
+        }
+        finally
+        {
+            _orders.RaiseListChangedEvents = true;
+        }
+        _orders.ResetBindings();
+
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
     }
 }

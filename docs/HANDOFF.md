@@ -4,7 +4,7 @@
 바로 이어받을 수 있도록 진행 상황을 정리한 것이다. 프로젝트 전체 배경/아키텍처는
 [PLAN.md](PLAN.md) 참고. 2026-06-26 세션 작업 내역은 git log(커밋 `1322618`~`f7db495`) 참고.
 
-**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **106/106 통과**.
+**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **110/110 통과**.
 전부 `origin/main`에 푸시됨(마지막 커밋은 git log 참고).
 
 ## auto-compact 이후 추가로 한 일
@@ -197,6 +197,29 @@
    `CourierExporter`와 미리보기의 강조 표시 양쪽에서 같이 쓰게 했다.
 3. 테스트 3건 추가(`BuildCombinedItemDescription` 단일/복수 줄 형식, `CountDescriptionLines`),
    기존 `CourierExporterTests` 2건의 기대값을 새 형식으로 수정. 106/106 통과.
+
+### 분할선 크기 기억 + 미리보기 실행취소(5건)
+
+1. **분할선(SplitContainer) 위치 기억** — OFS(상단 발주서/하단 미리보기)와 매핑관리창 "미매핑
+   처리" 탭(상단 미매핑목록/하단 영역, 그리고 하단 안의 마스터DB 후보/CSKU 검색결과 좌우분할)의
+   분할선을 조절해도 다음에 창을 열 때 기본값으로 돌아가던 것을 고쳤다. 그리드 컬럼폭을 기억하는
+   기존 `ExcelLikeDataGridView`/`GridSettingsService` 패턴과 똑같은 구조로:
+   - `Config/SplitterSettingsService.cs`(신규) — 키별 `SplitterDistance`(int)를
+     `splitter_layouts.json`에 저장/조회. `Tests/SplitterSettingsServiceTests.cs`로 검증.
+   - `Controls/PersistentSplitContainer.cs`(신규, `SplitContainer` 상속) — `PersistenceKey`를
+     지정하면 저장된 분할 위치를 불러오고, `SplitterMoved`마다 자동 저장한다. 컨트롤이 아직
+     부모에 붙기 전(크기 0)이라 바로 적용할 수 없는 경우를 위해 `OnSizeChanged`에서 크기가
+     잡힐 때까지 재시도하도록 처리(`ArgumentOutOfRangeException` 방어).
+   - `Forms/OfsForm.cs`의 `gridSplit`, `Forms/MappingForm.cs`의 `split`/`candidatesSplit`을
+     일반 `SplitContainer`에서 `PersistentSplitContainer`로 교체하고 각각
+     `PersistenceKey`("OfsForm.GridSplit"/"MappingForm.UnmappedSplit"/
+     "MappingForm.CandidatesSplit")를 부여.
+2. **미리보기 실행취소(최근 5건)** — `Forms/OfsForm.cs`에 `_previewUndoStack`(최대 5개) 추가.
+   미리보기 그리드의 셀 편집 시작 시(`CellBeginEdit`, 값이 바뀌기 전에 잡아야 해서 `CellValueChanged`
+   대신 사용) 및 합포장/분리배송 처리/줄복사 액션 직전에 `PushPreviewUndoSnapshot()`으로 그 시점의
+   `_orders` 전체를 복제해 쌓아둔다(5개 초과 시 가장 오래된 것을 버림). 미리보기 패널 툴바의
+   "실행취소" 버튼(+ 우클릭 메뉴에도 동일 항목) 클릭 시 가장 최근 스냅샷으로 `_orders`를 되돌리고
+   미리보기/상세 그리드를 새로고침한다.
 
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 
