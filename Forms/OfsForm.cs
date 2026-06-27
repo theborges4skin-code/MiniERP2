@@ -119,7 +119,9 @@ public class OfsForm : Form
         SetupShipmentGroupingContextMenu();
 
         // 2.5. 위(상세 줄)/아래(택배사 출력 미리보기) 분할
-        var gridSplit = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420, PersistenceKey = "OfsForm.GridSplit" };
+        // 기본값은 상세 목록과 미리보기가 비슷한 비중으로 보이게 250으로 둔다(처음 실행 시에만
+        // 적용되고, 한 번 조절하면 PersistentSplitContainer가 그 값을 기억해 다음에도 유지한다).
+        var gridSplit = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 250, PersistenceKey = "OfsForm.GridSplit" };
         gridSplit.Panel1.Controls.Add(_ordersGrid);
         gridSplit.Panel2.Controls.Add(CreateExportPreviewPanel());
 
