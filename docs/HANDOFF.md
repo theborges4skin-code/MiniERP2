@@ -505,6 +505,34 @@ UI 동작이라 자동 테스트로 검증하기 어려움(기존 코드도 같�
 `ShipmentGroupingTests`(커스텀 형식/xx 래핑/InvoiceDisplayName 우선순위 케이스 추가),
 `CourierExporterTests`(택배사별 커스텀 형식 적용 + 기존 xx 래핑 반영). 130/130 통과.
 
+## SalesManagerV2(레거시 Python) 매핑 UI 패턴 도입 — 2단계: 전체 규칙 관리 탭
+
+1단계(실시간 미리보기/셀클릭 자동주입)에 이어, 매핑관리창에 "전체 규칙 관리" 탭을 신설했다
+(`MappingForm.CreateUnifiedRulesTabPage`). 레거시 `MappingRulesManagerDialog`를 본떠 예외/1:1/
+임시/조건부 4종 규칙을 한 그리드에 모으고, 채널 콤보 + 검색 항목 콤보(전체/타입/채널/키/대상
+SKU/상세) + 검색어로 필터링한다. **MiniERP2만의 보강 지점**: 각 행의 대상 SKU(=CSKU 코드)로
+`ChannelSkuRepository`를 조회해 CSKU 송장표시명/납품가를 같은 행에 JOIN해서 보여준다(레거시는
+CSKU 개념이 없어 타겟 SKU만 있었음).
+
+- 체크박스 다중선택 + "선택 삭제" — 현재 채널에 발주서가 로드되어 있으면(`_sourceOrders`) 삭제될
+  규칙으로 매칭될 건수를 추정해 "약 N건이 미매핑 상태로 되돌아갈 수 있습니다" 경고를 덧붙인다
+  (레거시의 `count`/`match_count` 기반 경고와 같은 취지 — 컬럼을 추가하지 않고 현재 로드된
+  데이터로 즉석 계산하는 방식으로 단순화).
+- 더블클릭/우클릭 "수정하기"로 해당 규칙의 원래 탭(1:1/임시/예외 그리드 또는 조건부 매핑(상세))
+  으로 이동해 그 행을 선택해준다. 단, 그 규칙이 현재 상단에서 선택된 채널과 다르면(채널 전환이
+  비동기로 일어나 그 직후 선택을 시도하면 어긋날 수 있어) 채널을 직접 바꿔달라고 안내만 한다.
+- 조건부 매핑의 상세조건은 "Condition" 한 열에 `AND ProductName Contains "셔츠" ; OR ...` 형식
+  텍스트로 직렬화해 보여준다(데이터 관리창의 `ConditionalMappingManagedTable`과 같은 표기 방식 —
+  단, 이 탭은 읽기 전용 요약이라 재파싱하지 않음).
+- `MappingRepository.GetAllRules`/`GetAllConditionRulesWithDetails`/`DeleteRule`(데이터
+  관리창 작업에서 이미 추가됐던 채널 무관 전체조회/삭제 메서드)을 그대로 재사용 — 새 DB
+  메서드 추가가 거의 필요 없었다.
+
+WinForms UI라 자동 테스트는 어려움 — 직접 여러 채널의 규칙을 등록한 뒤 "전체 규칙 관리" 탭에서
+채널 필터/검색이 잘 되는지, 체크박스 삭제 후 영향 건수 경고가 뜨는지, 더블클릭으로 원래 탭에
+잘 이동하는지 확인 권장. 147/147 기존 테스트 회귀 없이 통과(이 탭 자체는 신규 비즈니스 로직
+없이 기존 검증된 메서드를 조합만 함).
+
 ## SalesManagerV2(레거시 Python) 매핑 UI 패턴 도입 — 1단계: 실시간 미리보기 + 셀 클릭 자동주입
 
 사용자가 로컬에 보관 중인 레거시 SalesManagerV2(`mapping_manager.py`/`mapping_popups.py`/

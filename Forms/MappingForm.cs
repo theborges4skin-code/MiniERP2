@@ -24,6 +24,29 @@ public class MappingForm : Form
     private readonly Dictionary<MappingRuleType, HashSet<string>> _conflictingKeysByType = new();
     private DataGridView _conflictGrid = new();
 
+    // "전체 규칙 관리" 탭 — SalesManagerV2(레거시)의 통합 규칙 관리자 패턴. 예외/1:1/임시/조건부
+    // 4종을 한 테이블에 모아 채널/키워드로 검색하고, 체크박스 다중선택으로 일괄 삭제할 수 있다.
+    // CSKU(송장표시명/납품가)를 JOIN해서 보여주는 게 레거시에는 없던 MiniERP2 고유의 보강 지점.
+    private DataGridView _unifiedRulesGrid = new();
+    private ComboBox _unifiedFilterChannelCombo = new();
+    private ComboBox _unifiedFilterTargetCombo = new();
+    private TextBox _unifiedSearchTextBox = new();
+    private List<UnifiedRuleRow> _allUnifiedRules = [];
+
+    private class UnifiedRuleRow
+    {
+        public bool Selected { get; set; }
+        public string TypeLabel { get; set; } = string.Empty;
+        public MappingRuleType RuleType { get; set; }
+        public long RuleId { get; set; }
+        public string ChannelCode { get; set; } = string.Empty;
+        public string Key { get; set; } = string.Empty;
+        public string TargetSku { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+        public string CskuInvoiceDisplayName { get; set; } = string.Empty;
+        public string CskuSupplyPrice { get; set; } = string.Empty;
+    }
+
     // 조건부 매핑(상세) 탭 — 다중 AND/OR 조건 전용 편집기. 기존 "조건부 매핑" 단순 그리드(SaveRules)와
     // 분리되어 즉시 DB에 반영되므로, 단순 그리드 저장이 이 탭의 데이터를 건드리지 않는다.
     private TabPage _conditionDetailTabPage = new();
@@ -112,6 +135,7 @@ public class MappingForm : Form
         _conditionDetailTabPage = CreateConditionDetailTabPage();
         tabControl.TabPages.Add(_conditionDetailTabPage);
         tabControl.TabPages.Add(CreateConflictTabPage());
+        tabControl.TabPages.Add(CreateUnifiedRulesTabPage());
 
         tabControl.Selecting += OnTabSelecting;
 
@@ -781,6 +805,298 @@ public class MappingForm : Form
 
         tabPage.Controls.Add(_conflictGrid);
         return tabPage;
+    }
+
+    /// <summary>
+    /// 예외/1:1/임시/조건부 4종 규칙을 한 테이블에 모아 채널/키워드로 검색하고 체크박스로 다중선택
+    /// 삭제할 수 있는 탭(SalesManagerV2의 MappingRulesManagerDialog 패턴). CSKU 송장표시명/납품가를
+    /// JOIN해서 함께 보여준다 — 어떤 SKU로 매핑되는지뿐 아니라 그 CSKU의 실제 정보까지 한눈에 확인.
+    /// </summary>
+    private TabPage CreateUnifiedRulesTabPage()
+    {
+        var tabPage = new TabPage("전체 규칙 관리");
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+
+        var filterPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnRefresh = new Button { Text = "새로고침", Size = new Size(80, 28) };
+        btnRefresh.Click += (s, e) => LoadUnifiedRules();
+        filterPanel.Controls.Add(btnRefresh);
+
+        filterPanel.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _unifiedFilterChannelCombo = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+        _unifiedFilterChannelCombo.SelectedIndexChanged += (s, e) => ApplyUnifiedRuleFilter();
+        filterPanel.Controls.Add(_unifiedFilterChannelCombo);
+
+        filterPanel.Controls.Add(new Label { Text = "검색 항목:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _unifiedFilterTargetCombo = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
+        _unifiedFilterTargetCombo.Items.AddRange(["전체", "타입", "채널", "키", "대상 SKU", "상세"]);
+        _unifiedFilterTargetCombo.SelectedIndex = 0;
+        _unifiedFilterTargetCombo.SelectedIndexChanged += (s, e) => ApplyUnifiedRuleFilter();
+        filterPanel.Controls.Add(_unifiedFilterTargetCombo);
+
+        filterPanel.Controls.Add(new Label { Text = "검색어:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _unifiedSearchTextBox = new TextBox { Width = 180 };
+        _unifiedSearchTextBox.TextChanged += (s, e) => ApplyUnifiedRuleFilter();
+        filterPanel.Controls.Add(_unifiedSearchTextBox);
+
+        _unifiedRulesGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+        };
+        _unifiedRulesGrid.Columns.AddRange(
+            new DataGridViewCheckBoxColumn { Name = "Selected", HeaderText = "선택", DataPropertyName = "Selected", Width = 40 },
+            new DataGridViewTextBoxColumn { Name = "TypeLabel", HeaderText = "타입", DataPropertyName = "TypeLabel", Width = 80, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널", DataPropertyName = "ChannelCode", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키", DataPropertyName = "Key", Width = 200, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU(CSKU)", DataPropertyName = "TargetSku", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "CskuInvoiceDisplayName", HeaderText = "CSKU 송장표시명", DataPropertyName = "CskuInvoiceDisplayName", Width = 140, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "CskuSupplyPrice", HeaderText = "CSKU 납품가", DataPropertyName = "CskuSupplyPrice", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Detail", HeaderText = "상세(조건부 매핑 조건 등)", DataPropertyName = "Detail", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true }
+        );
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("이 규칙 수정하기(해당 탭으로 이동)", null, (s, e) => OnEditSelectedUnifiedRuleClick());
+        _unifiedRulesGrid.ContextMenuStrip = menu;
+        _unifiedRulesGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) OnEditSelectedUnifiedRuleClick(); };
+
+        var bottomPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 28) };
+        btnDelete.Click += (s, e) => OnDeleteSelectedUnifiedRulesClick();
+        bottomPanel.Controls.Add(btnDelete);
+        bottomPanel.Controls.Add(new Label
+        {
+            Text = "체크박스로 여러 건을 선택해 한꺼번에 삭제할 수 있습니다. 더블클릭(또는 우클릭 → 수정하기)하면 해당 규칙의 원래 탭으로 이동합니다.",
+            AutoSize = true,
+            Padding = new Padding(10, 6, 0, 0),
+            ForeColor = Color.DimGray,
+        });
+
+        layout.Controls.Add(filterPanel, 0, 0);
+        layout.Controls.Add(_unifiedRulesGrid, 0, 1);
+        layout.Controls.Add(bottomPanel, 0, 2);
+        tabPage.Controls.Add(layout);
+
+        return tabPage;
+    }
+
+    private void LoadUnifiedRules()
+    {
+        var rows = new List<UnifiedRuleRow>();
+        var cskuCache = new Dictionary<(string ChannelCode, string TargetSku), ChannelSkuModel?>();
+
+        ChannelSkuModel? ResolveCsku(string channelCode, string targetSku)
+        {
+            var cacheKey = (channelCode, targetSku);
+            if (!cskuCache.TryGetValue(cacheKey, out var csku))
+            {
+                csku = string.IsNullOrEmpty(targetSku) || targetSku == SkuMapper.ExcludedTargetSku
+                    ? null
+                    : _channelSkuRepository.GetByChannelAndCskuCode(channelCode, targetSku);
+                cskuCache[cacheKey] = csku;
+            }
+            return csku;
+        }
+
+        void AddSimpleRules(MappingRuleType ruleType, string typeLabel)
+        {
+            foreach (var rule in _mappingRepository.GetAllRules(ruleType))
+            {
+                var csku = ResolveCsku(rule.ChannelCode, rule.TargetSku);
+                rows.Add(new UnifiedRuleRow
+                {
+                    TypeLabel = typeLabel,
+                    RuleType = ruleType,
+                    RuleId = rule.Id,
+                    ChannelCode = rule.ChannelCode,
+                    Key = rule.Key,
+                    TargetSku = rule.TargetSku,
+                    Detail = "-",
+                    CskuInvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty,
+                    CskuSupplyPrice = csku != null ? csku.SupplyPrice.ToString("N0") : string.Empty,
+                });
+            }
+        }
+
+        AddSimpleRules(MappingRuleType.Exception, "예외 처리");
+        AddSimpleRules(MappingRuleType.Exact, "1:1 매핑");
+        AddSimpleRules(MappingRuleType.Temp, "임시 매핑");
+
+        foreach (var (rule, details) in _mappingRepository.GetAllConditionRulesWithDetails())
+        {
+            var csku = ResolveCsku(rule.ChannelCode, rule.TargetSku);
+            var detailText = string.Join(" ; ", details.Select(d => $"{d.Logic} {d.HeaderField} {d.Operator} \"{d.TargetValue}\""));
+            rows.Add(new UnifiedRuleRow
+            {
+                TypeLabel = "조건부 매핑",
+                RuleType = MappingRuleType.Condition,
+                RuleId = rule.Id,
+                ChannelCode = rule.ChannelCode,
+                Key = rule.Key,
+                TargetSku = rule.TargetSku,
+                Detail = string.IsNullOrEmpty(detailText) ? "(조건 없음)" : detailText,
+                CskuInvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty,
+                CskuSupplyPrice = csku != null ? csku.SupplyPrice.ToString("N0") : string.Empty,
+            });
+        }
+
+        _allUnifiedRules = rows;
+
+        var previousChannel = _unifiedFilterChannelCombo.SelectedItem as string;
+        var channels = rows.Select(r => r.ChannelCode).Where(c => !string.IsNullOrEmpty(c)).Distinct().OrderBy(c => c).ToList();
+        _unifiedFilterChannelCombo.Items.Clear();
+        _unifiedFilterChannelCombo.Items.Add("(전체)");
+        foreach (var channel in channels) _unifiedFilterChannelCombo.Items.Add(channel);
+        _unifiedFilterChannelCombo.SelectedItem = previousChannel != null && _unifiedFilterChannelCombo.Items.Contains(previousChannel) ? previousChannel : "(전체)";
+
+        ApplyUnifiedRuleFilter();
+    }
+
+    private void ApplyUnifiedRuleFilter()
+    {
+        var channelFilter = _unifiedFilterChannelCombo.SelectedItem as string;
+        var target = _unifiedFilterTargetCombo.SelectedItem as string ?? "전체";
+        var keyword = _unifiedSearchTextBox.Text.Trim();
+
+        var filtered = _allUnifiedRules
+            .Where(r => string.IsNullOrEmpty(channelFilter) || channelFilter == "(전체)" || r.ChannelCode == channelFilter)
+            .Where(r => MatchesUnifiedRuleKeyword(r, target, keyword))
+            .ToList();
+
+        _unifiedRulesGrid.DataSource = new BindingList<UnifiedRuleRow>(filtered);
+    }
+
+    private static bool MatchesUnifiedRuleKeyword(UnifiedRuleRow row, string target, string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return true;
+        bool Has(string text) => text.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+
+        return target switch
+        {
+            "타입" => Has(row.TypeLabel),
+            "채널" => Has(row.ChannelCode),
+            "키" => Has(row.Key),
+            "대상 SKU" => Has(row.TargetSku),
+            "상세" => Has(row.Detail),
+            _ => Has(row.TypeLabel) || Has(row.ChannelCode) || Has(row.Key) || Has(row.TargetSku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
+        };
+    }
+
+    /// <summary>
+    /// 체크된 규칙들을 삭제한다. 현재 채널에 발주서가 로드되어 있으면(_sourceOrders) 삭제로 인해
+    /// 미매핑 상태로 되돌아갈 건수를 추정해 경고에 포함한다(레거시의 "약 N건의 매핑이
+    /// 해제됩니다" 경고와 같은 취지).
+    /// </summary>
+    private void OnDeleteSelectedUnifiedRulesClick()
+    {
+        if (_unifiedRulesGrid.DataSource is not BindingList<UnifiedRuleRow> rows) return;
+
+        var selected = rows.Where(r => r.Selected).ToList();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("삭제할 규칙을 먼저 체크하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var message = $"{selected.Count}건의 규칙을 삭제하시겠습니까?";
+        if (_sourceOrders != null)
+        {
+            var impact = EstimateUnifiedRuleDeleteImpact(selected);
+            if (impact > 0) message += $"\n\n⚠ 현재 로드된 발주서 중 약 {impact}건이 미매핑 상태로 되돌아갈 수 있습니다.";
+        }
+
+        if (MessageBox.Show(message, "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        foreach (var row in selected)
+        {
+            if (row.RuleType == MappingRuleType.Condition)
+            {
+                _mappingRepository.DeleteConditionRule(row.RuleId);
+            }
+            else
+            {
+                _mappingRepository.DeleteRule(row.RuleType, row.RuleId);
+            }
+        }
+
+        LoadUnifiedRules();
+        if (!string.IsNullOrEmpty(_channelComboBox.SelectedValue as string)) LoadRulesForSelectedChannel();
+        MessageBox.Show($"{selected.Count}건을 삭제했습니다.", "삭제 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private int EstimateUnifiedRuleDeleteImpact(List<UnifiedRuleRow> selected)
+    {
+        if (_sourceOrders == null) return 0;
+
+        var count = 0;
+        foreach (var row in selected)
+        {
+            var candidates = _sourceOrders.Where(o => o.ChannelCode == row.ChannelCode);
+            if (row.RuleType == MappingRuleType.Condition)
+            {
+                var details = _mappingRepository.GetConditionDetails(row.RuleId);
+                count += candidates.Count(o => ConditionEvaluator.Matches(details, o));
+            }
+            else
+            {
+                count += candidates.Count(o => (o.ProductName ?? string.Empty) + (o.OptionName ?? string.Empty) == row.Key);
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// 더블클릭/우클릭한 규칙의 원래 탭으로 이동해 그 줄을 선택한다. 현재 상단에서 선택된 채널과
+    /// 다른 채널의 규칙이면, 채널 전환 시 다른 탭들이 비동기로 다시 로드되는 도중에 선택을
+    /// 시도하면 어긋날 수 있어 안내만 하고 직접 채널을 바꿔달라고 한다.
+    /// </summary>
+    private void OnEditSelectedUnifiedRuleClick()
+    {
+        if (_unifiedRulesGrid.CurrentRow?.DataBoundItem is not UnifiedRuleRow row) return;
+
+        var currentChannel = _channelComboBox.SelectedValue as string;
+        if (!string.Equals(currentChannel, row.ChannelCode, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(
+                $"이 규칙은 '{row.ChannelCode}' 채널의 규칙입니다.\n상단의 채널을 '{row.ChannelCode}'로 바꾼 뒤 다시 시도해주세요.",
+                "다른 채널", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (row.RuleType == MappingRuleType.Condition)
+        {
+            _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+            SelectConditionRuleById(row.RuleId);
+        }
+        else
+        {
+            SelectSimpleRuleAndSwitchTab(row.RuleType, row.RuleId);
+        }
+    }
+
+    private void SelectSimpleRuleAndSwitchTab(MappingRuleType ruleType, long ruleId)
+    {
+        foreach (TabPage tabPage in _ruleTabControl.TabPages)
+        {
+            if (tabPage.Controls.Count == 0 || tabPage.Controls[0] is not ExcelLikeDataGridView grid || grid.Tag is not MappingRuleType rt || rt != ruleType) continue;
+
+            _ruleTabControl.SelectedTab = tabPage;
+            foreach (DataGridViewRow gridRow in grid.Rows)
+            {
+                if (gridRow.DataBoundItem is MappingRule rule && rule.Id == ruleId)
+                {
+                    grid.CurrentCell = gridRow.Cells[0];
+                    break;
+                }
+            }
+            return;
+        }
     }
 
     /// <summary>
