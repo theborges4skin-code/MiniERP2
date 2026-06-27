@@ -47,4 +47,38 @@ public class ShipmentGroupingTests
 
         Assert.AreEqual(ShipmentGrouping.GetEffectiveGroupId(item1), ShipmentGrouping.GetEffectiveGroupId(item2));
     }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_SingleLine_ReturnsPlainTextWithoutBrackets()
+    {
+        var items = new[] { new OfsOrderItem { ProductName = "A품목", Quantity = 2 } };
+
+        Assert.AreEqual("A품목 2개", ShipmentGrouping.BuildCombinedItemDescription(items));
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_MultipleLines_WrapsEachInBracketsJoinedByPlus()
+    {
+        // 합포장 시 줄바꿈만으로는 송장에서 품목 구분이 어렵다는 피드백을 반영한 표시 형식.
+        var items = new[]
+        {
+            new OfsOrderItem { ProductName = "A품목", Quantity = 2 },
+            new OfsOrderItem { ProductName = "B품목", Quantity = 3 },
+        };
+
+        Assert.AreEqual("((A품목 2개))   +   ((B품목 3개))", ShipmentGrouping.BuildCombinedItemDescription(items));
+    }
+
+    [TestMethod]
+    public void CountDescriptionLines_CountsNonBlankLinesRegardlessOfDisplayFormat()
+    {
+        var items = new[]
+        {
+            new OfsOrderItem { ProductName = "A품목", Quantity = 1 },
+            new OfsOrderItem { ProductName = "B품목", Quantity = 1 },
+            new OfsOrderItem { InvoiceLabel = "" }, // 미리보기에서 합쳐서 덮어쓴 줄(빈 InvoiceLabel)은 줄 수에서 제외
+        };
+
+        Assert.AreEqual(2, ShipmentGrouping.CountDescriptionLines(items));
+    }
 }

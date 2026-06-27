@@ -4,7 +4,7 @@
 바로 이어받을 수 있도록 진행 상황을 정리한 것이다. 프로젝트 전체 배경/아키텍처는
 [PLAN.md](PLAN.md) 참고. 2026-06-26 세션 작업 내역은 git log(커밋 `1322618`~`f7db495`) 참고.
 
-**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **103/103 통과**.
+**지금 빌드/테스트 상태**: `dotnet build` 오류 0, `dotnet test` **106/106 통과**.
 전부 `origin/main`에 푸시됨(마지막 커밋은 git log 참고).
 
 ## auto-compact 이후 추가로 한 일
@@ -177,6 +177,26 @@
   - `OnOrdersGridCellValueChanged`가 이제 어떤 열이 바뀌든(상품명 포함) 끝에서 항상
     `RefreshExportPreview()`를 호출하도록 단순화(이전엔 MappedSku/TrackingNo 열만 개별 처리해서,
     상품명 칸에 메시지를 입력해도 미리보기가 즉시 갱신되지 않는 문제가 있었음).
+
+### 미리보기 셀 직접 수정 + 합포장 품목 표시 형식 개선
+
+1. **미리보기 그리드 셀 직접 수정 가능** — `ShipmentPreviewRow`의 `Recipient`/`Phone`/`Address`도
+   (기존엔 `DeliveryMessage`/`TrackingNo`만 가능했음) setter를 추가해 그리드에서 바로 고치면 그
+   묶음의 모든 원본 줄에 반영되게 했다(`ReadOnly = true` 제거). `ItemsDescription`(품목, 실제
+   출력될 내용)도 직접 고칠 수 있게 했는데, 별도 오버라이드 저장소를 두지 않고 **첫 줄의
+   `InvoiceLabel`을 입력값으로 덮어쓰고 나머지 줄들의 `InvoiceLabel`은 빈 문자열로 비우는 방식**
+   으로 구현했다 — `BuildCombinedItemDescription`이 빈 줄은 걸러내므로 결합 결과가 입력한 값
+   그대로 나가고, `CourierExporter`도 같은 `InvoiceLabel`을 읽으므로 실제 내보내기에도 그대로
+   반영된다(미리보기 전용 상태를 따로 동기화할 필요가 없는 설계). 진짜 집계값(주문번호들/
+   총수량/줄수)만 읽기전용으로 남겨둠.
+2. **합포장 품목 표시 형식 변경** — 줄바꿈만으로는 송장에서 어디까지가 한 품목인지 헷갈린다는
+   피드백을 반영해, `ShipmentGrouping.BuildCombinedItemDescription`이 줄이 2개 이상이면
+   `"((A품목 2개))   +   ((B품목 3개))"`처럼 괄호로 묶고 `   +   `로 구분하도록 바꿨다(줄이
+   1개면 괄호 없이 그대로). 4줄 초과 경고 판단은 더 이상 `\n` 개수로 셀 수 없어서
+   `ShipmentGrouping.CountDescriptionLines`(합치기 전 줄 목록 개수)를 새로 추가해
+   `CourierExporter`와 미리보기의 강조 표시 양쪽에서 같이 쓰게 했다.
+3. 테스트 3건 추가(`BuildCombinedItemDescription` 단일/복수 줄 형식, `CountDescriptionLines`),
+   기존 `CourierExporterTests` 2건의 기대값을 새 형식으로 수정. 106/106 통과.
 
 ## CSKU 코드 신설 — 매핑 규칙의 TargetSku가 CSKU 코드로 바뀜 (중요, 전체 영향)
 

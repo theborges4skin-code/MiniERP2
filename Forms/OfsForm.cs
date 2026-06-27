@@ -702,9 +702,24 @@ public class OfsForm : Form
         public required List<OfsOrderItem> Items { get; init; }
 
         public string OrderNos => string.Join(", ", Items.Select(i => i.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct());
-        public string? Recipient => Items[0].Recipient;
-        public string? Phone => Items[0].Phone;
-        public string? Address => Items[0].Address;
+
+        public string? Recipient
+        {
+            get => Items[0].Recipient;
+            set { foreach (var item in Items) item.Recipient = value; }
+        }
+
+        public string? Phone
+        {
+            get => Items[0].Phone;
+            set { foreach (var item in Items) item.Phone = value; }
+        }
+
+        public string? Address
+        {
+            get => Items[0].Address;
+            set { foreach (var item in Items) item.Address = value; }
+        }
 
         public string? DeliveryMessage
         {
@@ -712,7 +727,26 @@ public class OfsForm : Form
             set { foreach (var item in Items) item.DeliveryMessage = value; }
         }
 
-        public string ItemsDescription => ShipmentGrouping.BuildCombinedItemDescription(Items);
+        /// <summary>
+        /// 실제 송장에 출력될 품목 내용입니다. 직접 고치면 이 묶음의 첫 줄(Items[0])의
+        /// InvoiceLabel을 그 값으로 덮어쓰고, 나머지 줄들의 InvoiceLabel은 빈 문자열로 비워
+        /// (BuildCombinedItemDescription이 빈 줄은 걸러내므로) 결합 결과가 입력한 값 그대로
+        /// 나가게 한다. CourierExporter도 같은 InvoiceLabel을 읽으므로 실제 내보내기에도 그대로
+        /// 반영된다(별도의 미리보기 전용 오버라이드 저장소가 필요 없음).
+        /// </summary>
+        public string ItemsDescription
+        {
+            get => ShipmentGrouping.BuildCombinedItemDescription(Items);
+            set
+            {
+                Items[0].InvoiceLabel = value;
+                for (int i = 1; i < Items.Count; i++)
+                {
+                    Items[i].InvoiceLabel = string.Empty;
+                }
+            }
+        }
+
         public int TotalQuantity => Items.Sum(i => i.Quantity);
 
         public string? TrackingNo
@@ -743,13 +777,16 @@ public class OfsForm : Form
             AllowUserToAddRows = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
+        // 주문번호들/총수량/줄수는 여러 줄을 합친 순수 집계값이라 직접 수정할 단일 대상이 없어
+        // 읽기전용으로 둔다. 그 외(수취인/연락처/주소/배송메세지/품목/운송장번호)는 모두 직접
+        // 고칠 수 있게 했고, 고치면 해당 묶음의 원본 줄에 그대로 반영된다(각 속성의 setter 처리).
         _previewGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "OrderNos", HeaderText = "주문번호", DataPropertyName = "OrderNos", Width = 150, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 90, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "Phone", HeaderText = "연락처", DataPropertyName = "Phone", Width = 110, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "Address", HeaderText = "주소", DataPropertyName = "Address", Width = 200, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 90 },
+            new DataGridViewTextBoxColumn { Name = "Phone", HeaderText = "연락처", DataPropertyName = "Phone", Width = 110 },
+            new DataGridViewTextBoxColumn { Name = "Address", HeaderText = "주소", DataPropertyName = "Address", Width = 200 },
             new DataGridViewTextBoxColumn { Name = "DeliveryMessage", HeaderText = "배송메세지", DataPropertyName = "DeliveryMessage", Width = 140 },
-            new DataGridViewTextBoxColumn { Name = "ItemsDescription", HeaderText = "품목(실제 출력될 내용)", DataPropertyName = "ItemsDescription", Width = 220, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "ItemsDescription", HeaderText = "품목(실제 출력될 내용)", DataPropertyName = "ItemsDescription", Width = 220 },
             new DataGridViewTextBoxColumn { Name = "TotalQuantity", HeaderText = "총수량", DataPropertyName = "TotalQuantity", Width = 60, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "TrackingNo", HeaderText = "운송장번호", DataPropertyName = "TrackingNo", Width = 130 },
             new DataGridViewTextBoxColumn { Name = "LineCount", HeaderText = "줄수", DataPropertyName = "LineCount", Width = 50, ReadOnly = true }
@@ -773,7 +810,7 @@ public class OfsForm : Form
         if (e.RowIndex < 0 || e.RowIndex >= _previewGrid.Rows.Count) return;
         if (_previewGrid.Rows[e.RowIndex].DataBoundItem is not ShipmentPreviewRow row) return;
 
-        var isOverflow = row.ItemsDescription.Split('\n').Length > 4;
+        var isOverflow = ShipmentGrouping.CountDescriptionLines(row.Items) > 4;
         _previewGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = isOverflow ? Color.MistyRose : _previewGrid.DefaultCellStyle.BackColor;
         _previewGrid.Rows[e.RowIndex].DefaultCellStyle.ForeColor = isOverflow ? Color.Black : _previewGrid.DefaultCellStyle.ForeColor;
     }

@@ -65,7 +65,7 @@ public class CourierExporter
                 var representative = groupItems[0];
 
                 var combinedDescription = ShipmentGrouping.BuildCombinedItemDescription(groupItems);
-                if (combinedDescription.Split('\n').Length > 4)
+                if (ShipmentGrouping.CountDescriptionLines(groupItems) > 4)
                 {
                     overflowGroups.Add(representative.OrderNo ?? group.Key);
                 }

@@ -136,7 +136,7 @@ public class CourierExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
 
-        Assert.AreEqual("상품A 1개\n상품B 1개", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("((상품A 1개))   +   ((상품B 1개))", sheet.Cells[2, 1].Value);
         Assert.IsNull(sheet.Cells[3, 1].Value);
     }
 
@@ -189,7 +189,7 @@ public class CourierExporterTests
         ExcelLicense.Ensure();
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
-        Assert.AreEqual("상품1 1개\n상품2 1개\n상품3 1개\n상품4 1개\n상품5 1개", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("((상품1 1개))   +   ((상품2 1개))   +   ((상품3 1개))   +   ((상품4 1개))   +   ((상품5 1개))", sheet.Cells[2, 1].Value);
     }
 
     [TestMethod]

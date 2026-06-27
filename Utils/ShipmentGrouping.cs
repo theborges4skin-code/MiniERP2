@@ -23,14 +23,32 @@ public static class ShipmentGrouping
     }
 
     /// <summary>
-    /// 한 묶음(=한 송장)에 속한 모든 줄의 품목 표시문자열을 줄바꿈으로 이어붙인다. 택배사 내보내기
+    /// 한 묶음(=한 송장)에 속한 모든 줄의 품목 표시문자열을 만든다. 줄이 1개면 그대로 보여주고,
+    /// 합포장 등으로 2개 이상이면 "((품목A))   +   ((품목B))"처럼 괄호와 +로 구분해, 줄바꿈만으로는
+    /// 송장에서 어디까지가 한 품목인지 헷갈린다는 피드백을 반영한다. 택배사 내보내기
     /// (CourierExporter)와 OFS의 출력 미리보기 패널이 항상 같은 결과를 보여주도록 공유한다.
     /// </summary>
     public static string BuildCombinedItemDescription(IEnumerable<OfsOrderItem> items)
     {
-        var lines = items
+        var lines = GetDescriptionLines(items);
+        if (lines.Count == 0) return string.Empty;
+        if (lines.Count == 1) return lines[0];
+
+        return string.Join("   +   ", lines.Select(line => $"(({line}))"));
+    }
+
+    /// <summary>
+    /// 한 묶음에 실제로 표시될 품목 줄 수입니다(택배송장 4줄 제한 초과 여부를 판단하는 데 사용).
+    /// <see cref="BuildCombinedItemDescription"/>이 괄호+플러스로 합쳐버린 뒤에는 줄바꿈으로 셀 수
+    /// 없으므로, 합치기 전의 줄 목록 개수를 그대로 쓴다.
+    /// </summary>
+    public static int CountDescriptionLines(IEnumerable<OfsOrderItem> items) => GetDescriptionLines(items).Count;
+
+    private static List<string> GetDescriptionLines(IEnumerable<OfsOrderItem> items)
+    {
+        return items
             .Select(i => i.InvoiceLabel ?? $"{i.ProductName} {i.Quantity}개")
-            .Where(text => !string.IsNullOrWhiteSpace(text));
-        return string.Join("\n", lines);
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .ToList();
     }
 }
