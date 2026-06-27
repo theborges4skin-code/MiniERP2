@@ -29,9 +29,24 @@ public class OutboundHistoryForm : Form
     private Label _statusLabel = new();
     private bool _suppressCellEndEdit;
 
+    // 셀 직접 편집은 실수 방지를 위해 즉시 DB에 쓰지 않고, "변경사항 저장"을 눌러야 반영된다.
+    // 같은 BindingList 인스턴스가 그대로 변경되므로 참조 동일성으로 추적하면 충분하다.
+    private readonly HashSet<OutboundDetail> _dirtyDetails = [];
+
     public OutboundHistoryForm()
     {
         InitializeComponent();
+        FormClosing += OnFormClosing;
+    }
+
+    private void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_dirtyDetails.Count == 0) return;
+
+        var result = MessageBox.Show(
+            $"저장하지 않은 변경사항이 {_dirtyDetails.Count}건 있습니다. 저장하지 않고 닫으시겠습니까?",
+            "저장되지 않은 변경사항", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (result != DialogResult.Yes) e.Cancel = true;
     }
 
     private void InitializeComponent()
@@ -61,11 +76,13 @@ public class OutboundHistoryForm : Form
         var btnImportTracking = new Button { Text = "운송장번호 불러오기", Size = new Size(150, 30) };
         var btnExport = new Button { Text = "선택 건 택배사 양식 출력", Size = new Size(170, 30) };
         var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 30) };
+        var btnSaveChanges = new Button { Text = "변경사항 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
 
         btnLoad.Click += OnLoadClick;
         btnImportTracking.Click += OnImportTrackingClick;
         btnExport.Click += OnExportClick;
         btnDelete.Click += OnDeleteClick;
+        btnSaveChanges.Click += OnSaveChangesClick;
 
         toolStrip.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
         toolStrip.Controls.Add(_channelComboBox);
@@ -77,13 +94,16 @@ public class OutboundHistoryForm : Form
         toolStrip.Controls.Add(btnImportTracking);
         toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnDelete);
+        toolStrip.Controls.Add(btnSaveChanges);
 
+        // 행 머리글(왼쪽 끝)을 클릭해야 행 전체가 선택된다(선택 삭제/택배사 양식 출력용) — 셀을
+        // 클릭하면 그 셀만 선택되어, 오른클릭 복사 시 행 전체가 아니라 클릭한 셀만 복사된다.
         _historyGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
             PersistenceKey = "OutboundHistoryForm.HistoryGrid",
             AutoGenerateColumns = false,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
             MultiSelect = true,
         };
 
@@ -116,16 +136,44 @@ public class OutboundHistoryForm : Form
 
     private void OnLoadClick(object? sender, EventArgs e)
     {
+        if (_dirtyDetails.Count > 0)
+        {
+            var result = MessageBox.Show(
+                $"저장하지 않은 변경사항이 {_dirtyDetails.Count}건 있습니다. 저장하지 않고 다시 조회하시겠습니까?",
+                "저장되지 않은 변경사항", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes) return;
+        }
+
         var channelCode = _channelComboBox.SelectedValue as string;
         var from = _fromDatePicker.Value.Date;
         var to = _toDatePicker.Value.Date.AddDays(1).AddTicks(-1);
 
         var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to);
         EnsureStatusItemsInclude(details.Select(d => d.Status));
+        _dirtyDetails.Clear();
         _suppressCellEndEdit = true;
         _historyGrid.DataSource = new BindingList<OutboundDetail>(details);
         _suppressCellEndEdit = false;
         _statusLabel.Text = $"발주/출고 이력 {details.Count}건 조회됨.";
+    }
+
+    /// <summary>
+    /// 선택 삭제/택배사 양식 출력의 "선택된 줄"을 모은다. 행 머리글로 선택한 줄(SelectedRows)뿐
+    /// 아니라, 셀만 클릭/드래그로 선택한 경우(SelectedCells)도 그 셀이 속한 줄을 포함한다 —
+    /// 복사는 클릭한 셀만 복사되어야 하지만(SelectionMode=RowHeaderSelect), 삭제/출력 대상을
+    /// 고를 때는 어느 셀이든 클릭해 그 줄을 고를 수 있는 기존 사용 흐름을 유지하기 위함이다.
+    /// </summary>
+    private List<OutboundDetail> GetSelectedDetails()
+    {
+        var rowIndices = _historyGrid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Index)
+            .Union(_historyGrid.SelectedCells.Cast<DataGridViewCell>().Select(c => c.RowIndex))
+            .Distinct();
+
+        return rowIndices
+            .Where(i => i >= 0 && i < _historyGrid.Rows.Count && !_historyGrid.Rows[i].IsNewRow)
+            .Select(i => _historyGrid.Rows[i].DataBoundItem)
+            .OfType<OutboundDetail>()
+            .ToList();
     }
 
     /// <summary>
@@ -145,8 +193,8 @@ public class OutboundHistoryForm : Form
     }
 
     /// <summary>
-    /// 그리드 셀을 직접 수정(수량/납품가/운송장번호/상태)하면 바로 DB에 반영한다. 상태를
-    /// "출고확정"으로 직접 바꾸면 확정일시가 비어있을 때 현재 시각으로 채운다.
+    /// 그리드 셀을 직접 수정(수량/납품가/운송장번호/상태)해도 실수 방지를 위해 바로 DB에 쓰지
+    /// 않고, 변경된 항목만 표시해두었다가 "변경사항 저장"을 눌러야 한꺼번에 반영된다.
     /// </summary>
     private void OnHistoryGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
@@ -163,8 +211,27 @@ public class OutboundHistoryForm : Form
             detail.ConfirmedAt = null;
         }
 
-        _outboundRepository.UpdateDetail(detail);
+        _dirtyDetails.Add(detail);
         _historyGrid.InvalidateRow(e.RowIndex);
+        _statusLabel.Text = $"{_dirtyDetails.Count}건의 변경사항이 저장되지 않았습니다. '변경사항 저장'을 눌러주세요.";
+    }
+
+    private void OnSaveChangesClick(object? sender, EventArgs e)
+    {
+        if (_dirtyDetails.Count == 0)
+        {
+            MessageBox.Show("저장할 변경사항이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        foreach (var detail in _dirtyDetails)
+        {
+            _outboundRepository.UpdateDetail(detail);
+        }
+
+        var savedCount = _dirtyDetails.Count;
+        _dirtyDetails.Clear();
+        _statusLabel.Text = $"{savedCount}건의 변경사항을 저장했습니다.";
     }
 
     /// <summary>
@@ -180,11 +247,7 @@ public class OutboundHistoryForm : Form
             return;
         }
 
-        var selected = _historyGrid.SelectedRows.Cast<DataGridViewRow>()
-            .Where(r => !r.IsNewRow)
-            .Select(r => r.DataBoundItem)
-            .OfType<OutboundDetail>()
-            .ToList();
+        var selected = GetSelectedDetails();
 
         if (selected.Count == 0)
         {
@@ -263,11 +326,7 @@ public class OutboundHistoryForm : Form
             return;
         }
 
-        var selected = _historyGrid.SelectedRows.Cast<DataGridViewRow>()
-            .Where(r => !r.IsNewRow)
-            .Select(r => r.DataBoundItem)
-            .OfType<OutboundDetail>()
-            .ToList();
+        var selected = GetSelectedDetails();
 
         if (selected.Count == 0)
         {
@@ -279,7 +338,11 @@ public class OutboundHistoryForm : Form
         if (result != DialogResult.Yes) return;
 
         _outboundRepository.DeleteByIds(selected.Select(d => d.Id));
-        foreach (var item in selected) details.Remove(item);
+        foreach (var item in selected)
+        {
+            details.Remove(item);
+            _dirtyDetails.Remove(item);
+        }
         _statusLabel.Text = $"{selected.Count}건을 삭제했습니다.";
     }
 
