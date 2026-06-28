@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MiniERP2.Database;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
@@ -35,10 +36,14 @@ public class SettlementLoader
         LastLoadHeaderRowLooksEmpty = false;
         var rows = new List<SettlementData>();
         channelSkuRepository ??= new ChannelSkuRepository();
+        var fileName = Path.GetFileName(filePath);
 
         await Task.Run(() =>
         {
+            var stopwatch = Stopwatch.StartNew();
+            DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 열기 시작 (채널={channelConfig.ChannelCode})");
             using var package = ExcelFileOpener.Open(filePath, password);
+            DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 엑셀 패키지 열기 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
             var firstValidMapping = channelConfig.SettlementFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)
@@ -57,6 +62,9 @@ public class SettlementLoader
             {
                 throw new FileNotFoundException($"엑셀 파일에서 '{sheetName ?? "첫 번째"}' 시트를 찾을 수 없습니다.");
             }
+
+            DiagnosticsLogger.Log($"[SettlementLoader] 시트='{worksheet.Name}' 헤더행={headerRow} 전체범위={worksheet.Dimension?.Address} " +
+                $"(보고된 행수={worksheet.Dimension?.End.Row}, 열수={worksheet.Dimension?.End.Column}) ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
             var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
@@ -132,8 +140,15 @@ public class SettlementLoader
             const int maxConsecutiveBlankRows = 200;
             var consecutiveBlankRows = 0;
 
+            DiagnosticsLogger.Log($"[SettlementLoader] 행 순회 시작 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
+
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
+                if (row % 500 == 0)
+                {
+                    DiagnosticsLogger.Log($"[SettlementLoader] {row}행째 처리 중... (지금까지 {rows.Count}건 적재, {stopwatch.Elapsed.TotalSeconds:F2}s)");
+                }
+
                 var productName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName);
                 var optionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName);
 
@@ -180,8 +195,11 @@ public class SettlementLoader
                 rows.Add(settlementData);
             }
 
+            DiagnosticsLogger.Log($"[SettlementLoader] 행 순회 완료 — {rows.Count}건 적재 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
+
             // 기획서 5.6절 특수 규칙: 쿠팡일반은 배송비를 전체 합산하여 첫 행에만 표기
             ProfitCalculator.ApplyCoupangGeneralShippingAggregation(channelConfig.ChannelType, rows);
+            DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 전체 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
         });
 
         return rows;

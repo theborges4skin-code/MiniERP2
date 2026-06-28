@@ -182,6 +182,7 @@ public class SettlementForm : Form
 
     private void RefreshProfitAnalysisView()
     {
+        DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 시작 (_settlementRows={_settlementRows.Count}건)");
         var totalStopwatch = Stopwatch.StartNew();
 
         var filterStopwatch = Stopwatch.StartNew();
@@ -189,6 +190,7 @@ public class SettlementForm : Form
             ? _settlementRows.Where(SettlementRowStatus.IsUnresolved).ToList()
             : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved).ToList();
         filterStopwatch.Stop();
+        DiagnosticsLogger.Log($"[SettlementForm] 필터링 완료 — 표시대상 {view.Count}건 ({filterStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
         // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
@@ -196,14 +198,17 @@ public class SettlementForm : Form
         var unbindStopwatch = Stopwatch.StartNew();
         _settlementGrid.DataSource = null;
         unbindStopwatch.Stop();
+        DiagnosticsLogger.Log($"[SettlementForm] 그리드 분리 완료 ({unbindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         var rebuildColumnsStopwatch = Stopwatch.StartNew();
         RebuildRawTailColumns(view);
         rebuildColumnsStopwatch.Stop();
+        DiagnosticsLogger.Log($"[SettlementForm] 원본열 구성 완료 — 그리드 전체 열수={_settlementGrid.Columns.Count} ({rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         var bindStopwatch = Stopwatch.StartNew();
         _settlementGrid.DataSource = new BindingList<SettlementData>(view);
         bindStopwatch.Stop();
+        DiagnosticsLogger.Log($"[SettlementForm] 데이터 바인딩 완료 ({bindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         var summaryStopwatch = Stopwatch.StartNew();
         var groups = _settlementRows
@@ -248,6 +253,7 @@ public class SettlementForm : Form
         LastRefreshDiagnostics = $"필터링 {filterStopwatch.Elapsed.TotalSeconds:F2}s, 그리드분리 {unbindStopwatch.Elapsed.TotalSeconds:F2}s, " +
             $"원본열구성 {rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s, 데이터바인딩 {bindStopwatch.Elapsed.TotalSeconds:F2}s, " +
             $"요약집계 {summaryStopwatch.Elapsed.TotalSeconds:F2}s, 합계 {totalStopwatch.Elapsed.TotalSeconds:F2}s";
+        DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 완료 — {LastRefreshDiagnostics}");
     }
 
     /// <summary>
@@ -273,13 +279,17 @@ public class SettlementForm : Form
             .Select(m => m.Column!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var headerScanStopwatch = Stopwatch.StartNew();
         var rawHeaders = rows
             .Where(r => r.RawValues != null)
             .SelectMany(r => r.RawValues!.Keys)
             .Distinct()
             .Where(h => !mappedHeaders.Contains(h))
             .ToList();
+        headerScanStopwatch.Stop();
+        DiagnosticsLogger.Log($"[SettlementForm] RebuildRawTailColumns: 원본헤더 {rawHeaders.Count}개 식별({rows.Count}행 스캔, {headerScanStopwatch.Elapsed.TotalSeconds:F2}s) — 열 추가 시작");
 
+        var addColumnsStopwatch = Stopwatch.StartNew();
         foreach (var header in rawHeaders)
         {
             _settlementGrid.Columns.Add(new DataGridViewTextBoxColumn
@@ -291,6 +301,7 @@ public class SettlementForm : Form
                 Width = 150,
             });
         }
+        DiagnosticsLogger.Log($"[SettlementForm] RebuildRawTailColumns: 열 {rawHeaders.Count}개 추가 완료 ({addColumnsStopwatch.Elapsed.TotalSeconds:F2}s)");
     }
 
     private void OnSettlementGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
@@ -380,6 +391,7 @@ public class SettlementForm : Form
         try
         {
             _settingsService.SetLastFolder("SettlementLoad", Path.GetDirectoryName(ofd.FileNames[0])!);
+            DiagnosticsLogger.Log($"[SettlementForm] 정산파일 로드 시작 — 채널={channelConfig.ChannelCode}, 파일 {ofd.FileNames.Length}개: {string.Join(", ", ofd.FileNames.Select(Path.GetFileName))}");
 
             var loadStopwatch = Stopwatch.StartNew();
             for (int i = 0; i < ofd.FileNames.Length; i++)
@@ -395,11 +407,14 @@ public class SettlementForm : Form
                     progressDialog.SetIndeterminate($"{fileName} 처리 중...");
                 }
 
+                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{ofd.FileNames.Length}) '{fileName}' LoadSettlementFileWithPasswordRetryAsync 호출");
                 var loadedRows = await LoadSettlementFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
                 if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
+                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{ofd.FileNames.Length}) '{fileName}' 완료 — {loadedRows.Count}건 (총 누적 {_settlementRows.Count}건, {loadStopwatch.Elapsed.TotalSeconds:F2}s)");
             }
             loadStopwatch.Stop();
+            DiagnosticsLogger.Log($"[SettlementForm] 전체 파일 처리 완료 ({loadStopwatch.Elapsed.TotalSeconds:F2}s) — RefreshProfitAnalysisView 호출 시작");
 
             progressDialog.SetIndeterminate("화면을 갱신하는 중입니다...");
             var refreshStopwatch = Stopwatch.StartNew();
