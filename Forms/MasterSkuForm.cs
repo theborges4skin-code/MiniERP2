@@ -17,6 +17,7 @@ public class MasterSkuForm : Form
     private readonly SettingsService _settingsService = new();
     private ExcelLikeDataGridView _itemsGrid = new();
     private BindingList<ItemModel> _items = new();
+    private Label _statusLabel = new();
 
     public MasterSkuForm()
     {
@@ -63,6 +64,8 @@ public class MasterSkuForm : Form
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnImport);
         toolStrip.Controls.Add(btnExport);
+        _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
+        toolStrip.Controls.Add(_statusLabel);
 
         // 데이터 그리드
         _itemsGrid = new ExcelLikeDataGridView
@@ -173,12 +176,16 @@ public class MasterSkuForm : Form
                 
                 _itemRepository.Upsert(item);
             }
-            MessageBox.Show("성공적으로 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             LoadData(); // 저장 후 데이터를 다시 불러와 동기화
+            // 2026-06-28 점검: 그리드를 다시 불러온 직후 모달을 띄우는 패턴이 다른 화면들에서
+            // 반복 재현됐던 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체.
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"성공적으로 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
         }
     }
 
@@ -201,7 +208,9 @@ public class MasterSkuForm : Form
         if (result == DialogResult.Yes)
         {
             _itemRepository.Delete(itemToDelete.Sku);
-            MessageBox.Show("삭제되었습니다.", "완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // UserDeletingRow 이벤트 처리 중 모달을 띄우는 것도 같은 위험군이라 비모달 라벨로 대체.
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"삭제되었습니다. ({DateTime.Now:HH:mm:ss})";
         }
         else
         {
@@ -316,8 +325,9 @@ public class MasterSkuForm : Form
                 {
                     _itemRepository.Upsert(item);
                 }
-                MessageBox.Show("데이터를 성공적으로 반영했습니다.", "완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 LoadData(); // 그리드 새로고침
+                _statusLabel.ForeColor = Color.DarkGreen;
+                _statusLabel.Text = $"데이터를 성공적으로 반영했습니다. ({DateTime.Now:HH:mm:ss})";
             }
         }
         catch (Exception ex)

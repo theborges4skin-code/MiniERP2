@@ -476,11 +476,13 @@ public class OutboundHistoryForm : Form
         }
 
         _historyGrid.Refresh();
-        _statusLabel.Text = $"운송장번호 {appliedCount}건 적용 완료.";
 
+        // 2026-06-28 점검: 그리드 갱신 직후 모달을 띄우는 패턴이 다른 화면들에서 반복 재현됐던
+        // 경쟁 상태와 같은 위험군이라(특히 중복수령인 선택창(TrackingMatchPickerDialog)이 막
+        // 닫혔을 수 있는 상황이라 더 위험) 이미 있던 상태표시줄에 요약을 그대로 담아 대체한다.
         var summary = $"운송장번호 {appliedCount}건을 적용해 출고확정으로 처리했습니다.";
-        if (skippedNoMatch.Count > 0) summary += $"\n일치하는 발주확정 건이 없어 건너뛴 항목: {skippedNoMatch.Count}건";
-        if (skippedByUser > 0) summary += $"\n동일 수령인 중 사용자가 건너뛴 항목: {skippedByUser}건";
-        MessageBox.Show(summary, "운송장번호 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (skippedNoMatch.Count > 0) summary += $" / 일치하는 발주확정 건이 없어 건너뜀: {skippedNoMatch.Count}건";
+        if (skippedByUser > 0) summary += $" / 동일 수령인 중 사용자가 건너뜀: {skippedByUser}건";
+        _statusLabel.Text = summary;
     }
 }

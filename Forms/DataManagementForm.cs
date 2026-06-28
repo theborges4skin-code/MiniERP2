@@ -606,6 +606,10 @@ public class DataManagementForm : Form
             }
             if (result.Warnings.Count > 0) message += $"\n\n{string.Join("\n", result.Warnings)}";
 
+            // 2026-06-28 점검: 이 모달은 직전에 그리드를 새로 그리거나 다른 창을 막 닫는 등의
+            // 위험 패턴 없이(중간에 실제 이관 작업이라는 시간이 끼어있어) 뜨는 것이라, 다른
+            // 화면들에서 재현됐던 경쟁 상태와는 모양이 달라 모달을 그대로 유지한다. 내용이 길어
+            // (건너뛴 항목 목록 등) 한 줄짜리 상태표시줄로는 잘려 보일 수 있어 모달이 더 적합하다.
             MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             _statusLabel.Text = "SalesManagerV2 채널 설정을 가져왔습니다.";
         }
@@ -650,6 +654,7 @@ public class DataManagementForm : Form
                 message += $"\n\n다음 조건 헤더는 표준 필드로 자동 번역하지 못했습니다(광고매핑창의 조건부 매핑(상세) 탭에서 확인 필요):\n{string.Join(", ", result.UntranslatedHeaders.Distinct())}";
             }
 
+            // 위 채널설정 이관과 같은 이유로 모달을 유지한다.
             MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             _statusLabel.Text = $"'{channelName}' 채널로 광고매핑 데이터를 가져왔습니다.";
         }

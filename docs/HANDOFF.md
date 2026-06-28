@@ -9,6 +9,38 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 모달 경쟁 상태 전면 점검 마무리 — 나머지 7개 화면 처리 — 2026-06-28
+
+바로 위 항목에서 "나머지는 실제로 겪을 때마다 고칠지" 물었는데, 사용자가 "지금 다 고쳐주기"를
+선택해 나머지 화면도 전부 점검·수정했다. 이번에 다시 확인하면서 **위험 패턴의 정의를 더
+명확히** 했다 — 그냥 "저장 후 완료 모달"이 전부 위험한 게 아니라, **모달 직전에 (1) 다른
+창/다이얼로그를 막 Show()/Close()했거나 (2) DataGridView의 DataSource를 다시 통째로 갈아끼우는
+등 무거운 그리드 재구성이 있었을 때만** 진짜 위험군이다. 이 기준으로 다시 골랐다.
+
+**고친 곳(같은 틱 직전에 창 전환/그리드 재구성이 있었음 — 모달 제거, 상태표시줄/라벨로 대체)**
+- `Forms/ChannelConfigForm.cs` `OnSaveClick`: 새 `_statusLabel` 추가.
+- `Forms/CourierConfigForm.cs` `OnSaveClick`: `LoadCouriers()`(그리드 재구성) 전후 순서와
+  무관하게 같은 위험군으로 보고 새 `_statusLabel` 추가.
+- `Forms/MasterSkuForm.cs`: 저장 버튼(`OnSaveClick`), 행 삭제(`OnUserDeletingRow` — 그리드
+  이벤트 처리 중 모달이라 더 위험), 엑셀 가져오기 — 전부 새 `_statusLabel`로 대체.
+- `Forms/CSkuForm.cs` `OnSaveClick`: `LoadData()` 직후 모달 → 새 `_statusLabel`로 대체.
+- `Forms/OutboundHistoryForm.cs`: 운송장번호 일괄적용 완료 — `_historyGrid.Refresh()` 직후이고
+  바로 전에 동명이인 선택창(모달)이 닫혔을 수도 있어 위험이 겹치는 경우. 이미 있던 `_statusLabel`
+  에 요약을 그대로 담아 모달 제거.
+
+**검토했지만 일부러 그대로 둔 곳(위험 패턴과 모양이 다름)**
+- `Forms/DataManagementForm.cs`의 "이관 완료" 2곳(채널설정/광고매핑 레거시 가져오기): 폴더선택
+  →확인모달이 닫힌 뒤 **실제 이관 작업(파일 I/O)이라는 시간이 끼어 있어서** "막 닫은 창 바로
+  뒤에 모달"이 아니다. 내용도 길어서(건너뛴 항목 목록 등) 한 줄짜리 상태표시줄로는 잘려 보일
+  위험이 더 크다고 판단해 모달을 그대로 유지.
+- `Forms/DataManagementForm.cs`의 "복원 완료"(`Application.Exit()` 직전): 마찬가지로 직전에
+  창 전환/그리드 재구성이 없고(파일 복사만), 앱이 종료되기 전에 사용자가 반드시 인지해야 하는
+  내용이라 모달을 없애면 오히려 더 위험(경고 없이 갑자기 꺼짐)해서 그대로 둠.
+- `Forms/OfsForm.cs`의 저장(`OnSaveClick`): 원래부터 성공 모달 없이 `_statusLabel`만 쓰고
+  있어서 이미 안전했음(확인 필요 없음).
+
+196/196 통과(이번 라운드도 안내 방식만 변경, 회귀 테스트 추가 없음).
+
 ## 같은 모달 경쟁 상태를 MappingForm/AdMappingForm의 다른 저장 경로에서도 확인 — 2026-06-28
 
 사용자 요청: "예외규칙이나 광고매핑 등 다른 DB 처리할 때도 같은 현상(저장이 오래 걸림)이

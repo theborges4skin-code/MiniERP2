@@ -19,6 +19,7 @@ public class CSkuForm : Form
     private readonly string _masterSku;
     private ExcelLikeDataGridView _cskuGrid = new();
     private BindingList<ChannelSkuModel> _cskus = new();
+    private Label _statusLabel = new();
 
     public CSkuForm(string masterSku)
     {
@@ -53,6 +54,8 @@ public class CSkuForm : Form
 
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
+        _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
+        toolStrip.Controls.Add(_statusLabel);
 
         _cskuGrid = new ExcelLikeDataGridView
         {
@@ -164,12 +167,16 @@ public class CSkuForm : Form
 
                 _cskuRepository.Upsert(csku);
             }
-            MessageBox.Show("성공적으로 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             LoadData();
+            // 2026-06-28 점검: 그리드를 다시 불러온 직후 모달을 띄우는 패턴이 다른 화면들에서
+            // 반복 재현됐던 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체.
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"성공적으로 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
         }
     }
 

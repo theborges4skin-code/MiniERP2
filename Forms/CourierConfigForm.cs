@@ -25,6 +25,7 @@ public class CourierConfigForm : Form
     private ComboBox _cmbTrackingRecipientHeader = new();
     private ComboBox _cmbTrackingNoHeader = new();
     private TextBox _txtQuantityNotationFormat = new();
+    private Label _statusLabel = new();
 
     private static readonly (string Property, string Label)[] PropertyOptions =
     [
@@ -189,6 +190,8 @@ public class CourierConfigForm : Form
         var btnSave = new Button { Text = "저장", Width = 90 };
         btnSave.Click += OnSaveClick;
         saveButtonPanel.Controls.Add(btnSave);
+        _statusLabel = new Label { AutoSize = true, Padding = new Padding(0, 7, 10, 0), ForeColor = Color.DarkGreen };
+        saveButtonPanel.Controls.Add(_statusLabel);
 
         rightPanel.Controls.Add(namePanel, 0, 0);
         rightPanel.Controls.Add(samplePanel, 0, 1);
@@ -413,8 +416,11 @@ public class CourierConfigForm : Form
             QuantityNotationFormat = _txtQuantityNotationFormat.Text,
         });
 
-        MessageBox.Show("택배사 양식이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         LoadCouriers();
+        // 2026-06-28 점검: 저장 직후 모달을 띄우는 패턴이 다른 화면들에서 반복 재현됐던 경쟁
+        // 상태와 같은 위험군이라 비모달 라벨로 대체.
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"택배사 양식이 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     private class HeaderMappingRow

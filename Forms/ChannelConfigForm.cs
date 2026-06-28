@@ -25,6 +25,7 @@ public class ChannelConfigForm : Form
     private ChannelConfig? _currentConfig;
 
     private PropertyGrid _propertyGrid = new();
+    private Label _statusLabel = new();
     private TreeView _channelTreeView = new();
     private DataGridView _orderMappingGrid = new();
     private DataGridView _settlementMappingGrid = new();
@@ -103,6 +104,8 @@ public class ChannelConfigForm : Form
         buttonPanel.Controls.Add(btnAdd);
         buttonPanel.Controls.Add(btnDelete);
         buttonPanel.Controls.Add(btnSave);
+        _statusLabel = new Label { AutoSize = true, Padding = new Padding(10, 7, 0, 0), ForeColor = Color.DarkGreen };
+        buttonPanel.Controls.Add(_statusLabel);
 
         var courierPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
         var btnCourier = new Button { Text = "택배사 양식 관리", Width = 150 };
@@ -706,11 +709,15 @@ public class ChannelConfigForm : Form
         try
         {
             _channelConfigService.Save(_channelConfigs);
-            MessageBox.Show("채널 설정이 성공적으로 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // 2026-06-28 점검: 저장 직후 성공 모달을 띄우면, 마감/이익분석·매핑관리창·광고매핑에서
+            // 반복 재현됐던 "모달이 안 보이게 생성되는" 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체.
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"채널 설정이 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
         }
     }
 
