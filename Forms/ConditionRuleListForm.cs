@@ -109,10 +109,15 @@ public class ConditionRuleListForm : Form
     private void LoadRules()
     {
         var rules = _mappingRepository.GetRules(MappingRuleType.Condition, _channelCode);
+        // 규칙마다 GetConditionDetails(ruleId)로 따로 조회하면 그때마다 새 SQLite 연결을 열어서
+        // 규칙이 많을수록(특히 병합 후 다시 그릴 때) "병합 누르면 멈춘 것처럼 보임" 신고와 같은
+        // 원인으로 느려진다(ReapplyMappingForAllRows에서 고친 것과 동일한 N+1 패턴). 채널 전체
+        // 상세조건을 한 번에 가져오는 GetConditionDetailsByChannel로 대체한다.
+        var detailsByRuleId = _mappingRepository.GetConditionDetailsByChannel(_channelCode);
         var rows = new List<RuleRow>();
         foreach (var rule in rules)
         {
-            var details = _mappingRepository.GetConditionDetails(rule.Id);
+            var details = detailsByRuleId.GetValueOrDefault(rule.Id, []);
             var conditionSummary = string.Join(" / ", details.Select(d => $"{d.HeaderField} {d.Operator} '{d.TargetValue}'({d.Logic})"));
             var signature = ConditionRuleSignature.Build(rule.TargetSku, details);
 
