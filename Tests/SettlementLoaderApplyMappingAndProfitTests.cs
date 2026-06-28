@@ -62,4 +62,38 @@ public class SettlementLoaderApplyMappingAndProfitTests
         Assert.AreEqual("매핑(1:1)", data.Status);
         Assert.AreEqual(8000m, data.Profit); // 10000 - 1000*2
     }
+
+    /// <summary>
+    /// SettlementForm.ReapplyMappingForAllRows가 행마다 새 SQLite 연결을 여는 비용을 피하려고
+    /// 쓰는 itemCache/cskuCache 인자가 DB를 직접 조회하는 기본 경로와 똑같은 결과를 내는지
+    /// 검증한다(캐시 조회가 실수로 다른 키 비교 방식을 쓰면 결과가 달라질 수 있음).
+    /// </summary>
+    [TestMethod]
+    public void ApplyMappingAndProfit_WithCaches_ProducesSameResultAsWithoutCaches()
+    {
+        var itemRepository = new ItemRepository();
+        itemRepository.Upsert(new ItemModel { Sku = "MSKU1", ItemName = "상품A", CostPrice = 1500m });
+
+        var channelSkuRepository = new ChannelSkuRepository();
+        channelSkuRepository.Upsert(new ChannelSkuModel { ChannelCode = "CH1", CskuCode = "CSKU1", Msku = "MSKU1", SupplyPrice = 0m });
+
+        var mappingRepository = new MappingRepository();
+        mappingRepository.UpsertExactRule("CH1", "상품A옵션1", "CSKU1");
+
+        var channelConfig = new ChannelConfig { ChannelCode = "CH1", ChannelName = "테스트채널", ChannelType = ChannelType.General };
+
+        var dataWithoutCache = new SettlementData { ChannelCode = "CH1", ProductName = "상품A", OptionName = "옵션1", Qty = 1, Settlement = 5000m };
+        SettlementLoader.ApplyMappingAndProfit(dataWithoutCache, new SkuMapper(mappingRepository, "CH1"), itemRepository, channelConfig, channelSkuRepository);
+
+        var itemCache = itemRepository.GetAll().ToDictionary(i => i.Sku);
+        var cskuCache = channelSkuRepository.GetAllByChannel("CH1").ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
+        var dataWithCache = new SettlementData { ChannelCode = "CH1", ProductName = "상품A", OptionName = "옵션1", Qty = 1, Settlement = 5000m };
+        SettlementLoader.ApplyMappingAndProfit(dataWithCache, new SkuMapper(mappingRepository, "CH1"), itemRepository, channelConfig, channelSkuRepository, itemCache, cskuCache);
+
+        Assert.AreEqual(dataWithoutCache.Msku, dataWithCache.Msku);
+        Assert.AreEqual(dataWithoutCache.Status, dataWithCache.Status);
+        Assert.AreEqual(dataWithoutCache.Profit, dataWithCache.Profit);
+        Assert.AreEqual("CSKU1", dataWithCache.Msku); // 매핑 규칙의 TargetSku(CSKU코드) 그대로 저장됨
+        Assert.AreEqual(3500m, dataWithCache.Profit); // 5000 - 1500*1 (원가는 MSKU1로 변환해서 조회)
+    }
 }

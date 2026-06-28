@@ -819,6 +819,12 @@ public class SettlementForm : Form
 
         var channelConfigs = _channelConfigService.Load();
         var mapperCache = new Dictionary<string, (SkuMapper Mapper, ChannelConfig Config)>();
+        var cskuCacheByChannel = new Dictionary<string, IReadOnlyDictionary<string, ChannelSkuModel>>();
+        // ApplyMappingAndProfit이 행마다 ItemRepository.GetBySku/ChannelSkuRepository.
+        // ResolveMasterSku를 호출하면 그때마다 새 SQLite 연결을 여는데, 정산 데이터 전체를
+        // 한꺼번에 다시 매핑할 때는 그 비용이 누적돼 수천 건이면 "저장 후 반응 없음"으로 보일
+        // 만큼 느려진다. 한 번만 전체 품목을 읽어 캐시로 넘긴다.
+        var itemCache = _itemRepository.GetAll().ToDictionary(i => i.Sku);
 
         foreach (var data in _settlementRows)
         {
@@ -833,7 +839,13 @@ public class SettlementForm : Form
                 mapperCache[data.ChannelCode] = entry;
             }
 
-            SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, _itemRepository, entry.Config, _channelSkuRepository);
+            if (!cskuCacheByChannel.TryGetValue(data.ChannelCode, out var cskuCache))
+            {
+                cskuCache = _channelSkuRepository.GetAllByChannel(data.ChannelCode).ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
+                cskuCacheByChannel[data.ChannelCode] = cskuCache;
+            }
+
+            SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, _itemRepository, entry.Config, _channelSkuRepository, itemCache, cskuCache);
         }
 
         RefreshProfitAnalysisView();

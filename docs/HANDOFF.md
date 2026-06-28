@@ -7,7 +7,33 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**197/197 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**198/198 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## "저장 후 반응 없음" — ReapplyMappingForAllRows의 N+1 DB 연결 문제 — 2026-06-28
+
+사용자 신고: 조건부 매핑을 설정하고 "규칙 정보 저장"/"상세조건 저장"을 누르면 반응이 없고, 창을
+닫아도 마감/이익분석의 미매핑건에 반영이 안 됨. 원인: 바로 위 항목에서 추가한
+`MappingRulesChanged` → `SettlementForm.ReapplyMappingForAllRows()`가 `_settlementRows`의
+**모든 행에 대해** `SettlementLoader.ApplyMappingAndProfit`을 호출하는데, 이 메서드 안의
+`ChannelSkuRepository.ResolveMasterSku`와 `ItemRepository.GetBySku`가 **호출될 때마다 새
+SQLite 연결을 연다.** 정산파일 1건 로드 때는(원래도 똑같이 행마다 호출됨) 진행창이 떠 있어서
+체감이 안 됐지만, 이번에는 저장 버튼 한 번에 전체 행을 다시 매핑하면서 그 비용이 그대로 누적돼
+(수백~수천 행이면 수백~수천 번의 새 연결) "저장 후 한참 반응 없음"으로 보였던 것 — 멈춘 게
+아니라 그냥 느린 거였지만, 진행 표시가 전혀 없어 멈춘 것처럼 보였다(모달은 다 없앤 상태라 더
+티 안 남).
+
+고침: `ApplyMappingAndProfit`에 `itemCache`/`cskuCache` 선택 인자를 추가(기본값 null이면 기존
+동작 그대로 — 다른 호출부 영향 없음). `ReapplyMappingForAllRows`가 `_itemRepository.GetAll()`을
+**한 번만** 호출해 만든 캐시와, 채널별로 `GetAllByChannel`을 한 번만 호출해 만든 CSKU 캐시를
+넘겨서, 행 수와 무관하게 DB 조회는 channel 개수 + 1번만 일어나게 했다.
+
+`Tests/SettlementLoaderApplyMappingAndProfitTests.cs`에 캐시 있는 경로/없는 경로가 같은 결과를
+내는지 검증하는 테스트 추가(198/198).
+
+**참고**: 정산파일을 처음 로드할 때(`SettlementLoader.cs:194`)도 똑같이 행마다 이 두 조회를
+하므로 이론적으로 같은 비용이 있다 — 다만 그쪽은 LoadingProgressDialog가 떠서 체감이 덜하고,
+실측(이 세션 초반, 실제 샘플파일 1.2초)으로는 문제 되지 않는 걸로 확인됐다. 만약 나중에 대용량
+파일에서 로드 자체가 느리다는 신고가 다시 들어오면, 같은 캐시 패턴을 그 경로에도 적용할 것.
 
 ## 조건부매핑 "예상 매칭 건수"에 정산파일 기준 미리보기 추가 — 2026-06-28
 

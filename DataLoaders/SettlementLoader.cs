@@ -210,7 +210,22 @@ public class SettlementLoader
     /// 마감/이익분석 창에서 미매핑 행에 사용자가 즉석으로 매핑 규칙을 추가했을 때 그 한 행만 다시
     /// 계산하는 용도로도 재사용한다(public).
     /// </summary>
-    public static void ApplyMappingAndProfit(SettlementData data, SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, ChannelSkuRepository channelSkuRepository)
+    /// <param name="itemCache">
+    /// 마스터SKU→ItemModel 캐시(선택). 없으면 매번 <paramref name="itemRepository"/>로 DB를 새로
+    /// 조회한다(행 하나만 다시 계산할 때는 무시할 수 있는 비용). 정산 데이터 전체를 한꺼번에
+    /// 다시 매핑할 때(<c>SettlementForm.ReapplyMappingForAllRows</c>)는 행마다 매번 새 SQLite
+    /// 연결을 여는 비용이 누적돼 수천 건이면 "저장 후 반응 없음"으로 보일 만큼 느려질 수 있어서
+    /// 호출 쪽에서 한 번만 만든 캐시를 넘겨 받는다.
+    /// </param>
+    /// <param name="cskuCache">위와 같은 이유로 채널SKU(CSKU)→마스터SKU 변환도 캐시할 수 있게 한다.</param>
+    public static void ApplyMappingAndProfit(
+        SettlementData data,
+        SkuMapper skuMapper,
+        ItemRepository itemRepository,
+        ChannelConfig channelConfig,
+        ChannelSkuRepository channelSkuRepository,
+        IReadOnlyDictionary<string, ItemModel>? itemCache = null,
+        IReadOnlyDictionary<string, ChannelSkuModel>? cskuCache = null)
     {
         var orderItem = new OfsOrderItem
         {
@@ -230,8 +245,19 @@ public class SettlementLoader
 
         // data.Msku는 매핑 규칙의 TargetSku 값이며, CSKU로 등록되어 있다면 그 자체는 마스터SKU가
         // 아니라 채널 전용 코드일 수 있다. 원가는 항상 실제 마스터SKU 기준이어야 하므로 변환한다.
-        var masterSku = channelSkuRepository.ResolveMasterSku(channelConfig.ChannelCode, data.Msku);
-        var item = itemRepository.GetBySku(masterSku);
+        string masterSku;
+        if (cskuCache != null)
+        {
+            masterSku = cskuCache.TryGetValue(data.Msku, out var csku) ? csku.Msku : data.Msku;
+        }
+        else
+        {
+            masterSku = channelSkuRepository.ResolveMasterSku(channelConfig.ChannelCode, data.Msku);
+        }
+
+        var item = itemCache != null
+            ? itemCache.GetValueOrDefault(masterSku)
+            : itemRepository.GetBySku(masterSku);
         data.ProductGroup = item?.ProductGroup;
         if (item == null)
         {
