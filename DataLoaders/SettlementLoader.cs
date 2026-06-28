@@ -132,6 +132,8 @@ public class SettlementLoader
                 var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
                 var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
                 var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
+                var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
+                var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
 
                 if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName)) continue;
 
@@ -144,6 +146,8 @@ public class SettlementLoader
                     Settlement = settlement,
                     Shipping = shipping,
                     Fee = fee,
+                    Revenue = revenue,
+                    TrackingNo = trackingNo,
                     RawValues = headerToIndexMap.ToDictionary(
                         kv => kv.Key,
                         kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
@@ -188,6 +192,7 @@ public class SettlementLoader
         if (string.IsNullOrWhiteSpace(data.Msku))
         {
             data.Profit = 0m;
+            data.ProductGroup = null;
             return;
         }
 
@@ -195,6 +200,7 @@ public class SettlementLoader
         // 아니라 채널 전용 코드일 수 있다. 원가는 항상 실제 마스터SKU 기준이어야 하므로 변환한다.
         var masterSku = channelSkuRepository.ResolveMasterSku(channelConfig.ChannelCode, data.Msku);
         var item = itemRepository.GetBySku(masterSku);
+        data.ProductGroup = item?.ProductGroup;
         if (item == null)
         {
             data.Status = "원가 정보 없음";

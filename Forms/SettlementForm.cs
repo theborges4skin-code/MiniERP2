@@ -100,22 +100,27 @@ public class SettlementForm : Form
             PersistenceKey = "SettlementForm.SettlementGrid",
             AutoGenerateColumns = false,
         };
+        // 사용자 요청(2026-06-28): 매핑유무/채널/상품그룹/매핑SKU/상품명/옵션명/수량/매출액/배송비
+        // 순으로 고정 노출하고, 채널설정에서 표준필드로 매핑되지 않은 원본파일의 나머지 열은
+        // 이 뒤에 그대로 나열한다(RebuildRawTailColumns) — 판매정보를 상세히 보고 상품을 식별해
+        // 매핑하기 쉽게 하기 위함. 정산액/입출고비/이익액은 손익계산에는 계속 쓰이지만 식별용
+        // 그리드에는 더 이상 노출하지 않는다(상품그룹별 요약 패널에서 확인).
         _settlementGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "매핑유무", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelCode", DataPropertyName = "ChannelCode", Width = 80 },
+            new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 100, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "매핑 SKU", Name = "Msku", DataPropertyName = "Msku", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 220 },
             new DataGridViewTextBoxColumn { HeaderText = "옵션명", Name = "OptionName", DataPropertyName = "OptionName", Width = 180 },
-            new DataGridViewTextBoxColumn { HeaderText = "매핑 SKU", Name = "Msku", DataPropertyName = "Msku", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60 },
-            new DataGridViewTextBoxColumn { HeaderText = "정산액", Name = "Settlement", DataPropertyName = "Settlement", Width = 100 },
-            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "이익액", Name = "Profit", DataPropertyName = "Profit", Width = 100 },
-            new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true }
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 }
         );
         _settlementGrid.RowPrePaint += OnSettlementGridRowPrePaint;
         _settlementGrid.EditingControlShowing += OnSettlementGridEditingControlShowing;
         _settlementGrid.CellValidating += OnSettlementGridCellValidating;
         _settlementGrid.CellEndEdit += OnSettlementGridCellEndEdit;
+        _settlementGrid.CellFormatting += OnSettlementGridCellFormatting;
         SetupSettlementGridContextMenu();
 
         // 99.1: 상단(전체/필터된 목록) + 하단(상품그룹별 요약) 분할. 사용자가 조절한 폭은 기억된다.
@@ -123,7 +128,7 @@ public class SettlementForm : Form
         split.Panel1.Controls.Add(_settlementGrid);
 
         var summaryLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-        summaryLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        summaryLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         summaryLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _summaryTotalsLabel = new Label { Dock = DockStyle.Fill, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
@@ -140,7 +145,7 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 180 },
             new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70 },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70 },
-            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Settlement", DataPropertyName = "Settlement", Width = 110 },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 110 },
             new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 },
             new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90 },
             new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110 }
@@ -177,14 +182,16 @@ public class SettlementForm : Form
             ? _settlementRows.Where(SettlementRowStatus.IsUnresolved)
             : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved);
         _settlementGrid.DataSource = new BindingList<SettlementData>(view.ToList());
+        RebuildRawTailColumns();
 
         var groups = _settlementRows
-            .GroupBy(ResolveProductGroup)
+            .GroupBy(ResolveProductGroupLabel)
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,
                 RowCount = g.Count(),
                 Qty = g.Sum(x => x.Qty),
+                Revenue = g.Sum(x => x.Revenue),
                 Settlement = g.Sum(x => x.Settlement),
                 Shipping = g.Sum(x => x.Shipping),
                 Fee = g.Sum(x => x.Fee),
@@ -203,6 +210,7 @@ public class SettlementForm : Form
                 ProductGroup = TotalRowLabel,
                 RowCount = groups.Sum(g => g.RowCount),
                 Qty = groups.Sum(g => g.Qty),
+                Revenue = groups.Sum(g => g.Revenue),
                 Settlement = groups.Sum(g => g.Settlement),
                 Shipping = groups.Sum(g => g.Shipping),
                 Fee = groups.Sum(g => g.Fee),
@@ -212,6 +220,58 @@ public class SettlementForm : Form
         _summaryGrid.DataSource = new BindingList<ProfitGroupSummary>(rowsWithTotal);
 
         _summaryTotalsLabel.Text = BuildTotalsText(groups, _settlementRows.Count(SettlementRowStatus.IsUnresolved));
+    }
+
+    /// <summary>
+    /// 사용자 요청: 채널설정에서 표준필드로 매핑되지 않은 정산파일 원본 열들을, 고정 9개 열 뒤에
+    /// 그대로 나열한다(판매정보를 상세히 보고 상품을 식별해 매핑하기 쉽게 하기 위함). 채널/파일마다
+    /// 원본 헤더 구성이 달라지므로 로드할 때마다 동적 열을 다시 만든다.
+    /// </summary>
+    private void RebuildRawTailColumns()
+    {
+        for (int i = _settlementGrid.Columns.Count - 1; i >= 0; i--)
+        {
+            if (_settlementGrid.Columns[i].Tag is string) _settlementGrid.Columns.RemoveAt(i);
+        }
+
+        if (_settlementGrid.DataSource is not BindingList<SettlementData> rows || rows.Count == 0) return;
+
+        var channelConfigs = _channelConfigService.Load();
+        var mappedHeaders = rows
+            .Select(r => r.ChannelCode)
+            .Distinct()
+            .SelectMany(code => (IEnumerable<FieldMapping>?)channelConfigs.FirstOrDefault(c => c.ChannelCode == code)?.SettlementFieldMappings.Values ?? [])
+            .Where(m => !string.IsNullOrEmpty(m.Column))
+            .Select(m => m.Column!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var rawHeaders = rows
+            .Where(r => r.RawValues != null)
+            .SelectMany(r => r.RawValues!.Keys)
+            .Distinct()
+            .Where(h => !mappedHeaders.Contains(h))
+            .ToList();
+
+        foreach (var header in rawHeaders)
+        {
+            _settlementGrid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = $"Raw_{_settlementGrid.Columns.Count}",
+                HeaderText = header,
+                Tag = header,
+                ReadOnly = true,
+                Width = 150,
+            });
+        }
+    }
+
+    private void OnSettlementGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (_settlementGrid.Columns[e.ColumnIndex].Tag is not string rawHeader) return;
+        if (_settlementGrid.Rows[e.RowIndex].DataBoundItem is not SettlementData data) return;
+
+        e.Value = data.RawValues?.GetValueOrDefault(rawHeader, string.Empty);
+        e.FormattingApplied = true;
     }
 
     private void OnSummaryGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
@@ -230,22 +290,25 @@ public class SettlementForm : Form
     {
         if (_settlementRows.Count == 0) return "전체 0건";
 
+        var (shipmentCount, isEstimated) = ComputeActualShipmentCount();
+        var shipmentNote = isEstimated ? "송장번호 없음 — 배송비÷3,000원으로 추정" : "송장번호 기준(중복 제외)";
+
         return $"전체 {_settlementRows.Count}건 (미매핑/확인필요 {unresolvedCount}건) | " +
-               $"매출액 합계 {groups.Sum(g => g.Settlement):N0} | 수량 합계 {groups.Sum(g => g.Qty):N0}개 | " +
-               $"순이익 합계 {groups.Sum(g => g.Profit):N0} | 배송비 합계 {groups.Sum(g => g.Shipping):N0} | 입출고비 합계 {groups.Sum(g => g.Fee):N0}";
+               $"매출액 합계 {groups.Sum(g => g.Revenue):N0} | 수량 합계 {groups.Sum(g => g.Qty):N0}개 | " +
+               $"순이익 합계 {groups.Sum(g => g.Profit):N0} | 배송비 합계 {groups.Sum(g => g.Shipping):N0} | 입출고비 합계 {groups.Sum(g => g.Fee):N0}\n" +
+               $"실제발송송장수: {shipmentCount:N0}건 ({shipmentNote})";
     }
 
+    private (int Count, bool IsEstimated) ComputeActualShipmentCount() => ShipmentCountEstimator.Compute(_settlementRows);
+
     /// <summary>
-    /// SettlementData.Msku는 매핑 규칙의 TargetSku(CSKU 코드일 수 있음)이므로, 마스터SKU로 변환한
-    /// 뒤 마스터DB의 상품그룹을 찾는다.
+    /// SettlementData.ProductGroup은 SettlementLoader가 매핑 시점에 채워둔다(마스터SKU의
+    /// 상품그룹). 미매핑/그룹 미지정 행은 요약에서 구분할 수 있게 라벨을 보정한다.
     /// </summary>
-    private string ResolveProductGroup(SettlementData data)
+    private static string ResolveProductGroupLabel(SettlementData data)
     {
         if (string.IsNullOrWhiteSpace(data.Msku)) return "(미매핑)";
-
-        var masterSku = _channelSkuRepository.ResolveMasterSku(data.ChannelCode, data.Msku);
-        var item = _itemRepository.GetBySku(masterSku);
-        return string.IsNullOrWhiteSpace(item?.ProductGroup) ? "(미지정)" : item.ProductGroup!;
+        return string.IsNullOrWhiteSpace(data.ProductGroup) ? "(미지정)" : data.ProductGroup!;
     }
 
     private async void OnLoadSettlementClick(object? sender, EventArgs e)
@@ -421,7 +484,7 @@ public class SettlementForm : Form
         }
     }
 
-    private static readonly string[] DetailHeaders = ["채널", "상품명", "옵션명", "매핑SKU", "수량", "정산액", "배송비", "입출고비", "이익액", "상태"];
+    private static readonly string[] DetailHeaders = ["채널", "상품그룹", "상품명", "옵션명", "매핑SKU", "수량", "매출액", "정산액", "배송비", "입출고비", "이익액", "상태"];
 
     /// <summary>
     /// SalesManagerV2의 다중 시트 결과 저장 양식(상세/요약/미매핑/원본)을 참고해, "분석결과상세"와
@@ -436,15 +499,17 @@ public class SettlementForm : Form
         foreach (var data in rows)
         {
             sheet.Cells[row, 1].Value = data.ChannelCode;
-            sheet.Cells[row, 2].Value = data.ProductName;
-            sheet.Cells[row, 3].Value = data.OptionName;
-            sheet.Cells[row, 4].Value = data.Msku;
-            sheet.Cells[row, 5].Value = data.Qty;
-            sheet.Cells[row, 6].Value = data.Settlement;
-            sheet.Cells[row, 7].Value = data.Shipping;
-            sheet.Cells[row, 8].Value = data.Fee;
-            sheet.Cells[row, 9].Value = data.Profit;
-            sheet.Cells[row, 10].Value = data.Status;
+            sheet.Cells[row, 2].Value = ResolveProductGroupLabel(data);
+            sheet.Cells[row, 3].Value = data.ProductName;
+            sheet.Cells[row, 4].Value = data.OptionName;
+            sheet.Cells[row, 5].Value = data.Msku;
+            sheet.Cells[row, 6].Value = data.Qty;
+            sheet.Cells[row, 7].Value = data.Revenue;
+            sheet.Cells[row, 8].Value = data.Settlement;
+            sheet.Cells[row, 9].Value = data.Shipping;
+            sheet.Cells[row, 10].Value = data.Fee;
+            sheet.Cells[row, 11].Value = data.Profit;
+            sheet.Cells[row, 12].Value = data.Status;
             row++;
         }
         sheet.Cells.AutoFitColumns();
@@ -456,12 +521,13 @@ public class SettlementForm : Form
         for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         var groups = _settlementRows
-            .GroupBy(ResolveProductGroup)
+            .GroupBy(ResolveProductGroupLabel)
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,
                 RowCount = g.Count(),
                 Qty = g.Sum(x => x.Qty),
+                Revenue = g.Sum(x => x.Revenue),
                 Settlement = g.Sum(x => x.Settlement),
                 Shipping = g.Sum(x => x.Shipping),
                 Fee = g.Sum(x => x.Fee),
@@ -476,7 +542,7 @@ public class SettlementForm : Form
             sheet.Cells[row, 1].Value = g.ProductGroup;
             sheet.Cells[row, 2].Value = g.RowCount;
             sheet.Cells[row, 3].Value = g.Qty;
-            sheet.Cells[row, 4].Value = g.Settlement;
+            sheet.Cells[row, 4].Value = g.Revenue;
             sheet.Cells[row, 5].Value = g.Shipping;
             sheet.Cells[row, 6].Value = g.Fee;
             sheet.Cells[row, 7].Value = g.Profit;
@@ -486,11 +552,17 @@ public class SettlementForm : Form
         sheet.Cells[row, 1].Value = TotalRowLabel;
         sheet.Cells[row, 2].Value = groups.Sum(g => g.RowCount);
         sheet.Cells[row, 3].Value = groups.Sum(g => g.Qty);
-        sheet.Cells[row, 4].Value = groups.Sum(g => g.Settlement);
+        sheet.Cells[row, 4].Value = groups.Sum(g => g.Revenue);
         sheet.Cells[row, 5].Value = groups.Sum(g => g.Shipping);
         sheet.Cells[row, 6].Value = groups.Sum(g => g.Fee);
         sheet.Cells[row, 7].Value = groups.Sum(g => g.Profit);
         sheet.Cells[row, 1, row, 7].Style.Font.Bold = true;
+
+        var (shipmentCount, isEstimated) = ComputeActualShipmentCount();
+        row += 2;
+        sheet.Cells[row, 1].Value = "실제발송송장수";
+        sheet.Cells[row, 2].Value = shipmentCount;
+        sheet.Cells[row, 3].Value = isEstimated ? "송장번호 없음 — 배송비÷3,000원으로 추정" : "송장번호 기준(중복 제외)";
 
         sheet.Cells.AutoFitColumns();
     }

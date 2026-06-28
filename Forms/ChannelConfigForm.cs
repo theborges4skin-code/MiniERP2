@@ -36,11 +36,28 @@ public class ChannelConfigForm : Form
         StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
     ];
 
-    private static readonly StdField[] SettlementMappingFields =
+    /// <summary>
+    /// 쿠팡그로스 외 모든 채널의 정산서 매핑 표준필드(2026-06-28 사용자 요청으로 전면 교체).
+    /// 매핑유무/채널/상품그룹/매핑SKU는 채널설정이 아니라 마감/이익분석 화면에서 자동으로
+    /// 채워지는 값이라 여기 목록에는 없다. 이익액은 일부러 빠져있다 — 이 앱이 원가기반으로
+    /// 자동 계산하므로 정산파일에서 읽어올 필요가 없다(마감/이익분석 결과에서만 도출됨).
+    /// 정산액은 손익계산의 기준값으로는 계속 쓰이지만, 식별용 그리드에는 더 이상 노출하지 않는다.
+    /// </summary>
+    private static readonly StdField[] SettlementMappingFieldsDefault =
+    [
+        StdField.ProductName, StdField.OptionName, StdField.Quantity,
+        StdField.Revenue, StdField.ShippingFee, StdField.SettlementAmount, StdField.TrackingNo,
+    ];
+
+    /// <summary>쿠팡그로스는 사용자 요청에 따라 기존 6필드/손익공식을 그대로 유지한다.</summary>
+    private static readonly StdField[] SettlementMappingFieldsCoupangGrowth =
     [
         StdField.ProductName, StdField.OptionName, StdField.Quantity,
         StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
     ];
+
+    private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) =>
+        config.ChannelType == ChannelType.CoupangGrowth ? SettlementMappingFieldsCoupangGrowth : SettlementMappingFieldsDefault;
 
     public ChannelConfigForm()
     {
@@ -136,6 +153,14 @@ public class ChannelConfigForm : Form
     private void OnConfigPropertyValueChanged(object? sender, PropertyValueChangedEventArgs e)
     {
         if (_currentConfig == null) return;
+
+        // 채널유형(특히 쿠팡그로스 ↔ 그 외)에 따라 정산서 매핑의 표준필드 목록 자체가 달라지므로,
+        // 유형을 바꾸면 그 즉시 정산서 매핑 그리드를 새 필드 목록으로 다시 그린다.
+        if (e.ChangedItem.PropertyDescriptor?.Name == nameof(ChannelConfig.ChannelType))
+        {
+            _settlementMappingGrid.DataSource = BuildFieldMappingRows(ResolveSettlementMappingFields(_currentConfig), _currentConfig.SettlementFieldMappings);
+        }
+
         if (e.ChangedItem.PropertyDescriptor?.Name != nameof(ChannelConfig.ChannelName)) return;
 
         var channel = _channels.FirstOrDefault(c => c.ChannelCode == _currentConfig.ChannelCode);
@@ -314,7 +339,7 @@ public class ChannelConfigForm : Form
     {
         _currentConfig = config;
         _orderMappingGrid.DataSource = BuildFieldMappingRows(OrderMappingFields, config.OrderFieldMappings);
-        _settlementMappingGrid.DataSource = BuildFieldMappingRows(SettlementMappingFields, config.SettlementFieldMappings);
+        _settlementMappingGrid.DataSource = BuildFieldMappingRows(ResolveSettlementMappingFields(config), config.SettlementFieldMappings);
         LoadCourierOverrideGrid(config);
     }
 
@@ -476,6 +501,8 @@ public class ChannelConfigForm : Form
         StdField.Address => "주소",
         StdField.DeliveryMessage => "배송메세지",
         StdField.OrderDate => "발주일(누적발주서용)",
+        StdField.Revenue => "매출액",
+        StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
         _ => field.ToString(),
     };
 

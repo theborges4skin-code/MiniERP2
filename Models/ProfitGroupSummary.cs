@@ -8,6 +8,7 @@ public class ProfitGroupSummary
     public string ProductGroup { get; set; } = string.Empty;
     public int RowCount { get; set; }
     public int Qty { get; set; }
+    public decimal Revenue { get; set; }
     public decimal Settlement { get; set; }
     public decimal Shipping { get; set; }
     public decimal Fee { get; set; }

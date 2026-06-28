@@ -7,7 +7,52 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**186/186 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**190/190 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 정산서 매핑 표준필드 전면 교체 + 마감/이익분석 그리드 재구성 — 2026-06-28
+
+사용자가 채널설정의 정산서 매핑 표준필드를 다시 설계해달라고 요청. 먼저 현재 등록된 채널
+15개 + 각 채널이 실제로 채워둔 표준필드 현황을 `channels_config.json`에서 뽑아 보여주고,
+사용자가 원하는 새 필드 목록을 받았다. 구현 전 핵심 설계 두 가지를 `AskUserQuestion`으로 확인:
+(1) "이익액"을 표준필드로 두지 않고 — 정산파일에서 직접 읽지 않고 마감/이익분석에서만 도출(=
+기존처럼 원가기반 자동계산, ProfitCalculator 로직은 전혀 바꾸지 않음), (2) "실제발송송장수"는
+행 단위가 아니라 별도 요약 패널에만 표시(기존 "쿠팡일반 배송비 첫행집계" 패턴은 안 씀).
+
+**채널설정 — 정산서 매핑 표준필드** (`Forms/ChannelConfigForm.cs`): 쿠팡그로스(ChannelType.
+CoupangGrowth)만 기존 6필드(상품명/옵션명/수량/정산액/배송비/입출고비)를 그대로 유지하고,
+**그 외 모든 채널은** 상품명/옵션명/수량/**매출액**/배송비/정산액/**실제발송송장수** 7필드로
+교체했다(`SettlementMappingFieldsDefault` vs `SettlementMappingFieldsCoupangGrowth`,
+`ResolveSettlementMappingFields(config)`로 분기). PropertyGrid에서 채널유형을 바꾸면 그 즉시
+정산서 매핑 그리드가 새 필드 목록으로 다시 그려진다. `StdField` enum에 `Revenue`(매출액)/
+`TrackingNo`(실제발송송장수 = 원본 송장번호 열) 신설 — 기존 enum 값은 그대로 두고 끝에
+추가했고, JSON 직렬화가 enum 이름 기준이라(숫자 아님) 기존 channels_config.json과 100% 호환.
+
+**SettlementLoader/SettlementData**: `Revenue`(decimal)/`TrackingNo`(string?)/`ProductGroup`
+(string?, 매핑 시점에 마스터SKU의 상품그룹을 캐싱) 3개 속성 신설. `ApplyMappingAndProfit`이
+매핑될 때마다 `ProductGroup`도 함께 채운다 — 손익계산 자체(ProfitCalculator 호출부)는 전혀
+바꾸지 않았다(정산액=Settlement 기준 그대로).
+
+**마감/이익분석 메인 그리드 재구성** (`Forms/SettlementForm.cs`): 사용자 지정 순서대로
+**매핑유무(Status)/채널/상품그룹/매핑SKU/상품명/옵션명/수량/매출액/배송비** 9열만 고정 노출하고
+(정산액/입출고비/이익액은 그리드에서 뺐다 — 계산엔 계속 쓰이지만 식별용 그리드엔 더 이상 안
+보여줌, 대신 하단 상품그룹별 요약 패널에서 확인), **그 뒤에 채널설정에서 표준필드로 매핑되지
+않은 정산파일의 원본 열을 전부 그대로 나열**한다(`RebuildRawTailColumns` — 로드된 행들의
+`RawValues` 키 합집합에서, 현재 행들이 속한 채널들의 매핑된 Column 이름을 빼고 남은 헤더를
+동적 열로 추가, `CellFormatting`으로 값을 채움). 목적: 판매정보를 상세히 눈으로 보고 어떤
+상품인지 파악해서 매핑하기 쉽게 하는 것 — 채널/파일마다 원본 헤더가 달라 로드할 때마다
+동적 열을 다시 만든다.
+
+**"실제발송송장수" 요약**: 새 `Utils/ShipmentCountEstimator.cs`(순수 로직, 테스트 가능하게
+분리) — 매핑된 송장번호(TrackingNo)가 있으면 중복 제거한 개수, 전혀 없으면(쿠팡처럼 정산파일에
+송장번호 열이 없는 경우) 배송비 총계 ÷ 3,000원으로 추정. 그리드에는 행 단위로 안 보이고
+`_summaryTotalsLabel`(2번째 줄) + 엑셀 내보내기의 "분석요약(상품그룹별)" 시트 하단에만 표시.
+
+**상품그룹별 요약/엑셀 내보내기**: "매출액" 칸이 기존엔 실수로 정산액(Settlement)을 보여주고
+있었는데, 이번에 진짜 매출액(Revenue) 합계로 고쳤다. "분석결과상세" 시트에도 상품그룹/매출액
+열을 추가.
+
+새 테스트 4개(`SettlementLoaderRevenueAndTrackingNoTests`, `ShipmentCountEstimatorTests` 3개),
+190/190 통과.
 
 ## 마감/이익분석 미매핑 행 즉석 매핑 — 1:1 자동완성 + 우클릭 메뉴 4종 — 2026-06-28
 
