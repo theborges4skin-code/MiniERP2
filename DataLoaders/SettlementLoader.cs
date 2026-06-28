@@ -124,18 +124,32 @@ public class SettlementLoader
                 auxMainKeyColumns[auxSource.TargetStdField] = mainKeyCol;
             }
 
+            // 엑셀 파일에 실제 데이터보다 훨씬 뒤까지 서식(테두리/배경색 등)이 적용되어 있으면,
+            // EPPlus의 worksheet.Dimension이 그 서식 범위까지를 "데이터 범위"로 보고해 실제로는
+            // 비어있는 수만~수십만 행을 끝까지 순회하게 된다(파일에 보이는 데이터 양과 무관하게
+            // 로드가 느려지는 가장 흔한 원인). 상품명/옵션명이 모두 빈 행이 일정 수 이상 연속되면
+            // 더 이상 실제 데이터가 없다고 보고 그 지점에서 멈춘다.
+            const int maxConsecutiveBlankRows = 200;
+            var consecutiveBlankRows = 0;
+
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
                 var productName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName);
                 var optionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName);
+
+                if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName))
+                {
+                    if (++consecutiveBlankRows >= maxConsecutiveBlankRows) break;
+                    continue;
+                }
+                consecutiveBlankRows = 0;
+
                 var qty = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qtyValue) ? qtyValue : 0;
                 var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
                 var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
                 var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
                 var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
                 var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
-
-                if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName)) continue;
 
                 var settlementData = new SettlementData
                 {
