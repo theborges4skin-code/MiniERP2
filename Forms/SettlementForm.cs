@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.DataLoaders;
@@ -176,19 +177,35 @@ public class SettlementForm : Form
     /// </summary>
     private const string TotalRowLabel = "합계";
 
+    /// <summary>진단용: RefreshProfitAnalysisView 내부 단계별 소요 시간(가장 최근 호출 기준).</summary>
+    public string LastRefreshDiagnostics { get; private set; } = string.Empty;
+
     private void RefreshProfitAnalysisView()
     {
+        var totalStopwatch = Stopwatch.StartNew();
+
+        var filterStopwatch = Stopwatch.StartNew();
         var view = _unmappedOnlyCheckBox.Checked
             ? _settlementRows.Where(SettlementRowStatus.IsUnresolved).ToList()
             : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved).ToList();
+        filterStopwatch.Stop();
 
         // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
         // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
         // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
+        var unbindStopwatch = Stopwatch.StartNew();
         _settlementGrid.DataSource = null;
-        RebuildRawTailColumns(view);
-        _settlementGrid.DataSource = new BindingList<SettlementData>(view);
+        unbindStopwatch.Stop();
 
+        var rebuildColumnsStopwatch = Stopwatch.StartNew();
+        RebuildRawTailColumns(view);
+        rebuildColumnsStopwatch.Stop();
+
+        var bindStopwatch = Stopwatch.StartNew();
+        _settlementGrid.DataSource = new BindingList<SettlementData>(view);
+        bindStopwatch.Stop();
+
+        var summaryStopwatch = Stopwatch.StartNew();
         var groups = _settlementRows
             .GroupBy(ResolveProductGroupLabel)
             .Select(g => new ProfitGroupSummary
@@ -225,6 +242,12 @@ public class SettlementForm : Form
         _summaryGrid.DataSource = new BindingList<ProfitGroupSummary>(rowsWithTotal);
 
         _summaryTotalsLabel.Text = BuildTotalsText(groups, _settlementRows.Count(SettlementRowStatus.IsUnresolved));
+        summaryStopwatch.Stop();
+        totalStopwatch.Stop();
+
+        LastRefreshDiagnostics = $"필터링 {filterStopwatch.Elapsed.TotalSeconds:F2}s, 그리드분리 {unbindStopwatch.Elapsed.TotalSeconds:F2}s, " +
+            $"원본열구성 {rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s, 데이터바인딩 {bindStopwatch.Elapsed.TotalSeconds:F2}s, " +
+            $"요약집계 {summaryStopwatch.Elapsed.TotalSeconds:F2}s, 합계 {totalStopwatch.Elapsed.TotalSeconds:F2}s";
     }
 
     /// <summary>
@@ -358,6 +381,7 @@ public class SettlementForm : Form
         {
             _settingsService.SetLastFolder("SettlementLoad", Path.GetDirectoryName(ofd.FileNames[0])!);
 
+            var loadStopwatch = Stopwatch.StartNew();
             for (int i = 0; i < ofd.FileNames.Length; i++)
             {
                 var file = ofd.FileNames[i];
@@ -375,11 +399,26 @@ public class SettlementForm : Form
                 if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
             }
+            loadStopwatch.Stop();
 
+            progressDialog.SetIndeterminate("화면을 갱신하는 중입니다...");
+            var refreshStopwatch = Stopwatch.StartNew();
             RefreshProfitAnalysisView();
+            refreshStopwatch.Stop();
 
             var unresolvedCount = _settlementRows.Count(SettlementRowStatus.IsUnresolved);
-            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건)";
+            // 진단용(2026-06-28, 성능 신고 추적 중): 어느 단계가 느린지 사용자가 바로 알 수 있도록
+            // 단계별 소요 시간을 상태표시줄 + 안내창으로 함께 보여준다. 원인이 확인되면 안내창은 빼고
+            // 상태표시줄 표시만 남길 것(또는 완전히 제거).
+            var diagnosticsText = $"파일처리 {loadStopwatch.Elapsed.TotalSeconds:F1}s / 화면갱신 {refreshStopwatch.Elapsed.TotalSeconds:F1}s ({LastRefreshDiagnostics})";
+            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]";
+
+            if (loadStopwatch.Elapsed.TotalSeconds > 5 || refreshStopwatch.Elapsed.TotalSeconds > 5)
+            {
+                MessageBox.Show(
+                    $"[진단용] 처리 단계별 소요 시간입니다. 이 내용을 그대로 알려주시면 원인 파악에 도움이 됩니다.\n\n{diagnosticsText}",
+                    "처리 시간 진단", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
 
             // 99.1: 미매핑/원가없음 등 확인이 필요한 건이 있으면 안내한다(목록 상단/필터로 이미 노출됨).
             if (unresolvedCount > 0)
