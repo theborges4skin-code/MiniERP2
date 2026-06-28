@@ -141,6 +141,7 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90 },
             new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110 }
         );
+        _summaryGrid.RowPrePaint += OnSummaryGridRowPrePaint;
 
         summaryLayout.Controls.Add(_summaryTotalsLabel, 0, 0);
         summaryLayout.Controls.Add(_summaryGrid, 0, 1);
@@ -164,6 +165,8 @@ public class SettlementForm : Form
     /// "결과 저장"/"엑셀로 내보내기"는 항상 <see cref="_settlementRows"/>(원본 전체)을 직접 참조하므로
     /// 여기서 그리드에 보여주는 필터링된 뷰와 무관하게 항상 전체 데이터를 대상으로 동작한다.
     /// </summary>
+    private const string TotalRowLabel = "합계";
+
     private void RefreshProfitAnalysisView()
     {
         var view = _unmappedOnlyCheckBox.Checked
@@ -185,9 +188,38 @@ public class SettlementForm : Form
             })
             .OrderByDescending(s => s.Profit)
             .ToList();
-        _summaryGrid.DataSource = new BindingList<ProfitGroupSummary>(groups);
+
+        // 사용자 요청: 합계를 라벨 텍스트로만 보여주니 가시성이 떨어졌다 — 그리드 맨 아래에
+        // 별도 행으로 추가하고(OnSummaryGridRowPrePaint) 굵게 강조한다.
+        var rowsWithTotal = groups.ToList();
+        if (groups.Count > 0)
+        {
+            rowsWithTotal.Add(new ProfitGroupSummary
+            {
+                ProductGroup = TotalRowLabel,
+                RowCount = groups.Sum(g => g.RowCount),
+                Qty = groups.Sum(g => g.Qty),
+                Settlement = groups.Sum(g => g.Settlement),
+                Shipping = groups.Sum(g => g.Shipping),
+                Fee = groups.Sum(g => g.Fee),
+                Profit = groups.Sum(g => g.Profit),
+            });
+        }
+        _summaryGrid.DataSource = new BindingList<ProfitGroupSummary>(rowsWithTotal);
 
         _summaryTotalsLabel.Text = BuildTotalsText(groups, _settlementRows.Count(SettlementRowStatus.IsUnresolved));
+    }
+
+    private void OnSummaryGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _summaryGrid.Rows.Count) return;
+
+        var row = _summaryGrid.Rows[e.RowIndex];
+        if (row.DataBoundItem is not ProfitGroupSummary summary) return;
+
+        row.DefaultCellStyle.Font = summary.ProductGroup == TotalRowLabel
+            ? new Font(_summaryGrid.Font, FontStyle.Bold)
+            : _summaryGrid.Font;
     }
 
     private string BuildTotalsText(List<ProfitGroupSummary> groups, int unresolvedCount)
@@ -447,7 +479,7 @@ public class SettlementForm : Form
             row++;
         }
 
-        sheet.Cells[row, 1].Value = "합계";
+        sheet.Cells[row, 1].Value = TotalRowLabel;
         sheet.Cells[row, 2].Value = groups.Sum(g => g.RowCount);
         sheet.Cells[row, 3].Value = groups.Sum(g => g.Qty);
         sheet.Cells[row, 4].Value = groups.Sum(g => g.Settlement);

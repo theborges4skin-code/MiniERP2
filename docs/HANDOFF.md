@@ -9,6 +9,16 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **185/185 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 마감/이익분석 하단 요약 그리드에 합계 행 추가 — 2026-06-28
+
+사용자 피드백: 상품그룹별 요약 하단에 합계를 라벨 텍스트(`_summaryTotalsLabel`)로만 보여주니
+가시성이 떨어진다 — 그리드 안에 별도 행으로 보이고 굵게 표시해달라는 요청.
+`RefreshProfitAnalysisView()`가 집계한 `groups` 리스트 끝에 `ProductGroup = "합계"`인
+`ProfitGroupSummary` 행을 하나 더 추가해서 `_summaryGrid`에 바인딩하고,
+`OnSummaryGridRowPrePaint`에서 그 행만 `FontStyle.Bold`로 그린다(라벨 텍스트는 그대로 유지 —
+두 가지를 같이 보여줌). 엑셀 내보내기의 "분석요약(상품그룹별)" 시트에 이미 있던 합계 행과 라벨
+문자열을 `TotalRowLabel` 상수로 통일했다.
+
 ## 광고매핑 분석결과 내보내기 — SalesManagerV2 ad_engine.py의 save_results 그대로 이식 — 2026-06-28
 
 사용자가 "광고매핑/광고분석 결과 파일도 SalesManagerV2를 참고해서 그대로 이식해달라"고 요청.
