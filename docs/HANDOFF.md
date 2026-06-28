@@ -9,6 +9,29 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **191/191 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 성능 3 — DataGridView에 데이터를 먼저 바인딩한 뒤 동적 열을 추가하던 문제 — 2026-06-28
+
+성능 1(연결 캐싱)·2(빈 행 가드) 적용 후, 실제 운영 DB+규칙(스마트 채널, Exact 49건/Condition
+128건)으로 1,787행 샘플 파일을 직접 벤치마크해보니 `SettlementLoader.LoadFromFileAsync` 자체는
+1.2초였다(`Tests/_TempRealFileBenchmark.cs`로 임시 측정 후 삭제 — 외부 절대경로에 의존해 커밋
+대상이 아님). 그런데 사용자는 "파일 로드는 빠른데 그 다음 '처리중...' 안내창에서 5분 넘게
+걸린다"고 재신고 — 로더 자체가 아니라 **로더가 끝난 뒤 UI 쪽 처리**가 원인이라는 뜻이었다.
+
+원인을 찾아보니 `Forms/SettlementForm.cs`의 `RefreshProfitAnalysisView()`가
+`_settlementGrid.DataSource = new BindingList<SettlementData>(...)`로 **먼저 수천 행을
+바인딩한 뒤**, `RebuildRawTailColumns()`에서 원본 미매핑 열(채널마다 30~40개)을 `Columns.Add()`로
+**하나씩** 추가하고 있었다. DataGridView는 이미 수천 행이 바인딩된 상태에서 열을 추가할 때마다
+전체 재배치를 하므로, 열 30~40개 × 행 1,787개 규모면 수 분까지 걸릴 수 있다 — WinForms
+DataGridView의 잘 알려진 함정이다.
+
+**고침**: 순서를 뒤집었다 — `DataSource = null`로 바인딩을 끊은 뒤 동적 열을 전부 추가하고,
+맨 마지막에 `DataSource`를 한 번만 다시 설정한다. `RebuildRawTailColumns`도 그리드의
+`DataSource`를 읽던 것에서 호출 측이 넘겨주는 행 리스트를 직접 받도록 바꿔(`List<SettlementData>
+rows` 매개변수), 바인딩이 끊긴 상태에서도 동작하게 했다. UI 레이아웃 타이밍 이슈라 전용
+유닛테스트는 만들지 않았다(기존 컨벤션상 WinForms 레이아웃/타이밍은 단위테스트 대상이 아님) —
+191/191 통과로 회귀 없음만 확인. 다음에 같은 신고가 오면 이 패턴(데이터 바인딩 후 컬럼
+추가/제거)이 다른 그리드에도 있는지 확인할 것.
+
 ## 성능 2 — EPPlus worksheet.Dimension이 실제 데이터보다 훨씬 크게 잡히는 문제 — 2026-06-28
 
 SqliteConnectionFactory 캐싱(아래 "성능 1") 이후에도 사용자가 여전히 느리다고 재신고. 데이터가

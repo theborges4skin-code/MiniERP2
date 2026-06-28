@@ -179,10 +179,15 @@ public class SettlementForm : Form
     private void RefreshProfitAnalysisView()
     {
         var view = _unmappedOnlyCheckBox.Checked
-            ? _settlementRows.Where(SettlementRowStatus.IsUnresolved)
-            : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved);
-        _settlementGrid.DataSource = new BindingList<SettlementData>(view.ToList());
-        RebuildRawTailColumns();
+            ? _settlementRows.Where(SettlementRowStatus.IsUnresolved).ToList()
+            : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved).ToList();
+
+        // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
+        // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
+        // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
+        _settlementGrid.DataSource = null;
+        RebuildRawTailColumns(view);
+        _settlementGrid.DataSource = new BindingList<SettlementData>(view);
 
         var groups = _settlementRows
             .GroupBy(ResolveProductGroupLabel)
@@ -227,14 +232,14 @@ public class SettlementForm : Form
     /// 그대로 나열한다(판매정보를 상세히 보고 상품을 식별해 매핑하기 쉽게 하기 위함). 채널/파일마다
     /// 원본 헤더 구성이 달라지므로 로드할 때마다 동적 열을 다시 만든다.
     /// </summary>
-    private void RebuildRawTailColumns()
+    private void RebuildRawTailColumns(List<SettlementData> rows)
     {
         for (int i = _settlementGrid.Columns.Count - 1; i >= 0; i--)
         {
             if (_settlementGrid.Columns[i].Tag is string) _settlementGrid.Columns.RemoveAt(i);
         }
 
-        if (_settlementGrid.DataSource is not BindingList<SettlementData> rows || rows.Count == 0) return;
+        if (rows.Count == 0) return;
 
         var channelConfigs = _channelConfigService.Load();
         var mappedHeaders = rows
