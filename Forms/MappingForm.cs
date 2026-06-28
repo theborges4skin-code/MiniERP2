@@ -1325,6 +1325,19 @@ public class MappingForm : Form
             return;
         }
 
+        SelectConditionRule(rule);
+    }
+
+    /// <summary>
+    /// "조건부 매핑(상세)" 탭의 키/대상SKU/조건 그리드를 채우는 실제 로직. <see cref="_conditionRuleGrid"/>
+    /// 가 화면에 추가되지 않은(핸들이 생성되지 않은) 그리드라 <c>SelectionChanged</c> 이벤트가 항상
+    /// 믿을 수 있게 발생하지 않는다 — 특히 <see cref="StartNewConditionRuleFor"/>처럼 막 만든 새
+    /// 규칙을 프로그램적으로 선택할 때 이벤트가 발생하지 않아 화면이 빈 채로 남는 버그가 있었다("조건부
+    /// 매핑창이 뜨지만 키/대상SKU/조건이 전부 빈칸으로 멈춘 것처럼 보임" 신고). 그래서
+    /// <see cref="SelectConditionRuleById"/>가 이벤트에 의존하지 않고 이 메서드를 직접 호출한다.
+    /// </summary>
+    private void SelectConditionRule(MappingRule rule)
+    {
         _selectedConditionRuleId = rule.Id;
         _conditionKeyTextBox.Text = rule.Key;
         _conditionTargetSkuTextBox.Text = rule.TargetSku;
@@ -1371,8 +1384,7 @@ public class MappingForm : Form
     /// 다른 창(마감/이익분석 등)에서 미매핑 행의 상품명/옵션명을 조건으로 바로 조건부 매핑 규칙을
     /// 만들고 싶을 때 호출하는 진입점. 채널을 선택하고, 상품명/옵션명을 Contains 조건으로 채운
     /// 새 규칙을 만들어 "조건부 매핑(상세)" 탭에서 바로 다듬을 수 있게 한다.
-    /// </summary>
-    /// <summary>
+    ///
     /// 마감/이익분석창에서 "조건부 매핑 규칙 추가"로 이 창을 막 열거나 앞으로 가져온 직후(같은 틱)
     /// 호출된다. 채널을 바꿀 때 쓰는 일반 경로(<see cref="LoadRulesForSelectedChannel"/>)는 저장
     /// 확인 모달을 띄울 수 있는데, 창이 막 보이게 된 직후 같은 틱에서 모달을 띄우면 그 모달이
@@ -1402,11 +1414,14 @@ public class MappingForm : Form
         }
 
         var summaryKey = $"{productName} {optionName}".Trim();
+        // 이 시점의 새 규칙은 대상SKU가 아직 비어 있어(사용자가 "조건부 매핑(상세)" 탭에서 마무리
+        // 해야 함) 실제로 매핑되는 건 없다 — 여기서 MappingRulesChanged를 굳이 호출하지 않는다(이
+        // 창을 막 띄운 같은 흐름에서 마감/이익분석의 무거운 재계산을 재진입시키는 위험도 피한다).
+        // 실제로 매핑이 완성되는 시점(상세조건/요약 저장)에 그쪽에서 이벤트를 발생시킨다.
         var newRuleId = _mappingRepository.AddConditionRuleWithDetails(channelCode, summaryKey, string.Empty, details);
         LoadConditionRules(channelCode);
         SelectConditionRuleById(newRuleId);
         _ruleTabControl.SelectedTab = _conditionDetailTabPage;
-        MappingRulesChanged?.Invoke();
     }
 
     /// <summary>
@@ -1436,6 +1451,9 @@ public class MappingForm : Form
             if (row.DataBoundItem is MappingRule rule && rule.Id == ruleId)
             {
                 _conditionRuleGrid.CurrentCell = row.Cells[0];
+                // CurrentCell 대입만으로는 SelectionChanged가 안 발생할 수 있어(_conditionRuleGrid가
+                // 화면에 없는 그리드라 핸들이 없음) 직접 채운다.
+                SelectConditionRule(rule);
                 break;
             }
         }

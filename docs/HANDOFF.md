@@ -9,6 +9,30 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## "조건부매핑(상세)" 탭이 빈칸으로 멈춤 — 진짜 원인 정정 — 2026-06-28
+
+바로 위 항목에서 고친 게 진짜 원인이 아니었다(사용자가 직접 스크린샷으로 재현 — 창은 뜨고
+버튼 클릭도 되는데, 키/대상SKU/조건 그리드가 전부 빈칸인 채로 멈춤). 진짜 원인:
+`_conditionRuleGrid`(조건부 규칙 "목록" — 노션 5.1에서 화면에는 추가하지 않고 내부 상태 보관용
+으로만 쓰기로 한 그리드, `Forms/MappingForm.cs:1147` 근처)는 **한 번도 어떤 Form의 Controls에
+추가된 적이 없어 Win32 핸들이 생성되지 않는다.** `SelectConditionRuleById`가 `CurrentCell =
+row.Cells[0]`로 행을 선택해도, 핸들 없는 DataGridView는 `SelectionChanged` 이벤트를 안정적으로
+발생시키지 않는다(특히 `StartNewConditionRuleFor`처럼 막 만든 새 규칙을 프로그램적으로 선택하는
+경우) — 그래서 키/대상SKU/조건 상세를 채우는 `OnConditionRuleSelectionChanged`가 한 번도 안
+불려서 화면이 계속 빈칸이었다.
+
+고침: `OnConditionRuleSelectionChanged`의 채우기 로직을 `SelectConditionRule(MappingRule rule)`로
+추출하고, `SelectConditionRuleById`가 이벤트 발생에 의존하지 않고 이 메서드를 **직접 호출**하도록
+수정. 이벤트가 실제로 발생하든 안 하든(중복 호출은 같은 값을 다시 채울 뿐이라 무해) 항상 채워진다.
+
+추가로, 바로 위 항목에서 `StartNewConditionRuleFor` 끝에 넣었던 `MappingRulesChanged?.Invoke()`도
+제거했다 — 이 시점의 새 규칙은 대상SKU가 비어 있어 실제 매핑 효과가 없는데도, 이 창을 막 띄운
+같은 흐름에서 마감/이익분석의 무거운 `ReapplyMappingForAllRows`를 재진입시키는 위험만 있었다.
+실제로 의미 있게 바뀌는 시점(상세조건/요약 저장)에서만 이벤트를 발생시킨다.
+
+196/196 통과. 수동 확인 필요: 마감/이익분석 → 미매핑 행 우클릭 → 조건부 매핑 규칙 추가 →
+매핑관리창의 "조건부 매핑(상세)" 탭에 키/대상SKU/조건이 바로 채워져 보이는지.
+
 ## "조건부매핑하기" 멈춤 버그 + 미매핑 목록 자동반영 — 2026-06-28
 
 사용자 신고 2건: (1) 마감/이익분석에서 "조건부 매핑 규칙 추가"를 누르면 매핑관리창이 열리지만
