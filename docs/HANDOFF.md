@@ -9,6 +9,26 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **190/190 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 성능 — SqliteConnectionFactory가 연결마다 전체 스키마 마이그레이션을 재실행하던 문제 — 2026-06-28
+
+사용자 신고: 마감/이익분석에서 가장 데이터가 적은 정산파일조차 로드에 1분 이상 걸린다. 원인은
+`Database/SqliteConnectionFactory.OpenConnection()`이 **연결을 열 때마다** `DbSchema.
+EnsureCreated`(17개 `CREATE TABLE IF NOT EXISTS` + 14개 `EnsureColumn`, 각각 `PRAGMA
+table_info` 조회 포함 — 총 30개 이상의 SQL문)를 매번 다시 실행하고 있었던 것. 정산파일을 읽을
+때 `SettlementLoader.ApplyMappingAndProfit`이 행마다 `ChannelSkuRepository.ResolveMasterSku`
++ `ItemRepository.GetBySku`를 호출하는데, 이 둘이 각각 `OpenConnection()`을 새로 호출하므로
+**행 1개당 30개 이상의 SQL문이 두 번씩 반복 실행**되고 있었다 — 데이터 양과 무관하게 행 수에
+비례해 느려지는 구조적 문제라, "데이터가 적어도 느리다"는 신고와 정확히 일치한다.
+
+`SqliteConnectionFactory`에 DB 파일 경로별 캐시(`HashSet<string>` + `Lock`)를 추가해, 같은 DB
+파일에 대해서는 **프로세스 생애주기 동안 EnsureCreated를 단 한 번만** 실행하도록 고쳤다(이후
+호출은 단순 연결 열기 + 실제 쿼리만 수행). 테스트는 매 테스트마다 다른 임시 폴더를 쓰므로
+(`PathProvider.AppDataFolder` 매번 교체) 영향이 없다 — `DbSchemaMigrationTests`의 "구버전
+스키마 DB를 열면 첫 접근에서 자동으로 마이그레이션된다"는 동작도 경로별로 처음 한 번은 여전히
+실행되므로 그대로 보장된다(190/190 통과로 확인). 이 문제는 정산파일 로드뿐 아니라, 반복적으로
+Repository를 호출하는 다른 모든 화면(OFS 매핑 등)에도 똑같이 영향을 줬을 것이라, 이번 수정으로
+앱 전반의 DB 호출이 빨라질 것으로 보인다.
+
 ## 마감/이익분석 정산파일 로드 — 진행 안내창 추가 — 2026-06-28
 
 사용자 피드백: 정산파일 로드는 이미 `await`/`Task.Run`으로 백그라운드에서 처리되지만, 데이터가
