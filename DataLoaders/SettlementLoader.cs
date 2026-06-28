@@ -169,7 +169,12 @@ public class SettlementLoader
         return rows;
     }
 
-    private static void ApplyMappingAndProfit(SettlementData data, SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, ChannelSkuRepository channelSkuRepository)
+    /// <summary>
+    /// SKU 매핑(우선순위 평가)과 손익 계산을 한 행에 적용한다. 정산파일을 읽을 때 행마다 호출되지만,
+    /// 마감/이익분석 창에서 미매핑 행에 사용자가 즉석으로 매핑 규칙을 추가했을 때 그 한 행만 다시
+    /// 계산하는 용도로도 재사용한다(public).
+    /// </summary>
+    public static void ApplyMappingAndProfit(SettlementData data, SkuMapper skuMapper, ItemRepository itemRepository, ChannelConfig channelConfig, ChannelSkuRepository channelSkuRepository)
     {
         var orderItem = new OfsOrderItem
         {

@@ -113,6 +113,10 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true }
         );
         _settlementGrid.RowPrePaint += OnSettlementGridRowPrePaint;
+        _settlementGrid.EditingControlShowing += OnSettlementGridEditingControlShowing;
+        _settlementGrid.CellValidating += OnSettlementGridCellValidating;
+        _settlementGrid.CellEndEdit += OnSettlementGridCellEndEdit;
+        SetupSettlementGridContextMenu();
 
         // 99.1: 상단(전체/필터된 목록) + 하단(상품그룹별 요약) 분할. 사용자가 조절한 폭은 기억된다.
         var split = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 420, PersistenceKey = "SettlementForm.ProfitSplit" };
@@ -538,6 +542,197 @@ public class SettlementForm : Form
             row.DefaultCellStyle.BackColor = _settlementGrid.DefaultCellStyle.BackColor;
             row.DefaultCellStyle.ForeColor = _settlementGrid.DefaultCellStyle.ForeColor;
         }
+    }
+
+    // ===================== 미매핑 행 즉석 매핑(1:1 자동완성 + 우클릭 메뉴) =====================
+
+    private string? _msEditOriginalValue;
+
+    /// <summary>
+    /// "매핑 SKU" 셀 편집을 시작할 때, 마스터SKU/현재 채널의 CSKU 코드 목록으로 자동완성을 단다.
+    /// 사용자가 요청한 안전장치: 자동완성 목록에 있는 코드를 그대로 입력해야만(대소문자 무관 완전
+    /// 일치) 1:1 규칙으로 확정되고, 그 외 임의 문자열은 OnSettlementGridCellValidating에서 막는다.
+    /// </summary>
+    private void OnSettlementGridEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
+    {
+        if (_settlementGrid.CurrentCell?.OwningColumn?.Name != "Msku" || e.Control is not TextBox textBox) return;
+
+        if (_settlementGrid.CurrentRow?.DataBoundItem is SettlementData data)
+        {
+            _msEditOriginalValue = data.Msku;
+        }
+
+        var codes = BuildSkuAutoCompleteSource((_settlementGrid.CurrentRow?.DataBoundItem as SettlementData)?.ChannelCode);
+        var source = new AutoCompleteStringCollection();
+        source.AddRange(codes.ToArray());
+
+        textBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+        textBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
+        textBox.AutoCompleteCustomSource = source;
+    }
+
+    /// <summary>등록된 마스터SKU 코드 + 현재 채널의 CSKU 코드를 합친, 중복 제거된 자동완성 후보 목록.</summary>
+    private List<string> BuildSkuAutoCompleteSource(string? channelCode)
+    {
+        var codes = _itemRepository.GetAll().Select(i => i.Sku).ToList();
+        if (!string.IsNullOrEmpty(channelCode))
+        {
+            codes.AddRange(_channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode));
+        }
+        return codes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// 빈 값은 허용(매핑 해제 의도)하고, 값이 있으면 등록된 SKU/CSKU 코드와 완전히 일치할 때만
+    /// 커밋을 허용한다. 오타로 잘못된 1:1 규칙이 즉시 저장되는 걸 막기 위한 안전장치.
+    /// </summary>
+    private void OnSettlementGridCellValidating(object? sender, DataGridViewCellValidatingEventArgs e)
+    {
+        if (_settlementGrid.Columns[e.ColumnIndex].Name != "Msku") return;
+
+        var text = e.FormattedValue?.ToString();
+        if (string.IsNullOrWhiteSpace(text)) return; // 비우는 것은 허용 — CellEndEdit에서 매핑 해제 처리.
+
+        var channelCode = (_settlementGrid.Rows[e.RowIndex].DataBoundItem as SettlementData)?.ChannelCode;
+        var candidates = BuildSkuAutoCompleteSource(channelCode);
+        if (!candidates.Contains(text.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            _statusLabel.Text = $"'{text}'는 등록된 SKU/CSKU 코드가 아닙니다 — 자동완성 목록에서 선택해주세요.";
+            e.Cancel = true;
+        }
+    }
+
+    /// <summary>
+    /// 검증을 통과한 "매핑 SKU" 입력을 1:1 규칙으로 저장하고, 그 행의 매핑/이익을 즉시 다시
+    /// 계산한다(이미 같은 키로 저장된 규칙이 있으면 덮어쓴다 — UpsertExactRule은 멱등).
+    /// 값을 비우면 매핑을 해제한다(규칙 자체를 삭제하지는 않음 — 다른 행에 영향 줄 수 있어서).
+    /// </summary>
+    private void OnSettlementGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (_settlementGrid.Columns[e.ColumnIndex].Name != "Msku") return;
+        if (_settlementGrid.Rows[e.RowIndex].DataBoundItem is not SettlementData data) return;
+
+        if (string.IsNullOrWhiteSpace(data.Msku))
+        {
+            data.Status = "매핑 실패";
+            data.Profit = 0m;
+            RefreshProfitAnalysisView();
+            return;
+        }
+
+        if (string.Equals(data.Msku, _msEditOriginalValue, StringComparison.OrdinalIgnoreCase)) return; // 변경 없음.
+        if (string.IsNullOrEmpty(data.ChannelCode)) return;
+
+        var key = BuildExactMappingKey(data);
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        _mappingRepository.UpsertExactRule(data.ChannelCode, key, data.Msku.Trim());
+        ReapplyMappingAndProfit(data);
+        _statusLabel.Text = $"'{data.ProductName} {data.OptionName}' → '{data.Msku}' 1:1 매핑 규칙을 저장하고 적용했습니다.";
+    }
+
+    /// <summary>SkuMapper.ApplyMapping과 동일한 1:1 매핑 키(상품명+옵션명, 구분자 없음) 형식.</summary>
+    private static string BuildExactMappingKey(SettlementData data) => (data.ProductName ?? "") + (data.OptionName ?? "");
+
+    /// <summary>
+    /// 채널/매핑 규칙이 바뀐 뒤 한 행만 다시 매핑·손익 계산한다. 정산파일을 다시 불러오지 않고도
+    /// 즉석 매핑 결과가 바로 반영되도록 SettlementLoader의 행 단위 계산 로직을 재사용한다.
+    /// </summary>
+    private void ReapplyMappingAndProfit(SettlementData data)
+    {
+        if (string.IsNullOrEmpty(data.ChannelCode)) return;
+        var channelConfig = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == data.ChannelCode);
+        if (channelConfig == null) return;
+
+        var skuMapper = new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository);
+        SettlementLoader.ApplyMappingAndProfit(data, skuMapper, _itemRepository, channelConfig, _channelSkuRepository);
+        RefreshProfitAnalysisView();
+    }
+
+    /// <summary>
+    /// 미매핑 행에서 곧바로 매핑을 실행할 수 있는 우클릭 메뉴(1:1/조건부/임시/예외처리). 기본
+    /// 복사/붙여넣기 항목보다 앞에 끼워넣어, 그리드의 동적 "이 창의 기능" 메뉴 갱신 로직이
+    /// 이 항목들을 지우지 않도록 한다(ExcelLikeDataGridView.OnContextMenuOpening 참고).
+    /// </summary>
+    private void SetupSettlementGridContextMenu()
+    {
+        var menu = _settlementGrid.ContextMenuStrip!;
+        menu.Items.Insert(0, new ToolStripSeparator());
+        menu.Items.Insert(0, new ToolStripMenuItem("이 행 예외처리(매핑 제외)", null, OnExcludeSettlementRowClick));
+        menu.Items.Insert(0, new ToolStripMenuItem("임시 매핑으로 등록", null, OnAddTempRuleFromSettlementRowClick));
+        menu.Items.Insert(0, new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromSettlementRowClick));
+        menu.Items.Insert(0, new ToolStripMenuItem("SKU 매핑 도우미", null, OnOpenMappingHelperFromSettlementRowClick));
+    }
+
+    private SettlementData? GetSelectedSettlementRow()
+    {
+        if (_settlementGrid.CurrentRow?.DataBoundItem is not SettlementData data) return null;
+        if (string.IsNullOrEmpty(data.ChannelCode))
+        {
+            MessageBox.Show("이 행에는 채널 정보가 없어 매핑을 실행할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+        return data;
+    }
+
+    /// <summary>CSKU/납품가/송장표시명까지 한 번에 설정하거나 임시SKU를 새로 등록할 수 있는 기존 도우미를 재사용한다.</summary>
+    private void OnOpenMappingHelperFromSettlementRowClick(object? sender, EventArgs e)
+    {
+        var data = GetSelectedSettlementRow();
+        if (data == null) return;
+
+        var syntheticItem = new OfsOrderItem { ProductName = data.ProductName, OptionName = data.OptionName, Quantity = data.Qty };
+        using var dialog = new OrderSkuMappingDialog(syntheticItem, data.ChannelCode);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        ReapplyMappingAndProfit(data);
+    }
+
+    /// <summary>매핑관리창을 열어 이 행의 상품명/옵션명을 조건으로 채운 새 조건부 매핑 규칙을 만든다.</summary>
+    private void OnAddConditionRuleFromSettlementRowClick(object? sender, EventArgs e)
+    {
+        var data = GetSelectedSettlementRow();
+        if (data == null) return;
+
+        var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
+        if (!mappingForm.Visible) mappingForm.Show();
+        mappingForm.BringToFront();
+        mappingForm.StartNewConditionRuleFor(data.ChannelCode!, data.ProductName, data.OptionName);
+
+        MessageBox.Show(
+            "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리한 뒤, 이 창으로 돌아와 '정산파일 로드'를 다시 실행하면 반영됩니다.",
+            "매핑관리창으로 이동", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>정확히 같은 (상품명+옵션명) 키에만 매칭되는 임시 매핑 규칙으로 등록한다.</summary>
+    private void OnAddTempRuleFromSettlementRowClick(object? sender, EventArgs e)
+    {
+        var data = GetSelectedSettlementRow();
+        if (data == null) return;
+
+        using var dialog = new TextPromptDialog("임시 매핑으로 등록", $"'{data.ProductName} {data.OptionName}'을 매핑할 SKU/CSKU 코드를 입력하세요:");
+        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.Value)) return;
+
+        var key = BuildExactMappingKey(data);
+        _mappingRepository.UpsertRule(MappingRuleType.Temp, data.ChannelCode!, key, dialog.Value);
+        ReapplyMappingAndProfit(data);
+        MessageBox.Show("임시 매핑으로 등록하고 적용했습니다.", "등록 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>이 (상품명+옵션명) 조합을 앞으로 계속 매핑 대상에서 제외하는 예외 규칙으로 저장한다(배송비/수수료 안내 행 등).</summary>
+    private void OnExcludeSettlementRowClick(object? sender, EventArgs e)
+    {
+        var data = GetSelectedSettlementRow();
+        if (data == null) return;
+
+        var confirm = MessageBox.Show(
+            $"'{data.ProductName} {data.OptionName}' 조합을 앞으로 매핑 대상에서 제외(예외처리)하시겠습니까?\n실제 상품이 아닌 배송비/수수료 안내 행 등에 사용하세요.",
+            "예외처리 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        var key = BuildExactMappingKey(data);
+        _mappingRepository.UpsertRule(MappingRuleType.Exception, data.ChannelCode!, key, SkuMapper.ExcludedTargetSku);
+        ReapplyMappingAndProfit(data);
     }
 
     // ===================== 마감 대조(수기) =====================

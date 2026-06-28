@@ -7,7 +7,47 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**185/185 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**186/186 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 마감/이익분석 미매핑 행 즉석 매핑 — 1:1 자동완성 + 우클릭 메뉴 4종 — 2026-06-28
+
+사용자 요청: 정산파일을 불러온 뒤 보이는 미매핑 리스트에서, "매핑 SKU" 칸에 바로 타이핑해서
+검색하듯 1:1 매핑을 끝내고, 우클릭으로 조건부/임시/예외처리 등도 그 자리에서 실행할 수 있게
+해달라는 것. 구현 전 `AskUserQuestion`으로 두 가지를 확인: (1) 오타로 잘못된 1:1 규칙이 즉시
+저장되는 걸 막는 안전장치 필요 여부 → **"자동완성 목록에 있는 코드와 완전히 일치해야만 확정"**
+선택, (2) 우클릭 메뉴 구성 → **SKU 매핑 도우미 + 조건부 매핑 규칙 추가 + 임시 매핑으로 등록 +
+이 행 예외처리, 4개 전부** 선택.
+
+`Forms/SettlementForm.cs`(이익분석(자동) 탭, `_settlementGrid`)에 추가:
+- **"매핑 SKU" 셀 인라인 자동완성(1:1 매핑)**: `EditingControlShowing`에서 마스터SKU 전체 +
+  현재 행 채널의 CSKU 코드 목록을 `TextBox.AutoCompleteCustomSource`로 단다(`SuggestAppend`).
+  `CellValidating`에서 입력값이 그 후보 목록과 완전히 일치하지 않으면(대소문자 무관)
+  `e.Cancel = true`로 커밋을 막고 상태표시줄에 안내만 띄운다(빈 값은 매핑 해제 의도로 항상
+  허용). 검증을 통과하면 `CellEndEdit`에서 `MappingRepository.UpsertExactRule`로 1:1 규칙을
+  저장하고, `ReapplyMappingAndProfit()`으로 그 행만 즉시 재계산한다(파일을 다시 불러오지 않음).
+- **우클릭 메뉴 4종**: `ExcelLikeDataGridView`의 기본 메뉴(복사/붙여넣기 + 동적 "이 창의 기능")
+  앞에 `Items.Insert(0, ...)`로 끼워넣었다 — `OnContextMenuOpening`이 매번 `_pasteMenuItem` 이후
+  항목만 지우고 다시 그리므로, paste보다 앞쪽에 넣은 항목은 절대 지워지지 않는다(중요한 구현
+  포인트, 뒤에 추가했으면 메뉴를 열 때마다 사라졌을 것).
+  - **SKU 매핑 도우미**: 기존 OFS용 `OrderSkuMappingDialog`를 합성 `OfsOrderItem`으로 재사용 —
+    CSKU코드/납품가/송장표시명까지 한 번에 설정하거나 임시SKU를 새로 등록할 수 있는 더 풍부한 경로.
+  - **조건부 매핑 규칙 추가**: `MappingForm`에 새 공개 메서드 `StartNewConditionRuleFor(channelCode,
+    productName, optionName)` 추가 — 매핑관리창을 열고(또는 앞으로 가져오고) 채널을 맞춘 뒤,
+    상품명/옵션명을 Contains 조건으로 채운 새 조건부 규칙을 만들어 "조건부 매핑(상세)" 탭으로
+    이동한다. 조건/대상 SKU 마무리는 그 창에서 하고, 이 창에서는 "정산파일 로드"를 다시 실행하면
+    반영된다(즉시 반영 아님 — 조건부 규칙은 정보가 더 필요해서 도우미 다이얼로그로 처리하지 않음).
+  - **임시 매핑으로 등록**: 새 범용 `Forms/TextPromptDialog.cs`(SKU 입력받는 작은 다이얼로그)로
+    대상 SKU/CSKU를 물어보고 `MappingRuleType.Temp`로 저장 + 즉시 재계산.
+  - **이 행 예외처리(매핑 제외)**: 확인창 후 `MappingRuleType.Exception` +
+    `SkuMapper.ExcludedTargetSku`로 저장(배송비/수수료 안내 행 등 실제 상품이 아닌 행용).
+  - 1:1/임시/예외 모두 키는 `SkuMapper.ApplyMapping`과 동일한 `ProductName+OptionName`(구분자 없음)
+    형식을 그대로 쓴다(`BuildExactMappingKey`).
+- `DataLoaders/SettlementLoader.ApplyMappingAndProfit`을 `private` → `public static`으로 바꿔
+  재사용했다(정산파일을 다시 읽지 않고 한 행만 다시 계산하는 유일한 방법이라 새 로직을 만들지
+  않고 그대로 가져다 씀). 채널의 매핑 규칙이 바뀌면 `SkuMapper`를 새로 만들어야 한다(생성 시점에
+  규칙을 한 번 로드해 캐싱하기 때문) — `ReapplyMappingAndProfit()`이 매번 새 `SkuMapper`를 만든다.
+
+새 테스트: `SettlementLoaderApplyMappingAndProfitTests`(1개, public 재사용 경로 검증). 186/186 통과.
 
 ## 마감/이익분석 하단 요약 그리드에 합계 행 추가 — 2026-06-28
 

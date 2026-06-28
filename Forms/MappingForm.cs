@@ -1317,6 +1317,32 @@ public class MappingForm : Form
         _conditionPreviewLabel.Text = $"예상 매칭 건수: {matchCount}건 / 전체 {candidates.Count}건";
     }
 
+    /// <summary>
+    /// 다른 창(마감/이익분석 등)에서 미매핑 행의 상품명/옵션명을 조건으로 바로 조건부 매핑 규칙을
+    /// 만들고 싶을 때 호출하는 진입점. 채널을 선택하고, 상품명/옵션명을 Contains 조건으로 채운
+    /// 새 규칙을 만들어 "조건부 매핑(상세)" 탭에서 바로 다듬을 수 있게 한다.
+    /// </summary>
+    public void StartNewConditionRuleFor(string channelCode, string? productName, string? optionName)
+    {
+        _channelComboBox.SelectedValue = channelCode;
+
+        var details = new List<MappingConditionDetail>();
+        if (!string.IsNullOrWhiteSpace(productName))
+        {
+            details.Add(new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = productName, Logic = ConditionLogic.And });
+        }
+        if (!string.IsNullOrWhiteSpace(optionName))
+        {
+            details.Add(new MappingConditionDetail { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = optionName, Logic = ConditionLogic.And });
+        }
+
+        var summaryKey = $"{productName} {optionName}".Trim();
+        var newRuleId = _mappingRepository.AddConditionRuleWithDetails(channelCode, summaryKey, string.Empty, details);
+        LoadConditionRules(channelCode);
+        SelectConditionRuleById(newRuleId);
+        _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+    }
+
     private void OnAddConditionRuleClick(object? sender, EventArgs e)
     {
         var selectedChannel = _channelComboBox.SelectedValue as string;
