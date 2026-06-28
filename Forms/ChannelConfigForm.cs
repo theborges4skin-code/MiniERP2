@@ -561,10 +561,11 @@ public class ChannelConfigForm : Form
     {
         var contextMenu = new ContextMenuStrip();
         var favoriteItem = new ToolStripMenuItem("즐겨찾기에 추가/제거", null, OnFavoriteClick);
+        var moveToGroupItem = new ToolStripMenuItem("그룹 이동...", null, OnMoveChannelToGroupClick);
         var renameGroupItem = new ToolStripMenuItem("그룹 이름 변경", null, OnRenameGroupClick);
         var deleteGroupItem = new ToolStripMenuItem("그룹 삭제", null, OnDeleteGroupClick);
 
-        contextMenu.Items.AddRange(new ToolStripItem[] { favoriteItem, new ToolStripSeparator(), renameGroupItem, deleteGroupItem });
+        contextMenu.Items.AddRange(new ToolStripItem[] { favoriteItem, moveToGroupItem, new ToolStripSeparator(), renameGroupItem, deleteGroupItem });
 
         contextMenu.Opening += (s, e) =>
         {
@@ -573,6 +574,7 @@ public class ChannelConfigForm : Form
             bool isGroup = selectedNode?.Tag is string tag && tag.StartsWith("GROUP_");
 
             favoriteItem.Visible = isChannel;
+            moveToGroupItem.Visible = isChannel;
             renameGroupItem.Visible = isGroup && selectedNode?.Text != "미분류" && selectedNode?.Text != "⭐ 즐겨찾기";
             deleteGroupItem.Visible = isGroup && selectedNode?.Text != "미분류" && selectedNode?.Text != "⭐ 즐겨찾기";
         };
@@ -728,6 +730,29 @@ public class ChannelConfigForm : Form
         selectedChannel.IsFavorite = !selectedChannel.IsFavorite;
         _salesChannelRepository.Upsert(selectedChannel);
         PopulateTreeView();
+    }
+
+    private void OnMoveChannelToGroupClick(object? sender, EventArgs e)
+    {
+        if (_channelTreeView.SelectedNode?.Tag is not SalesChannel selectedChannel) return;
+
+        var existingGroups = _channels
+            .Select(c => c.GroupName)
+            .Where(g => !string.IsNullOrWhiteSpace(g))
+            .Distinct()
+            .OrderBy(g => g)
+            .Select(g => g!)
+            .ToList();
+
+        using var dialog = new MoveChannelToGroupDialog(existingGroups, selectedChannel.GroupName ?? string.Empty, selectedChannel.ChannelName);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (dialog.GroupName == selectedChannel.GroupName) return;
+
+        selectedChannel.GroupName = dialog.GroupName;
+        _salesChannelRepository.Upsert(selectedChannel);
+
+        PopulateTreeView();
+        SelectChannelByCode(selectedChannel.ChannelCode);
     }
 
     private void OnRenameGroupClick(object? sender, EventArgs e)
