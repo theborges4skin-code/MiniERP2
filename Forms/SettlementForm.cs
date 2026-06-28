@@ -386,6 +386,7 @@ public class SettlementForm : Form
         using var progressDialog = new LoadingProgressDialog($"'{channelDialog.SelectedChannel.ChannelName}' 채널의 정산 파일을 불러오는 중입니다...");
         progressDialog.Show(this);
         Cursor = Cursors.WaitCursor;
+        _statusLabel.ForeColor = SystemColors.ControlText; // 이전 오류로 빨간 글씨가 남아있을 수 있어 매번 초기화한다.
         _statusLabel.Text = $"'{channelDialog.SelectedChannel.ChannelName}' 채널의 설정으로 정산 파일을 읽는 중입니다...";
 
         try
@@ -425,36 +426,33 @@ public class SettlementForm : Form
             var diagnosticsText = $"파일처리 {loadStopwatch.Elapsed.TotalSeconds:F1}s / 화면갱신 {refreshStopwatch.Elapsed.TotalSeconds:F1}s ({LastRefreshDiagnostics})";
             _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]";
 
-            // 진단 결과(2026-06-28): Win32 창 목록을 직접 떠서 확인 — progressDialog.Close() 직후
-            // 같은 메시지 루프 틱에서 곧바로 MessageBox.Show를 호출하면, 그 MessageBox 창이
-            // 생성은 되지만(작업관리자/창 열거에는 보임) Visible=False 상태로 그려지지 않는 경우가
-            // 있었다. 모달이라 owner(이 창)는 비활성화된 채로, 안내창 자체는 안 보이니 사용자에게는
-            // "데이터는 보이는데 클릭이 안 되는" 멈춘 상태로 보였다 — 실제로는 보이지 않는 곳에서
-            // 응답을 기다리고 있었던 것. Close() 직후 바로 모달을 띄우는 대신, BeginInvoke로 다음
-            // 메시지 루프 틱에 미루면(WinForms에서 이런 "닫자마자 모달" 경쟁 상태를 피하는 표준
-            // 방법) 안전하게 보장된다.
             Cursor = Cursors.Default;
             progressDialog.Close();
             DiagnosticsLogger.Log("[SettlementForm] progressDialog.Close() 완료");
 
-            // 99.1: 미매핑/원가없음 등 확인이 필요한 건이 있으면 안내한다(목록 상단/필터로 이미 노출됨).
+            // 진단 결과(2026-06-28): progressDialog.Close() 직후 모달 MessageBox를 띄우면(순서를
+            // 바꿔도, BeginInvoke로 다음 메시지 루프 틱에 미뤄도) 그 MessageBox 창이 생성은 되지만
+            // (Win32 EnumWindows로 확인됨) Visible=False로 그려지지 않는 경쟁 상태가 이 환경에서
+            // 반복 재현됐다. 모달이라 owner(이 창)는 비활성화된 채 안내창은 안 보이니, 사용자에게는
+            // "데이터는 보이는데 클릭이 안 되는" 멈춘 상태로 보인다 — 두 차례의 타이밍 보정으로도
+            // 못 고쳤으므로, 이 알림은 모달 없이 상태표시줄만으로 대체한다(미매핑 건수/내용은 이미
+            // 목록 상단 정렬 + 하단 요약 패널에도 그대로 보이므로 정보 손실은 없다).
             if (unresolvedCount > 0)
             {
-                BeginInvoke(() =>
-                {
-                    DiagnosticsLogger.Log($"[SettlementForm] 확인 필요 MessageBox.Show 호출 직전(BeginInvoke로 다음 틱에서 실행, unresolvedCount={unresolvedCount})");
-                    MessageBox.Show(this,
-                        $"미매핑/원가없음 등 확인이 필요한 건이 {unresolvedCount}건 있습니다.\n목록 상단에 자동으로 표시했습니다(\"미매핑건만 보기\" 체크 해제 시 전체 확인 가능).",
-                        "확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    DiagnosticsLogger.Log("[SettlementForm] 확인 필요 MessageBox.Show 닫힘(사용자 응답 받음)");
-                });
+                _statusLabel.Text += $"  ⚠ 미매핑/확인필요 {unresolvedCount}건 — 목록 상단에 표시됨";
             }
             DiagnosticsLogger.Log("[SettlementForm] OnLoadSettlementClick try 블록 끝까지 도달");
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n\n{ex.Message}", "로드 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            _statusLabel.Text = "오류 발생";
+            DiagnosticsLogger.Log($"[SettlementForm] 예외 발생: {ex}");
+            Cursor = Cursors.Default;
+            progressDialog.Close();
+            // 위와 같은 이유로 모달 MessageBox는 믿을 수 없으니, 상태표시줄에 오류 내용을 그대로
+            // 남긴다(모달이 실제로는 떠도 안 보일 수 있어, 보이는 곳에 항상 기록해두는 쪽이 안전하다).
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"오류 발생: {ex.Message}";
+            DiagnosticsLogger.Log($"[SettlementForm] catch 블록 처리 완료 — 상태표시줄에 오류 표시함");
         }
         finally
         {
