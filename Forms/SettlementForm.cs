@@ -339,6 +339,13 @@ public class SettlementForm : Form
 
         var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode);
 
+        // 데이터가 많으면 로드가 수 초 이상 걸릴 수 있는데, 창은 떠 있지만 조작이 안 되니 멈춘
+        // 것처럼 보일 수 있다는 피드백 — 진행 안내창을 띄워 "작업 중"임을 분명히 보여준다.
+        // 비밀번호 입력 등 다른 모달 창이 이 창을 owner로 열리면 그 창이 닫힐 때 owner의 Enabled를
+        // 강제로 되돌려놓으므로, 여기서는 Enabled를 건드리지 않고 진행 안내창 + 대기 커서만으로
+        // "작업 중"을 표시한다.
+        using var progressDialog = new LoadingProgressDialog($"'{channelDialog.SelectedChannel.ChannelName}' 채널의 정산 파일을 불러오는 중입니다...");
+        progressDialog.Show(this);
         Cursor = Cursors.WaitCursor;
         _statusLabel.Text = $"'{channelDialog.SelectedChannel.ChannelName}' 채널의 설정으로 정산 파일을 읽는 중입니다...";
 
@@ -346,8 +353,19 @@ public class SettlementForm : Form
         {
             _settingsService.SetLastFolder("SettlementLoad", Path.GetDirectoryName(ofd.FileNames[0])!);
 
-            foreach (var file in ofd.FileNames)
+            for (int i = 0; i < ofd.FileNames.Length; i++)
             {
+                var file = ofd.FileNames[i];
+                var fileName = Path.GetFileName(file);
+                if (ofd.FileNames.Length > 1)
+                {
+                    progressDialog.SetProgress($"({i + 1}/{ofd.FileNames.Length}) {fileName} 처리 중...", i, ofd.FileNames.Length);
+                }
+                else
+                {
+                    progressDialog.SetIndeterminate($"{fileName} 처리 중...");
+                }
+
                 var loadedRows = await LoadSettlementFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
                 if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
@@ -374,6 +392,7 @@ public class SettlementForm : Form
         finally
         {
             Cursor = Cursors.Default;
+            progressDialog.Close();
         }
     }
 
