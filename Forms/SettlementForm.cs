@@ -425,20 +425,31 @@ public class SettlementForm : Form
             var diagnosticsText = $"파일처리 {loadStopwatch.Elapsed.TotalSeconds:F1}s / 화면갱신 {refreshStopwatch.Elapsed.TotalSeconds:F1}s ({LastRefreshDiagnostics})";
             _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]";
 
-            // 진단 결과(2026-06-28): 처리 자체는 항상 1초 미만이었고, "멈춘 것처럼 보인다"던 원인은
-            // 따로 있었다 — 진행 안내창(progressDialog)을 finally에서만 닫고 있어서, 아래
-            // MessageBox(확인 필요 안내)가 그 위/뒤에서 떠 있는 상태로 작업자가 못 보고 응답을
-            // 못 누른 것이었다. 안내창을 먼저 닫고 나서 MessageBox를 띄우도록 순서를 바꿨다.
+            // 진단 결과(2026-06-28): Win32 창 목록을 직접 떠서 확인 — progressDialog.Close() 직후
+            // 같은 메시지 루프 틱에서 곧바로 MessageBox.Show를 호출하면, 그 MessageBox 창이
+            // 생성은 되지만(작업관리자/창 열거에는 보임) Visible=False 상태로 그려지지 않는 경우가
+            // 있었다. 모달이라 owner(이 창)는 비활성화된 채로, 안내창 자체는 안 보이니 사용자에게는
+            // "데이터는 보이는데 클릭이 안 되는" 멈춘 상태로 보였다 — 실제로는 보이지 않는 곳에서
+            // 응답을 기다리고 있었던 것. Close() 직후 바로 모달을 띄우는 대신, BeginInvoke로 다음
+            // 메시지 루프 틱에 미루면(WinForms에서 이런 "닫자마자 모달" 경쟁 상태를 피하는 표준
+            // 방법) 안전하게 보장된다.
             Cursor = Cursors.Default;
             progressDialog.Close();
+            DiagnosticsLogger.Log("[SettlementForm] progressDialog.Close() 완료");
 
             // 99.1: 미매핑/원가없음 등 확인이 필요한 건이 있으면 안내한다(목록 상단/필터로 이미 노출됨).
             if (unresolvedCount > 0)
             {
-                MessageBox.Show(this,
-                    $"미매핑/원가없음 등 확인이 필요한 건이 {unresolvedCount}건 있습니다.\n목록 상단에 자동으로 표시했습니다(\"미매핑건만 보기\" 체크 해제 시 전체 확인 가능).",
-                    "확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                BeginInvoke(() =>
+                {
+                    DiagnosticsLogger.Log($"[SettlementForm] 확인 필요 MessageBox.Show 호출 직전(BeginInvoke로 다음 틱에서 실행, unresolvedCount={unresolvedCount})");
+                    MessageBox.Show(this,
+                        $"미매핑/원가없음 등 확인이 필요한 건이 {unresolvedCount}건 있습니다.\n목록 상단에 자동으로 표시했습니다(\"미매핑건만 보기\" 체크 해제 시 전체 확인 가능).",
+                        "확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    DiagnosticsLogger.Log("[SettlementForm] 확인 필요 MessageBox.Show 닫힘(사용자 응답 받음)");
+                });
             }
+            DiagnosticsLogger.Log("[SettlementForm] OnLoadSettlementClick try 블록 끝까지 도달");
         }
         catch (Exception ex)
         {
