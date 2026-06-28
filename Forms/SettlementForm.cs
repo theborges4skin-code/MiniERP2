@@ -907,6 +907,10 @@ public class SettlementForm : Form
             _subscribedMappingForm = mappingForm;
         }
 
+        // 발주서가 없어도(보통 마감/이익분석은 OFS를 거치지 않음) "예상 매칭 건수"를 정산파일
+        // 기준으로 미리볼 수 있게 지금 로드된 정산 데이터를 넘긴다(참조 그대로 — 나중에 다시
+        // 매핑하거나 정산파일을 새로 불러와도 항상 최신 상태로 반영됨).
+        mappingForm.SetSettlementPreviewData(_settlementRows);
         mappingForm.StartNewConditionRuleFor(data.ChannelCode!, data.ProductName, data.OptionName);
 
         _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리해 저장하면 이 목록에 자동으로 반영됩니다.";

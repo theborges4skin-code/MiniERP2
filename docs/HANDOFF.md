@@ -7,7 +7,32 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**197/197 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 조건부매핑 "예상 매칭 건수"에 정산파일 기준 미리보기 추가 — 2026-06-28
+
+기존 "예상 매칭 건수"는 OFS에서 넘겨받은 발주서(`_sourceOrders`)만 기준으로 계산해서, 마감/이익
+분석(발주서를 거치지 않음)에서 조건부 매핑을 만들면 항상 "발주서를 불러와야 미리볼 수 있습니다"만
+나왔다. 사용자 요청: 마감/이익분석에서는 **지금 로드된 정산파일 기준으로도** 미리 보여주고, 이미
+매핑된 건까지 새 규칙에 걸리면 중복매핑될 수 있으니 "미매핑건 중 적용 몇 건"과 "전체 중 적용 몇
+건"을 나눠서 보여달라는 것.
+
+- `Mapping/ConditionEvaluator.cs`: `Matches(List<MappingConditionDetail>, OfsOrderItem)`와 똑같은
+  AND/OR 평가 로직을 `Func<StdField, string?>` 필드접근자로 추출하고, `Matches(...,
+  SettlementData)` 오버로드를 추가(ProductName/OptionName/Quantity/TrackingNo만 매핑 — Recipient/
+  Phone/Address는 정산파일에 없어 항상 null).
+- `Forms/MappingForm.cs`: `_settlementRowsForPreview`(참조 보관, 복사 안 함) +
+  `SetSettlementPreviewData(IReadOnlyList<SettlementData>)` 추가. `UpdateConditionPreview()`가
+  발주서/정산파일 둘 다(있는 쪽만) 표시하도록 재작성 — 정산파일 쪽은
+  `"정산파일 미매핑건 중 적용 N건 / 전체 중 적용 M건(전체 K건 중)"` 형식. M이 N보다 크면 이미
+  매핑된 건도 이 규칙에 걸린다는 뜻(중복매핑 경고 신호).
+- `Forms/SettlementForm.cs`: `OnAddConditionRuleFromSettlementRowClick`에서 매핑관리창을 열 때
+  `mappingForm.SetSettlementPreviewData(_settlementRows)`를 호출해 참조를 넘긴다(정산파일을
+  다시 불러오거나 매핑이 바뀌어도 항상 최신 상태 반영).
+- `Tests/ConditionEvaluatorTests.cs`에 `Matches_SettlementData_...` 테스트 추가(197/197).
+
+수동 확인 필요: 마감/이익분석 → 미매핑 행 우클릭 → 조건부 매핑 규칙 추가 → 조건을 채우면
+"예상 매칭 건수"에 정산파일 기준 미매핑/전체 건수가 표시되는지.
 
 ## "조건부매핑(상세)" 빈칸 버그 — 2차 정정(이번엔 진짜 원인) — 2026-06-28
 

@@ -1348,10 +1348,26 @@ public class MappingForm : Form
     }
 
     /// <summary>
+    /// 마감/이익분석창에서 "조건부 매핑 규칙 추가"로 넘어왔을 때, 거기 로드된 정산파일 데이터로도
+    /// "예상 매칭 건수"를 미리볼 수 있게 한다. 참조를 그대로 들고 있어서(복사하지 않음) 그 창에서
+    /// 정산파일을 다시 불러오거나 매핑이 바뀌어도 항상 최신 상태를 반영한다.
+    /// </summary>
+    public void SetSettlementPreviewData(IReadOnlyList<SettlementData> rows)
+    {
+        _settlementRowsForPreview = rows;
+        UpdateConditionPreview();
+    }
+
+    private IReadOnlyList<SettlementData>? _settlementRowsForPreview;
+
+    /// <summary>
     /// SalesManagerV2의 "N건 매칭예상" 실시간 미리보기를 가져온 기능. 조건을 추가/수정/삭제할
-    /// 때마다 현재 채널에 로드되어 있는 발주서(_sourceOrders, OFS에서 넘겨받은 것과 같은 인스턴스)에
-    /// 그 조건을 즉시 적용해 몇 건이 매칭되는지 보여준다. 발주서가 로드되어 있지 않으면(예: OFS를
-    /// 거치지 않고 매핑관리창만 단독으로 연 경우) 미리볼 데이터가 없다고 안내한다.
+    /// 때마다 현재 채널에 로드되어 있는 발주서(_sourceOrders, OFS에서 넘겨받은 것과 같은 인스턴스)와
+    /// 정산파일(_settlementRowsForPreview, 마감/이익분석창에서 넘겨받은 것)에 그 조건을 즉시 적용해
+    /// 몇 건이 매칭되는지 보여준다. 정산파일 쪽은 "미매핑건 중 적용/전체 중 적용"을 나눠 보여줘서,
+    /// 이미 매핑된 건까지 새로 걸리면(=전체 중 적용이 미매핑 중 적용보다 큼) 기존 매핑이 이 규칙으로
+    /// 덮이거나 충돌할 수 있다는 걸 미리 알 수 있게 한다(사용자 요청: "중복매핑이 될 수 있으니").
+    /// 둘 다 로드되어 있지 않으면 미리볼 데이터가 없다고 안내한다.
     /// </summary>
     private void UpdateConditionPreview()
     {
@@ -1362,22 +1378,35 @@ public class MappingForm : Form
         }
 
         var channelCode = _channelComboBox.SelectedValue as string;
-        if (_sourceOrders is null || string.IsNullOrEmpty(channelCode))
-        {
-            _conditionPreviewLabel.Text = "예상 매칭 건수: (발주서를 불러와야 미리볼 수 있습니다)";
-            return;
-        }
-
-        var candidates = _sourceOrders.Where(o => o.ChannelCode == channelCode).ToList();
         var validDetails = details.Where(d => !string.IsNullOrWhiteSpace(d.TargetValue)).ToList();
-        if (validDetails.Count == 0)
+        var parts = new List<string>();
+
+        if (_sourceOrders != null && !string.IsNullOrEmpty(channelCode))
         {
-            _conditionPreviewLabel.Text = $"예상 매칭 건수: 전체 {candidates.Count}건(조건 없음)";
-            return;
+            var candidates = _sourceOrders.Where(o => o.ChannelCode == channelCode).ToList();
+            parts.Add(validDetails.Count == 0
+                ? $"발주서 전체 {candidates.Count}건(조건 없음)"
+                : $"발주서 {candidates.Count(o => ConditionEvaluator.Matches(validDetails, o))}건/전체 {candidates.Count}건");
         }
 
-        var matchCount = candidates.Count(o => ConditionEvaluator.Matches(validDetails, o));
-        _conditionPreviewLabel.Text = $"예상 매칭 건수: {matchCount}건 / 전체 {candidates.Count}건";
+        if (_settlementRowsForPreview != null && !string.IsNullOrEmpty(channelCode))
+        {
+            var candidates = _settlementRowsForPreview.Where(d => d.ChannelCode == channelCode).ToList();
+            if (validDetails.Count == 0)
+            {
+                parts.Add($"정산파일 전체 {candidates.Count}건(조건 없음)");
+            }
+            else
+            {
+                var matchingAll = candidates.Where(d => ConditionEvaluator.Matches(validDetails, d)).ToList();
+                var matchingUnmapped = matchingAll.Count(SettlementRowStatus.IsUnresolved);
+                parts.Add($"정산파일 미매핑건 중 적용 {matchingUnmapped}건 / 전체 중 적용 {matchingAll.Count}건(전체 {candidates.Count}건 중)");
+            }
+        }
+
+        _conditionPreviewLabel.Text = parts.Count > 0
+            ? "예상 매칭 건수: " + string.Join("  |  ", parts)
+            : "예상 매칭 건수: (발주서 또는 정산파일을 불러와야 미리볼 수 있습니다)";
     }
 
     /// <summary>
