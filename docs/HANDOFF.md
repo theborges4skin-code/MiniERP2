@@ -9,6 +9,37 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **192/192 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 같은 모달 경쟁 상태가 다른 진입점(조건부 매핑 규칙 추가)에서도 재현 — 전면 점검 — 2026-06-28
+
+바로 위 항목에서 정산파일 로드 경로의 모달을 없앤 뒤, 사용자가 마감/이익분석의 미매핑 행
+우클릭 메뉴 중 **"조건부 매핑 규칙 추가"**를 눌렀을 때 같은 증상("창은 열리나 조작이 안 되고
+멈춤")을 재신고. 패턴이 명확해서 이번엔 `Forms/SettlementForm.cs` 전체를 grep으로 훑어 같은
+위험 패턴(다른 창을 새로 띄우거나(Show)/닫거나(Close)/그리드를 크게 다시 그린(
+RefreshProfitAnalysisView) 직후 같은 메서드에서 곧바로 MessageBox.Show)이 있는 곳을 모두
+찾아 미리 고쳤다:
+
+- `OnAddConditionRuleFromSettlementRowClick`: `mappingForm.Show()` + `BringToFront()` 직후
+  `MessageBox.Show` → 상태표시줄로 대체.
+- `OnAddTempRuleFromSettlementRowClick`: `TextPromptDialog.ShowDialog()`가 닫힌 직후
+  `MessageBox.Show` → 상태표시줄로 대체.
+- `OnSaveSettlementClick`: `RefreshProfitAnalysisView()`(그리드 대량 재구성) 직후
+  `MessageBox.Show("저장 완료...")` → 상태표시줄로 대체.
+
+반대로 **안전하다고 판단해 그대로 둔 곳**(참고용): `GuideToChannelConfig`는 모달을 먼저 보여주고
+그 다음에 다른 창을 여는 순서라 위험 패턴이 아님. `OnExcludeSettlementRowClick`은 확인 모달
+하나만 있고 그 뒤에 두 번째 모달이 없어 안전. `OnOpenMappingHelperFromSettlementRowClick`은
+`ShowDialog()` 닫힌 뒤 모달 없이 끝남.
+
+**일반화된 규칙(다음 작업자 참고)**: 이 코드베이스 전반에 걸쳐 "다른 창을 막 보여주거나 닫은
+직후, 또는 그리드를 크게 다시 그린 직후 같은 메서드 안에서 MessageBox.Show를 호출하는" 모든
+곳이 잠재적 위험군이다. 같은 "멈춘 것 같다" 신고가 OFS/매핑관리창/광고매핑/채널설정 등 다른
+화면에서 나오면, 그 화면에서 이 패턴을 먼저 grep해서 확인할 것
+(`grep -n "MessageBox.Show\|\.Show(\|\.Close(\|RefreshProfitAnalysisView" 파일명`처럼 찾아
+직전 줄들을 살펴보면 된다). 표준 처방은 동일: 그 MessageBox를 상태표시줄/그리드 강조 등
+비모달 안내로 바꾸는 것.
+
+192/192 통과.
+
 ## MessageBox 모달이 이 환경에서 반복적으로 Visible=False 경쟁 상태에 빠짐 — 모달 제거로 우회 — 2026-06-28
 
 바로 위 항목("Close() 직후...")에서 `MessageBox.Show`를 `BeginInvoke`로 다음 메시지 루프 틱에

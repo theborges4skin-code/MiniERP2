@@ -513,10 +513,11 @@ public class SettlementForm : Form
             _statusLabel.Text = $"{rowsToSave.Count}건 저장 완료.";
 
             // 99.1: 저장 시 분석 결과 요약을 별도로 보여준다(하단 상품그룹별 요약 그리드는 항상 떠 있음).
+            // RefreshProfitAnalysisView()처럼 그리드를 크게 다시 그리는 호출 직후 모달을 띄우면 그
+            // 모달이 안 보이게 생성되는 경쟁 상태가 반복 재현돼서(정산파일 로드 멈춤과 동일 원인),
+            // 여기도 모달 대신 상태표시줄로 안내한다.
             RefreshProfitAnalysisView();
-            MessageBox.Show(
-                $"{rowsToSave.Count}건 저장 완료.\n\n{_summaryTotalsLabel.Text}",
-                "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = $"{rowsToSave.Count}건 저장 완료. {_summaryTotalsLabel.Text}";
         }
         catch (Exception ex)
         {
@@ -844,7 +845,12 @@ public class SettlementForm : Form
         ReapplyMappingAndProfit(data);
     }
 
-    /// <summary>매핑관리창을 열어 이 행의 상품명/옵션명을 조건으로 채운 새 조건부 매핑 규칙을 만든다.</summary>
+    /// <summary>
+    /// 매핑관리창을 열어 이 행의 상품명/옵션명을 조건으로 채운 새 조건부 매핑 규칙을 만든다.
+    /// 다른 창을 새로 띄운(또는 닫은) 직후 같은 틱에서 MessageBox 같은 모달을 띄우면 그 모달이
+    /// Visible=False로 생성되는 경쟁 상태가 이 환경에서 반복 재현됐다(정산파일 로드 멈춤 신고와
+    /// 동일 원인). 안내는 모달 대신 이 창의 상태표시줄로 대체한다.
+    /// </summary>
     private void OnAddConditionRuleFromSettlementRowClick(object? sender, EventArgs e)
     {
         var data = GetSelectedSettlementRow();
@@ -855,9 +861,7 @@ public class SettlementForm : Form
         mappingForm.BringToFront();
         mappingForm.StartNewConditionRuleFor(data.ChannelCode!, data.ProductName, data.OptionName);
 
-        MessageBox.Show(
-            "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리한 뒤, 이 창으로 돌아와 '정산파일 로드'를 다시 실행하면 반영됩니다.",
-            "매핑관리창으로 이동", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리한 뒤, 이 창에서 '정산파일 로드'를 다시 실행하면 반영됩니다.";
     }
 
     /// <summary>정확히 같은 (상품명+옵션명) 키에만 매칭되는 임시 매핑 규칙으로 등록한다.</summary>
@@ -872,7 +876,9 @@ public class SettlementForm : Form
         var key = BuildExactMappingKey(data);
         _mappingRepository.UpsertRule(MappingRuleType.Temp, data.ChannelCode!, key, dialog.Value);
         ReapplyMappingAndProfit(data);
-        MessageBox.Show("임시 매핑으로 등록하고 적용했습니다.", "등록 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // 다이얼로그를 닫은 직후 모달을 띄우면 안 보이게 생성되는 같은 경쟁 상태를 피하려고
+        // MessageBox 대신 상태표시줄로 안내한다.
+        _statusLabel.Text = $"'{data.ProductName} {data.OptionName}' → '{dialog.Value}' 임시 매핑으로 등록하고 적용했습니다.";
     }
 
     /// <summary>이 (상품명+옵션명) 조합을 앞으로 계속 매핑 대상에서 제외하는 예외 규칙으로 저장한다(배송비/수수료 안내 행 등).</summary>
