@@ -55,6 +55,7 @@ public class MappingForm : Form
     private TextBox _conditionKeyTextBox = new();
     private TextBox _conditionTargetSkuTextBox = new();
     private Label _conditionPreviewLabel = new();
+    private Label _conditionSaveFeedbackLabel = new();
     private long _selectedConditionRuleId = -1;
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
@@ -1104,44 +1105,49 @@ public class MappingForm : Form
     /// 왼쪽에서 규칙을 고르면 오른쪽에 그 규칙의 상세조건이 뜨고, 각 영역의 저장 버튼이 즉시 DB에 반영한다
     /// (매핑관리창 상단의 일괄 [저장] 버튼/단순 그리드와는 무관하게 동작).
     /// </summary>
+    /// <summary>
+    /// 노션 5.1 피드백: 조건부 매핑을 빨리 끝내는 게 목적인 화면인데, 왼쪽에 항상 떠 있는 전체
+    /// 규칙 목록은 방해만 되고 느려 보이는 원인이었다(목록을 새로 그릴 때마다 그리드 갱신).
+    /// 좌측 목록을 이 탭에서는 빼고, 필요할 때만 "전체 조건부규칙 보기" 버튼으로 별도 창
+    /// (ConditionRuleListForm)을 띄워 거기서 고르거나 새로 만들면 그 결과만 이 탭에 로드한다.
+    /// _conditionRuleGrid 자체는 화면에 추가하지 않지만 내부 상태 보관용으로는 그대로 쓴다
+    /// (LoadConditionRules/SelectConditionRuleById/OnConditionRuleSelectionChanged 등 기존
+    /// 데이터 흐름을 바꾸지 않기 위함 — DataGridView는 화면에 안 붙여도 DataSource/CurrentCell이
+    /// 정상 동작한다).
+    /// </summary>
     private TabPage CreateConditionDetailTabPage()
     {
         var tabPage = new TabPage("조건부 매핑(상세)");
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
-        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        // 좌측: 규칙 목록
-        var leftPanel = new Panel { Dock = DockStyle.Fill };
+        var topToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 3) };
+        var btnAddRule = new Button { Text = "새 규칙 추가", Size = new Size(100, 28) };
+        btnAddRule.Click += OnAddConditionRuleClick;
+        var btnBrowseAllRules = new Button { Text = "전체 조건부규칙 보기", Size = new Size(140, 28) };
+        btnBrowseAllRules.Click += OnBrowseAllConditionRulesClick;
+        var btnDeleteRule = new Button { Text = "이 규칙 삭제", Size = new Size(100, 28) };
+        btnDeleteRule.Click += OnDeleteConditionRuleClick;
+        topToolbar.Controls.Add(btnAddRule);
+        topToolbar.Controls.Add(btnBrowseAllRules);
+        topToolbar.Controls.Add(btnDeleteRule);
 
-        _conditionRuleGrid = new ExcelLikeDataGridView
+        // 화면에는 안 붙이지만, 기존 LoadConditionRules/SelectConditionRuleById 등이 그대로
+        // 동작하도록 내부 상태 보관용으로 유지한다.
+        _conditionRuleGrid = new DataGridView
         {
-            Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
-            AllowUserToAddRows = false,
             ReadOnly = true,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect = false,
         };
         _conditionRuleGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키(레거시 매칭용/요약)", DataPropertyName = "Key", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
-            new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU", DataPropertyName = "TargetSku", Width = 100 }
+            new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키(레거시 매칭용/요약)", DataPropertyName = "Key" },
+            new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU", DataPropertyName = "TargetSku" }
         );
         _conditionRuleGrid.SelectionChanged += OnConditionRuleSelectionChanged;
 
-        var leftButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36 };
-        var btnAddRule = new Button { Text = "규칙 추가", Size = new Size(90, 28) };
-        btnAddRule.Click += OnAddConditionRuleClick;
-        var btnDeleteRule = new Button { Text = "규칙 삭제", Size = new Size(90, 28) };
-        btnDeleteRule.Click += OnDeleteConditionRuleClick;
-        leftButtonPanel.Controls.Add(btnAddRule);
-        leftButtonPanel.Controls.Add(btnDeleteRule);
-
-        leftPanel.Controls.Add(_conditionRuleGrid);
-        leftPanel.Controls.Add(leftButtonPanel);
-
-        // 우측: 선택한 규칙의 요약 정보 + 상세조건 목록
+        // 우측(이제 전체 폭): 선택한 규칙의 요약 정보 + 상세조건 목록
         var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -1149,7 +1155,7 @@ public class MappingForm : Form
 
         var summaryPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         _conditionKeyTextBox = new TextBox { Width = 220 };
-        _conditionTargetSkuTextBox = new TextBox { Width = 120 };
+        _conditionTargetSkuTextBox = new TextBox { Width = 150 };
         var btnSaveSummary = new Button { Text = "규칙 정보 저장", Size = new Size(110, 28) };
         btnSaveSummary.Click += OnSaveConditionSummaryClick;
         summaryPanel.Controls.Add(new Label { Text = "키(요약):", AutoSize = true, Padding = new Padding(0, 7, 3, 0) });
@@ -1230,18 +1236,42 @@ public class MappingForm : Form
         detailButtonPanel.Controls.Add(btnAddDetail);
         detailButtonPanel.Controls.Add(btnDeleteDetail);
         detailButtonPanel.Controls.Add(btnSaveDetails);
+        _conditionSaveFeedbackLabel = new Label
+        {
+            AutoSize = true,
+            Padding = new Padding(15, 7, 0, 0),
+            ForeColor = Color.DarkGreen,
+        };
+        detailButtonPanel.Controls.Add(_conditionSaveFeedbackLabel);
 
         rightPanel.Controls.Add(summaryPanel, 0, 0);
         rightPanel.Controls.Add(_conditionDetailGrid, 0, 1);
         rightPanel.Controls.Add(detailButtonPanel, 0, 2);
 
-        mainLayout.Controls.Add(leftPanel, 0, 0);
-        mainLayout.Controls.Add(rightPanel, 1, 0);
+        mainLayout.Controls.Add(topToolbar, 0, 0);
+        mainLayout.Controls.Add(rightPanel, 0, 1);
         tabPage.Controls.Add(mainLayout);
 
         SetConditionDetailEditorEnabled(false);
 
         return tabPage;
+    }
+
+    /// <summary>"전체 조건부규칙 보기" — 별도 창에서 전체 목록(중복 강조+병합 포함)을 보여주고, 고른 규칙을 이 탭에 로드한다.</summary>
+    private void OnBrowseAllConditionRulesClick(object? sender, EventArgs e)
+    {
+        var channelCode = _channelComboBox.SelectedValue as string;
+        if (string.IsNullOrEmpty(channelCode))
+        {
+            MessageBox.Show("먼저 채널을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var listForm = new ConditionRuleListForm(_mappingRepository, channelCode);
+        if (listForm.ShowDialog(this) != DialogResult.OK || listForm.SelectedRuleId == null) return;
+
+        LoadConditionRules(channelCode);
+        SelectConditionRuleById(listForm.SelectedRuleId.Value);
     }
 
     private void SetConditionDetailEditorEnabled(bool enabled)
@@ -1264,6 +1294,18 @@ public class MappingForm : Form
         _conditionRuleGrid.DataSource = new BindingList<MappingRule>(rules);
         _selectedConditionRuleId = -1;
         SetConditionDetailEditorEnabled(false);
+
+        // 노션 5.1: 대상 SKU 입력 시 타이핑하면서 검색되도록 자동완성을 단다(마스터SKU + 이
+        // 채널의 CSKU 코드). 채널이 바뀔 때마다 다시 구성한다.
+        var codes = _itemRepository.GetAll().Select(i => i.Sku)
+            .Concat(_channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var source = new AutoCompleteStringCollection();
+        source.AddRange(codes);
+        _conditionTargetSkuTextBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+        _conditionTargetSkuTextBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
+        _conditionTargetSkuTextBox.AutoCompleteCustomSource = source;
     }
 
     private void OnConditionRuleSelectionChanged(object? sender, EventArgs e)
@@ -1390,28 +1432,38 @@ public class MappingForm : Form
     private void OnSaveConditionSummaryClick(object? sender, EventArgs e)
     {
         if (_selectedConditionRuleId < 0) return;
+        var ruleId = _selectedConditionRuleId;
 
-        _mappingRepository.UpdateConditionRuleSummary(_selectedConditionRuleId, _conditionKeyTextBox.Text, _conditionTargetSkuTextBox.Text);
+        _mappingRepository.UpdateConditionRuleSummary(ruleId, _conditionKeyTextBox.Text, _conditionTargetSkuTextBox.Text);
 
         var selectedChannel = _channelComboBox.SelectedValue as string;
         if (!string.IsNullOrEmpty(selectedChannel))
         {
+            // LoadConditionRules가 목록을 다시 불러오며 선택을 초기화하므로, 같은 규칙을 다시
+            // 선택해 편집을 이어갈 수 있게 한다(왼쪽 목록을 없앤 뒤로 재선택할 다른 방법이 없음).
             LoadConditionRules(selectedChannel);
+            SelectConditionRuleById(ruleId);
         }
-        MessageBox.Show("규칙 정보가 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // 노션 5.1: 저장 직후 MessageBox를 띄우면 "저장이 오래 걸린다"고 느껴지는 원인이었던
+        // 모달 표시 문제(다른 창/그리드 갱신 직후 모달 경쟁 상태)와 같은 패턴이라 비모달 라벨로 대체.
+        _conditionSaveFeedbackLabel.Text = $"규칙 정보 저장됨 ({DateTime.Now:HH:mm:ss})";
     }
 
     private void OnAddConditionDetailClick(object? sender, EventArgs e)
     {
         if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details) return;
 
+        // 노션 5.1: 조건을 추가할 때마다 항목/조건/결합방식을 매번 다시 고르기 귀찮다는 피드백 —
+        // 마지막 줄의 항목/조건/결합방식은 그대로 복사하고, 비교할 값만 비워서 추가한다(첫 조건이면
+        // 기존 기본값을 그대로 쓴다).
+        var last = details.LastOrDefault();
         details.Add(new MappingConditionDetail
         {
             RuleId = _selectedConditionRuleId,
-            HeaderField = StdField.ProductName,
-            Operator = ConditionOperator.Contains,
+            HeaderField = last?.HeaderField ?? StdField.ProductName,
+            Operator = last?.Operator ?? ConditionOperator.Contains,
             TargetValue = string.Empty,
-            Logic = ConditionLogic.And,
+            Logic = last?.Logic ?? ConditionLogic.And,
         });
         UpdateConditionPreview();
     }
@@ -1431,7 +1483,7 @@ public class MappingForm : Form
         if (_conditionDetailGrid.DataSource is not BindingList<MappingConditionDetail> details) return;
 
         _mappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
-        MessageBox.Show("상세조건이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _conditionSaveFeedbackLabel.Text = $"상세조건 저장됨 ({DateTime.Now:HH:mm:ss})";
     }
 
     private TabPage CreateRuleTabPage(string title, MappingRuleType ruleType)

@@ -7,7 +7,39 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**192/192 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 노션 5.1 "조건부매핑" 5개 항목 구현 — `Forms/MappingForm.cs` 조건부 매핑(상세) 탭 전면 개편 — 2026-06-28
+
+노션 체크리스트의 "5.1 조건부매핑" 토글에 있던 5개 항목을 모두 구현했다(마감/이익분석에서
+"조건부 매핑 규칙 추가"로 진입했을 때 열리는 그 탭).
+
+1. **대상 SKU 자동완성**: `_conditionTargetSkuTextBox`에 마스터SKU + 현재 채널 CSKU 코드로
+   `AutoCompleteCustomSource`를 단다. 채널이 바뀔 때마다(`LoadConditionRules`) 다시 구성.
+2. **조건 추가 시 마지막 줄 복사**: `OnAddConditionDetailClick`이 더 이상 항상 ProductName/
+   Contains/And로 시작하지 않고, 직전 줄의 HeaderField/Operator/Logic을 그대로 복사하고
+   TargetValue만 비운 채 추가한다(첫 조건이면 기존 기본값 사용).
+3. **"저장이 너무 오래 걸린다"**: 코드를 보니 실제 DB 작업은 가볍고(단일 규칙의 상세조건
+   몇 건), 의심되는 진짜 원인은 오늘 계속 추적해온 **그 모달 경쟁 상태와 동일 패턴**이었다 —
+   `OnSaveConditionSummaryClick`이 `LoadConditionRules`(그리드 재구성) 직후 `MessageBox.Show`를
+   불렀다. 같은 처방(모달 제거 → 비모달 피드백)을 적용 — 새 `_conditionSaveFeedbackLabel`에
+   "저장됨 (HH:mm:ss)" 표시. `OnSaveConditionSummaryClick`은 `LoadConditionRules` 호출 후
+   `_selectedConditionRuleId`가 -1로 리셋돼 편집이 막히는 기존 버그도 있었어서,
+   `SelectConditionRuleById`로 같은 규칙을 다시 선택하도록 같이 고쳤다(좌측 목록을 없앤 뒤로는
+   재선택할 다른 방법이 없어서 더 중요해진 수정).
+4. **좌측 규칙 목록 제거 + "전체 조건부규칙 보기" 새 창**: `CreateConditionDetailTabPage`에서
+   좌측 패널을 빼고 상단 툴바(새 규칙 추가/전체 조건부규칙 보기/이 규칙 삭제)로 교체했다.
+   `_conditionRuleGrid`는 화면에 추가하지 않지만 기존 데이터 흐름(`LoadConditionRules`/
+   `SelectConditionRuleById`/`OnConditionRuleSelectionChanged`)을 그대로 쓰기 위해 내부
+   상태 보관용으로는 유지한다(DataGridView는 화면에 안 붙여도 DataSource/CurrentCell이
+   정상 동작함 — 리팩터링 범위를 최소화). 새 `Forms/ConditionRuleListForm.cs`가 전체 목록을
+   보여주고, 고른 규칙 Id를 돌려주면 메인 탭이 그걸 로드한다.
+5. **중복조건 살펴보기/병합**: `ConditionRuleListForm`이 대상SKU+조건 집합이 완전히 같은
+   규칙들(순서 무관, `Utils/ConditionRuleSignature.Build` — 테스트 가능하게 분리)을 같은
+   색으로 강조하고, 그런 행을 골라 "중복 규칙 병합"을 누르면 가장 먼저 만든 것만 남기고
+   나머지를 삭제한다. 시그니처가 다른 행을 같이 선택하면 막는다.
+
+새 테스트 4개(`ConditionRuleSignatureTests`), 196/196 통과.
 
 ## 같은 모달 경쟁 상태가 다른 진입점(조건부 매핑 규칙 추가)에서도 재현 — 전면 점검 — 2026-06-28
 
