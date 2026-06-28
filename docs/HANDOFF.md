@@ -9,6 +9,29 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## "조건부매핑(상세)" 빈칸 버그 — 2차 정정(이번엔 진짜 원인) — 2026-06-28
+
+바로 위 항목의 수정(이벤트 대신 `SelectConditionRule` 직접 호출)도 사용자가 재현했을 때 **같은
+증상이 계속됐다.** 원인을 한 단계 더 파보니: `SelectConditionRuleById`가 여전히
+`foreach (... in _conditionRuleGrid.Rows)`로 행을 찾고 있었는데, **핸들이 생성된 적 없는
+DataGridView는 `Rows` 컬렉션 자체가 바인딩된 데이터를 실체화하지 못할 수 있다** — 즉 `Rows.Count`
+가 0이라 매칭되는 행을 한 건도 못 찾고, `SelectConditionRule(rule)` 호출까지 한 번도 도달하지
+못한 채 메서드가 조용히 끝났던 것(예외도 안 남기 때문에 로그로도 못 잡음).
+
+고침: `SelectConditionRuleById`가 `_conditionRuleGrid.Rows`로 찾는 대신, `DataSource`에 바인딩해
+둔 `BindingList<MappingRule>`(메모리상의 리스트, 핸들 여부와 무관하게 항상 존재)에서 직접
+`FirstOrDefault(r => r.Id == ruleId)`로 찾는다. `Rows` 기반 `CurrentCell` 동기화는 되면 좋고 안
+돼도 무해하므로 best-effort로만 남겨뒀다.
+
+**교훈**: `_conditionRuleGrid`를 "화면에 안 보여도 내부 상태 보관용으로 그대로 쓸 수 있다"고
+가정했던(노션 5.1 작업 때부터의 전제) 게 부분적으로 틀렸다 — `DataSource`/`CurrentCell` 대입 같은
+"쓰기"는 핸들 없이도 되지만, `Rows` 컬렉션을 통한 "읽기"(행 순회, `DataBoundItem` 접근)는 핸들이
+없으면 신뢰할 수 없다. 앞으로 이 그리드에서 행을 찾아야 하면 `Rows`를 순회하지 말고 항상
+`DataSource`의 원본 리스트에서 찾을 것.
+
+196/196 통과. 수동 확인 필요(이번엔 꼭 빌드 재시작 후 테스트): 마감/이익분석 → 미매핑 행
+우클릭 → 조건부 매핑 규칙 추가 → 키/대상SKU가 바로 채워져 보이는지.
+
 ## "조건부매핑(상세)" 탭이 빈칸으로 멈춤 — 진짜 원인 정정 — 2026-06-28
 
 바로 위 항목에서 고친 게 진짜 원인이 아니었다(사용자가 직접 스크린샷으로 재현 — 창은 뜨고

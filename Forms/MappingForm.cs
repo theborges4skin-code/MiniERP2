@@ -1444,19 +1444,31 @@ public class MappingForm : Form
         SelectConditionRuleById(newRuleId);
     }
 
+    /// <summary>
+    /// 이전 시도(이벤트 대신 직접 호출)로도 같은 증상이 계속됐다 — 진짜 원인은 한 단계 더 깊었다.
+    /// <see cref="_conditionRuleGrid"/>는 핸들이 생성된 적이 없는 그리드라(화면에 추가 안 함),
+    /// `Rows` 컬렉션 자체가 바인딩된 데이터를 전혀 반영하지 못하는 경우가 있어(핸들 없으면
+    /// 행이 실체화되지 않음) `foreach (... in _conditionRuleGrid.Rows)`가 한 건도 못 찾고 끝났다.
+    /// 그래서 `Rows`가 아니라 `DataSource`로 바인딩해 둔 메모리상의 리스트에서 직접 찾는다(핸들
+    /// 여부와 무관하게 항상 동작). `Rows` 기반 CurrentCell 동기화는 되면 좋고 안 돼도 무해하므로
+    /// best-effort로만 시도한다.
+    /// </summary>
     private void SelectConditionRuleById(long ruleId)
     {
+        if (_conditionRuleGrid.DataSource is not BindingList<MappingRule> rules) return;
+        var rule = rules.FirstOrDefault(r => r.Id == ruleId);
+        if (rule == null) return;
+
         foreach (DataGridViewRow row in _conditionRuleGrid.Rows)
         {
-            if (row.DataBoundItem is MappingRule rule && rule.Id == ruleId)
+            if (row.DataBoundItem is MappingRule r && r.Id == ruleId)
             {
                 _conditionRuleGrid.CurrentCell = row.Cells[0];
-                // CurrentCell 대입만으로는 SelectionChanged가 안 발생할 수 있어(_conditionRuleGrid가
-                // 화면에 없는 그리드라 핸들이 없음) 직접 채운다.
-                SelectConditionRule(rule);
                 break;
             }
         }
+
+        SelectConditionRule(rule);
     }
 
     private void OnDeleteConditionRuleClick(object? sender, EventArgs e)
