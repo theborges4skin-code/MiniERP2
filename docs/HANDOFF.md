@@ -9,6 +9,43 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 같은 모달 경쟁 상태를 MappingForm/AdMappingForm의 다른 저장 경로에서도 확인 — 2026-06-28
+
+사용자 요청: "예외규칙이나 광고매핑 등 다른 DB 처리할 때도 같은 현상(저장이 오래 걸림)이
+있는지 검토". `grep`으로 `MessageBox.Show`(특히 "완료/저장/반영" 류) 앞뒤를 전부 훑어, **그리드를
+다시 불러오거나(Load.../Reapply...) 다른 창을 연/닫은 직후 같은 메서드에서 모달을 띄우는** 같은
+위험 패턴을 다음 곳에서 확인하고 전부 비모달(상태표시줄/라벨)로 바꿨다:
+
+**`Forms/MappingForm.cs`**
+- `OnSaveClick`(상단 "저장" 버튼 — 예외/1:1/임시/조건부 단순 규칙 4종 전부 이 경로로 저장됨):
+  `Enabled = false`로 자기 자신을 비활성화한 채 `await` 끝나고 `Enabled = true`는 `finally`에서만
+  실행되는데, 그 사이(`Enabled=false`인 상태)에 `MessageBox.Show`를 호출하고 있었다 — 비활성화된
+  자기 자신을 owner로 모달을 띄우는 것도 같은 위험군. 새 `_globalStatusLabel`(상단 패널)로 대체.
+- `OnDeleteSelectedUnifiedRulesClick`("전체 규칙 관리" 탭 일괄삭제): `LoadUnifiedRules`+
+  `LoadRulesForSelectedChannel`(그리드 전체 재구성) 직후 모달 → `_globalStatusLabel`로 대체.
+- `OnDragDrop`(엑셀 드래그&드롭 가져오기): 그리드 재바인딩 직후 모달 → `_globalStatusLabel`로 대체.
+
+**`Forms/AdMappingForm.cs`** (조건부 매핑(상세) 탭이 MappingForm을 본떠 만들어져 똑같은 버그가
+그대로 복제돼 있었음)
+- `OnSaveConditionSummaryClick`/`OnSaveConditionDetailsClick`: MappingForm과 동일한 버그
+  (그리드 재구성 직후 모달 + 저장 후 선택 풀려 편집 막히던 문제) → 새 `_conditionSaveFeedbackLabel`
+  로 대체, `SelectConditionRuleById`로 재선택.
+- "임시 매핑" 탭의 저장 버튼: `ReapplyMapping`(그리드 재계산) 직후 모달 → 탭 내 새 라벨로 대체.
+- `OnAddTempRuleFromSelectedAdItem`/`OnAddConditionRuleFromSelectedAdItem`(광고비 데이터 그리드
+  우클릭 메뉴): 그리드 재구성(+조건부 규칙 추가는 탭 전환까지) 직후 모달 → `_adSummaryLabel`/
+  `_conditionSaveFeedbackLabel`로 대체.
+
+**아직 점검만 하고 안 고친 곳(같은 패턴이 의심되지만 사용자가 실제로 겪은 사례는 아님 —
+범위가 넓어 전부 한 번에 고치는 대신 다음에 만나면 우선 고칠 곳으로 남겨둠)**: `Forms/
+OfsForm.cs`(저장 성공 메시지 없음, 비교적 안전), `Forms/ChannelConfigForm.cs:709`("채널 설정이
+성공적으로 저장되었습니다"), `Forms/CourierConfigForm.cs:416`("택배사 양식이 저장되었습니다"),
+`Forms/MasterSkuForm.cs:176,204,319`, `Forms/CSkuForm.cs:167`, `Forms/DataManagementForm.cs:404`
+("복원 완료" — 이건 그 뒤에 `Application.Exit()`가 있어서 오히려 더 위험할 수 있음),
+`Forms/OutboundHistoryForm.cs:484`. 전부 "저장/반영/복원 직후 곧바로 성공 모달"이라는 같은
+모양이라, 같은 처방(모달 제거 → 상태표시줄/라벨)이 통할 것으로 예상된다.
+
+196/196 통과(이번 라운드는 기존 동작 변경 없이 안내 방식만 바꿔서 회귀 테스트 추가 안 함).
+
 ## 노션 5.1 "조건부매핑" 5개 항목 구현 — `Forms/MappingForm.cs` 조건부 매핑(상세) 탭 전면 개편 — 2026-06-28
 
 노션 체크리스트의 "5.1 조건부매핑" 토글에 있던 5개 항목을 모두 구현했다(마감/이익분석에서

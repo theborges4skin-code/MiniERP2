@@ -56,6 +56,7 @@ public class MappingForm : Form
     private TextBox _conditionTargetSkuTextBox = new();
     private Label _conditionPreviewLabel = new();
     private Label _conditionSaveFeedbackLabel = new();
+    private Label _globalStatusLabel = new();
     private long _selectedConditionRuleId = -1;
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
@@ -116,9 +117,12 @@ public class MappingForm : Form
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
         btnSave.Click += OnSaveClick;
 
+        _globalStatusLabel = new Label { AutoSize = true, Padding = new Padding(15, 8, 0, 0), ForeColor = Color.DarkGreen };
+
         panel.Controls.Add(channelLabel);
         panel.Controls.Add(_channelComboBox);
         panel.Controls.Add(btnSave);
+        panel.Controls.Add(_globalStatusLabel);
 
         return panel;
     }
@@ -1028,7 +1032,10 @@ public class MappingForm : Form
 
         LoadUnifiedRules();
         if (!string.IsNullOrEmpty(_channelComboBox.SelectedValue as string)) LoadRulesForSelectedChannel();
-        MessageBox.Show($"{selected.Count}건을 삭제했습니다.", "삭제 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // LoadUnifiedRules/LoadRulesForSelectedChannel이 그리드를 통째로 다시 그린 직후라 같은
+        // 위험 패턴 — 모달 대신 상태표시줄로 안내한다.
+        _globalStatusLabel.ForeColor = Color.DarkGreen;
+        _globalStatusLabel.Text = $"{selected.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     private int EstimateUnifiedRuleDeleteImpact(List<UnifiedRuleRow> selected)
@@ -1652,11 +1659,16 @@ public class MappingForm : Form
             });
 
             _dirtyTabs.Clear();
-            MessageBox.Show($"'{selectedChannel}' 채널의 변경된 {savedTabsCount}개 탭의 규칙이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // 노션 5.1 후속 점검: 자기 자신을 Enabled=false로 비활성화한 채로(아래 finally에서만
+            // 다시 true) 모달을 띄우면, 정산파일 로드/조건부 매핑 저장에서 반복 재현됐던 것과 같은
+            // "모달이 안 보이게 생성되는" 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체했다.
+            _globalStatusLabel.ForeColor = Color.DarkGreen;
+            _globalStatusLabel.Text = $"'{selectedChannel}' 채널의 변경된 {savedTabsCount}개 탭의 규칙이 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _globalStatusLabel.ForeColor = Color.Red;
+            _globalStatusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
         }
         finally
         {
@@ -1734,7 +1746,6 @@ public class MappingForm : Form
             if (result == DialogResult.Yes)
             {
                 _mappingRepository.SaveRules(ruleType, selectedChannel, rulesToImport);
-                MessageBox.Show("데이터를 성공적으로 반영했습니다.", "완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 // 그리드 데이터를 새로고침하고 dirty 상태로 표시
                 if (activeTab.Controls[0] is ExcelLikeDataGridView grid)
@@ -1743,6 +1754,10 @@ public class MappingForm : Form
                     MarkTabAsDirty(activeTab);
                     RefreshConflicts();
                 }
+
+                // 그리드를 막 다시 그린 직후라 같은 위험 패턴 — 모달 대신 상태표시줄로 안내한다.
+                _globalStatusLabel.ForeColor = Color.DarkGreen;
+                _globalStatusLabel.Text = $"데이터를 성공적으로 반영했습니다. ({DateTime.Now:HH:mm:ss})";
             }
         }
         catch (Exception ex)

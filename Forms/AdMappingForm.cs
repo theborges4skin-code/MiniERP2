@@ -44,6 +44,7 @@ public class AdMappingForm : Form
     private TextBox _conditionKeyTextBox = new();
     private TextBox _conditionTargetGroupTextBox = new();
     private Label _conditionPreviewLabel = new();
+    private Label _conditionSaveFeedbackLabel = new();
     private long _selectedConditionRuleId = -1;
 
     // "예외 처리" 탭(행 필터)
@@ -410,8 +411,9 @@ public class AdMappingForm : Form
 
         _adMappingRepository.UpsertTempRule(channelCode, AdMappingEngine.BuildKey(item), dialog.TargetGroup);
         LoadTempRules(channelCode);
-        ReapplyMapping(channelCode);
-        MessageBox.Show("임시 매핑으로 등록했습니다.", "등록 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        ReapplyMapping(channelCode); // UpdateAdSummary()를 호출해 _adSummaryLabel을 새 요약으로 갱신한다.
+        // 노션 5.1 후속 점검: 그리드 재구성 직후 모달을 띄우면 같은 위험군이라 비모달 라벨로 대체.
+        _adSummaryLabel.Text = $"[임시 매핑으로 등록했습니다 — {DateTime.Now:HH:mm:ss}] {_adSummaryLabel.Text}";
     }
 
     private void OnAddConditionRuleFromSelectedAdItem()
@@ -433,7 +435,9 @@ public class AdMappingForm : Form
         SelectConditionRuleById(newRuleId);
         _tabControl.SelectedTab = _conditionDetailTabPage;
         ReapplyMapping(channelCode);
-        MessageBox.Show("조건부 매핑 규칙을 추가했습니다. '조건부 매핑(상세)' 탭에서 조건을 다듬을 수 있습니다.", "추가 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // 노션 5.1 후속 점검: 탭 전환+그리드 재구성 직후 모달을 띄우면 같은 위험군이라 비모달
+        // 라벨로 대체(어차피 조건부 매핑(상세) 탭으로 전환되며 새 규칙이 바로 선택된 채로 보임).
+        _conditionSaveFeedbackLabel.Text = $"조건부 매핑 규칙을 추가했습니다 ({DateTime.Now:HH:mm:ss}) — 조건을 다듬은 뒤 저장하세요.";
     }
 
     private void OnAddExceptionFromSelectedAdItem()
@@ -471,8 +475,17 @@ public class AdMappingForm : Form
 
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnSave = new Button { Text = "저장", Size = new Size(90, 28) };
-        btnSave.Click += (s, e) => { SaveTempRules(); MessageBox.Show("저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information); };
+        // 노션 5.1 후속 점검: SaveTempRules가 ReapplyMapping(그리드 재계산)을 하는데 그 직후
+        // 모달을 띄우면 다른 화면들에서 반복 재현됐던 "모달이 안 보이게 생성되는" 경쟁 상태와
+        // 같은 위험군이라 비모달 라벨로 대체했다.
+        var tempRuleFeedbackLabel = new Label { AutoSize = true, Padding = new Padding(10, 7, 0, 0), ForeColor = Color.DarkGreen };
+        btnSave.Click += (s, e) =>
+        {
+            SaveTempRules();
+            tempRuleFeedbackLabel.Text = $"저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+        };
         toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(tempRuleFeedbackLabel);
 
         _tempRuleGrid = new ExcelLikeDataGridView
         {
@@ -585,6 +598,8 @@ public class AdMappingForm : Form
         detailButtonPanel.Controls.Add(btnAddDetail);
         detailButtonPanel.Controls.Add(btnDeleteDetail);
         detailButtonPanel.Controls.Add(btnSaveDetails);
+        _conditionSaveFeedbackLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
+        detailButtonPanel.Controls.Add(_conditionSaveFeedbackLabel);
 
         rightPanel.Controls.Add(summaryPanel, 0, 0);
         rightPanel.Controls.Add(_conditionDetailGrid, 0, 1);
@@ -674,11 +689,21 @@ public class AdMappingForm : Form
     private void OnSaveConditionSummaryClick(object? sender, EventArgs e)
     {
         if (_selectedConditionRuleId < 0) return;
-        _adMappingRepository.UpdateConditionRuleSummary(_selectedConditionRuleId, _conditionKeyTextBox.Text, _conditionTargetGroupTextBox.Text);
+        var ruleId = _selectedConditionRuleId;
+        _adMappingRepository.UpdateConditionRuleSummary(ruleId, _conditionKeyTextBox.Text, _conditionTargetGroupTextBox.Text);
 
         var channelCode = _channelComboBox.SelectedValue as string;
-        if (!string.IsNullOrEmpty(channelCode)) { LoadConditionRules(channelCode); ReapplyMapping(channelCode); }
-        MessageBox.Show("규칙 정보가 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (!string.IsNullOrEmpty(channelCode))
+        {
+            // LoadConditionRules가 목록을 다시 불러오며 선택을 초기화하므로, 같은 규칙을 다시
+            // 선택해 편집을 이어갈 수 있게 한다.
+            LoadConditionRules(channelCode);
+            SelectConditionRuleById(ruleId);
+            ReapplyMapping(channelCode);
+        }
+        // 노션 5.1 후속 점검: 그리드 재구성 직후 모달을 띄우면 다른 화면들에서 반복 재현됐던
+        // 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체했다.
+        _conditionSaveFeedbackLabel.Text = $"규칙 정보 저장됨 ({DateTime.Now:HH:mm:ss})";
     }
 
     private void OnAddConditionDetailClick(object? sender, EventArgs e)
@@ -704,7 +729,7 @@ public class AdMappingForm : Form
         _adMappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
         var channelCode = _channelComboBox.SelectedValue as string;
         if (!string.IsNullOrEmpty(channelCode)) ReapplyMapping(channelCode);
-        MessageBox.Show("상세조건이 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _conditionSaveFeedbackLabel.Text = $"상세조건 저장됨 ({DateTime.Now:HH:mm:ss})";
     }
 
     /// <summary>현재 불러온 광고비 데이터(_loadedAdItems)에 조건을 즉시 적용해 예상 매칭 건수를 보여준다.</summary>
