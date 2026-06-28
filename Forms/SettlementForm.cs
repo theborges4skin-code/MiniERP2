@@ -422,23 +422,20 @@ public class SettlementForm : Form
             refreshStopwatch.Stop();
 
             var unresolvedCount = _settlementRows.Count(SettlementRowStatus.IsUnresolved);
-            // 진단용(2026-06-28, 성능 신고 추적 중): 어느 단계가 느린지 사용자가 바로 알 수 있도록
-            // 단계별 소요 시간을 상태표시줄 + 안내창으로 함께 보여준다. 원인이 확인되면 안내창은 빼고
-            // 상태표시줄 표시만 남길 것(또는 완전히 제거).
             var diagnosticsText = $"파일처리 {loadStopwatch.Elapsed.TotalSeconds:F1}s / 화면갱신 {refreshStopwatch.Elapsed.TotalSeconds:F1}s ({LastRefreshDiagnostics})";
             _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]";
 
-            if (loadStopwatch.Elapsed.TotalSeconds > 5 || refreshStopwatch.Elapsed.TotalSeconds > 5)
-            {
-                MessageBox.Show(
-                    $"[진단용] 처리 단계별 소요 시간입니다. 이 내용을 그대로 알려주시면 원인 파악에 도움이 됩니다.\n\n{diagnosticsText}",
-                    "처리 시간 진단", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            // 진단 결과(2026-06-28): 처리 자체는 항상 1초 미만이었고, "멈춘 것처럼 보인다"던 원인은
+            // 따로 있었다 — 진행 안내창(progressDialog)을 finally에서만 닫고 있어서, 아래
+            // MessageBox(확인 필요 안내)가 그 위/뒤에서 떠 있는 상태로 작업자가 못 보고 응답을
+            // 못 누른 것이었다. 안내창을 먼저 닫고 나서 MessageBox를 띄우도록 순서를 바꿨다.
+            Cursor = Cursors.Default;
+            progressDialog.Close();
 
             // 99.1: 미매핑/원가없음 등 확인이 필요한 건이 있으면 안내한다(목록 상단/필터로 이미 노출됨).
             if (unresolvedCount > 0)
             {
-                MessageBox.Show(
+                MessageBox.Show(this,
                     $"미매핑/원가없음 등 확인이 필요한 건이 {unresolvedCount}건 있습니다.\n목록 상단에 자동으로 표시했습니다(\"미매핑건만 보기\" 체크 해제 시 전체 확인 가능).",
                     "확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
