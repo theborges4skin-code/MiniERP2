@@ -30,6 +30,7 @@ public class SettlementForm : Form
 
     private ExcelLikeDataGridView _settlementGrid = new();
     private BindingList<SettlementData> _settlementRows = new();
+    private MappingForm? _subscribedMappingForm;
     private ToolStripStatusLabel _statusLabel = new();
 
     private ExcelLikeDataGridView _summaryGrid = new();
@@ -807,6 +808,39 @@ public class SettlementForm : Form
     }
 
     /// <summary>
+    /// 매핑관리창(MappingForm.MappingRulesChanged)에서 규칙이 바뀌었다는 신호를 받았을 때, 지금
+    /// 로드돼 있는 정산 데이터 전체를 다시 매핑·손익 계산한다. "정산파일 로드"를 다시 실행하지
+    /// 않아도(엑셀을 다시 읽지 않음) 미매핑 목록이 즉시 갱신되도록 채널별로 SkuMapper를 한 번씩만
+    /// 만들어 재사용한다.
+    /// </summary>
+    private void ReapplyMappingForAllRows()
+    {
+        if (_settlementRows.Count == 0) return;
+
+        var channelConfigs = _channelConfigService.Load();
+        var mapperCache = new Dictionary<string, (SkuMapper Mapper, ChannelConfig Config)>();
+
+        foreach (var data in _settlementRows)
+        {
+            if (string.IsNullOrEmpty(data.ChannelCode)) continue;
+
+            if (!mapperCache.TryGetValue(data.ChannelCode, out var entry))
+            {
+                var channelConfig = channelConfigs.FirstOrDefault(c => c.ChannelCode == data.ChannelCode);
+                if (channelConfig == null) continue;
+
+                entry = (new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository), channelConfig);
+                mapperCache[data.ChannelCode] = entry;
+            }
+
+            SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, _itemRepository, entry.Config, _channelSkuRepository);
+        }
+
+        RefreshProfitAnalysisView();
+        _statusLabel.Text = $"매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
     /// 미매핑 행에서 곧바로 매핑을 실행할 수 있는 우클릭 메뉴(1:1/조건부/임시/예외처리). 기본
     /// 복사/붙여넣기 항목보다 앞에 끼워넣어, 그리드의 동적 "이 창의 기능" 메뉴 갱신 로직이
     /// 이 항목들을 지우지 않도록 한다(ExcelLikeDataGridView.OnContextMenuOpening 참고).
@@ -859,9 +893,23 @@ public class SettlementForm : Form
         var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
         if (!mappingForm.Visible) mappingForm.Show();
         mappingForm.BringToFront();
+
+        // 매핑관리창에서 규칙을 저장할 때마다 이 창의 미매핑 목록을 자동으로 다시 매핑한다(정산파일을
+        // 다시 읽지 않고도 즉시 반영). 같은 매핑관리창 인스턴스에 중복 구독되지 않도록 한 번만 건다.
+        if (!ReferenceEquals(_subscribedMappingForm, mappingForm))
+        {
+            if (_subscribedMappingForm != null) _subscribedMappingForm.MappingRulesChanged -= ReapplyMappingForAllRows;
+            mappingForm.MappingRulesChanged += ReapplyMappingForAllRows;
+            mappingForm.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_subscribedMappingForm, mappingForm)) _subscribedMappingForm = null;
+            };
+            _subscribedMappingForm = mappingForm;
+        }
+
         mappingForm.StartNewConditionRuleFor(data.ChannelCode!, data.ProductName, data.OptionName);
 
-        _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리한 뒤, 이 창에서 '정산파일 로드'를 다시 실행하면 반영됩니다.";
+        _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리해 저장하면 이 목록에 자동으로 반영됩니다.";
     }
 
     /// <summary>정확히 같은 (상품명+옵션명) 키에만 매칭되는 임시 매핑 규칙으로 등록한다.</summary>

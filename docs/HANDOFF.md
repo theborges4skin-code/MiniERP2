@@ -9,6 +9,38 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **196/196 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## "조건부매핑하기" 멈춤 버그 + 미매핑 목록 자동반영 — 2026-06-28
+
+사용자 신고 2건: (1) 마감/이익분석에서 "조건부 매핑 규칙 추가"를 누르면 매핑관리창이 열리지만
+그 다음 반응이 없음. (2) 거기서 조건부매핑을 끝내도 마감/이익분석의 미매핑 목록에 자동 반영이
+안 됨(다시 "정산파일 로드"를 해야 함).
+
+**원인 1(멈춤)**: `MappingForm.StartNewConditionRuleFor`가 `_channelComboBox.SelectedValue =
+channelCode`로 채널을 바꾸는데, 이게 `SelectedIndexChanged` 이벤트로 `LoadRulesForSelectedChannel`
+(async void)을 트리거한다. 이 메서드는 `_dirtyTabs.Count > 0`(다른 탭에 저장 안 한 변경사항이
+있던 경우)이면 "저장하시겠습니까?" 확인 모달(`PromptToSaveChanges`)을 띄우는데, 이게 **매핑관리창을
+막 `Show()`+`BringToFront()`한 바로 그 틱에서** 일어나 — 이 세션에서 반복 재현됐던 "모달이
+Visible=False로 생성되는" 경쟁 상태(정산파일 로드 멈춤과 동일 원인)를 그대로 재현한다.
+`LoadRulesForSelectedChannel`을 모달 부분(`LoadRulesForSelectedChannel`, 그대로 둠 — 사용자가
+채널 드롭다운을 직접 바꿀 때는 정상 동작)과 모달 없는 핵심 로직(`LoadRulesForSelectedChannelCore`,
+새로 추출)으로 나누고, `StartNewConditionRuleFor`는 이벤트 핸들러를 잠시 떼고 `Core`만 직접
+호출하도록 수정(`OnChannelComboBoxSelectedIndexChanged`로 이름 붙은 핸들러 추가, 떼고-다시-붙이기
+가능하게).
+
+**원인 2(자동반영 안 됨)**: 원래 설계가 "조건부매핑 끝내면 정산파일을 다시 로드해야 반영됨"이었음
+(상태표시줄 안내문에 그렇게 적어뒀었음) — 의도된 동작이었지만 사용자 입장에선 불편. `MappingForm`에
+`public event Action? MappingRulesChanged`를 추가해 규칙이 실제로 바뀌는 모든 지점
+(`OnSaveConditionSummaryClick`/`OnSaveConditionDetailsClick`/`OnSaveClick`/
+`OnDeleteSelectedUnifiedRulesClick`/`OnDragDrop` 가져오기)에서 호출. `SettlementForm`은 "조건부
+매핑 규칙 추가"로 매핑관리창을 열 때 이 이벤트를 구독(같은 인스턴스에 중복 구독 안 되게
+`_subscribedMappingForm`으로 추적, `FormClosed`에서 해제)해서, 새 `ReapplyMappingForAllRows()`
+(엑셀 재로드 없이 `_settlementRows` 전체를 채널별로 캐싱한 `SkuMapper`로 다시 매핑·손익 계산 →
+`RefreshProfitAnalysisView()`)를 자동 호출한다.
+
+196/196 통과(UI/이벤트 연결 변경이라 회귀 테스트 추가 없음 — 수동 확인 필요: 마감/이익분석 →
+미매핑 행 우클릭 → 조건부 매핑 규칙 추가 → 매핑관리창이 응답하는지, 거기서 대상SKU/조건 저장 →
+정산파일 다시 로드 없이 미매핑 목록이 갱신되는지).
+
 ## 채널설정 — 채널그룹 이동(=신규 그룹 만들기) UI 추가 — 2026-06-28
 
 사용자 질문: "채널설정에서 채널그룹 추가/수정/삭제는 어디서 하나?" 확인해보니 이 앱의 "그룹"은

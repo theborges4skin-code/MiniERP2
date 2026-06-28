@@ -112,7 +112,7 @@ public class MappingForm : Form
 
         var channelLabel = new Label { Text = "채널:", Anchor = AnchorStyles.Left, AutoSize = true, Padding = new Padding(0, 5, 0, 0) };
         _channelComboBox = new ComboBox { Size = new Size(200, 25), DropDownStyle = ComboBoxStyle.DropDownList };
-        _channelComboBox.SelectedIndexChanged += (s, e) => LoadRulesForSelectedChannel();
+        _channelComboBox.SelectedIndexChanged += OnChannelComboBoxSelectedIndexChanged;
 
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
         btnSave.Click += OnSaveClick;
@@ -1036,6 +1036,7 @@ public class MappingForm : Form
         // 위험 패턴 — 모달 대신 상태표시줄로 안내한다.
         _globalStatusLabel.ForeColor = Color.DarkGreen;
         _globalStatusLabel.Text = $"{selected.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
+        MappingRulesChanged?.Invoke();
     }
 
     private int EstimateUnifiedRuleDeleteImpact(List<UnifiedRuleRow> selected)
@@ -1371,9 +1372,24 @@ public class MappingForm : Form
     /// 만들고 싶을 때 호출하는 진입점. 채널을 선택하고, 상품명/옵션명을 Contains 조건으로 채운
     /// 새 규칙을 만들어 "조건부 매핑(상세)" 탭에서 바로 다듬을 수 있게 한다.
     /// </summary>
+    /// <summary>
+    /// 마감/이익분석창에서 "조건부 매핑 규칙 추가"로 이 창을 막 열거나 앞으로 가져온 직후(같은 틱)
+    /// 호출된다. 채널을 바꿀 때 쓰는 일반 경로(<see cref="LoadRulesForSelectedChannel"/>)는 저장
+    /// 확인 모달을 띄울 수 있는데, 창이 막 보이게 된 직후 같은 틱에서 모달을 띄우면 그 모달이
+    /// Visible=False로 생성되는 경쟁 상태가 재현된다("조건부매핑창이 열리지만 반응 없음" 신고와
+    /// 동일 원인) — 그래서 여기서는 이벤트 핸들러를 잠시 떼고 모달 없는 핵심 로직만 직접 호출한다.
+    /// 다른 채널 탭에 저장 안 한 변경사항이 있었다면 그 변경사항은 경고 없이 버려진다(이 창을 다시
+    /// 열 때 즉시 새 조건부 규칙을 만드는 게 목적이라, 모달로 막는 것보다 이 트레이드오프가 낫다).
+    /// </summary>
     public void StartNewConditionRuleFor(string channelCode, string? productName, string? optionName)
     {
-        _channelComboBox.SelectedValue = channelCode;
+        if (_channelComboBox.SelectedValue as string != channelCode)
+        {
+            _channelComboBox.SelectedIndexChanged -= OnChannelComboBoxSelectedIndexChanged;
+            _channelComboBox.SelectedValue = channelCode;
+            _channelComboBox.SelectedIndexChanged += OnChannelComboBoxSelectedIndexChanged;
+            LoadRulesForSelectedChannelCore(channelCode);
+        }
 
         var details = new List<MappingConditionDetail>();
         if (!string.IsNullOrWhiteSpace(productName))
@@ -1390,7 +1406,14 @@ public class MappingForm : Form
         LoadConditionRules(channelCode);
         SelectConditionRuleById(newRuleId);
         _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+        MappingRulesChanged?.Invoke();
     }
+
+    /// <summary>
+    /// 조건부 매핑 규칙이 추가/수정/삭제될 때 알리는 이벤트. 마감/이익분석창이 이걸 구독해서
+    /// "정산파일 로드"를 다시 안 해도 미매핑 목록에 즉시 반영되게 한다.
+    /// </summary>
+    public event Action? MappingRulesChanged;
 
     private void OnAddConditionRuleClick(object? sender, EventArgs e)
     {
@@ -1454,6 +1477,7 @@ public class MappingForm : Form
         // 노션 5.1: 저장 직후 MessageBox를 띄우면 "저장이 오래 걸린다"고 느껴지는 원인이었던
         // 모달 표시 문제(다른 창/그리드 갱신 직후 모달 경쟁 상태)와 같은 패턴이라 비모달 라벨로 대체.
         _conditionSaveFeedbackLabel.Text = $"규칙 정보 저장됨 ({DateTime.Now:HH:mm:ss})";
+        MappingRulesChanged?.Invoke();
     }
 
     private void OnAddConditionDetailClick(object? sender, EventArgs e)
@@ -1491,6 +1515,7 @@ public class MappingForm : Form
 
         _mappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
         _conditionSaveFeedbackLabel.Text = $"상세조건 저장됨 ({DateTime.Now:HH:mm:ss})";
+        MappingRulesChanged?.Invoke();
     }
 
     private TabPage CreateRuleTabPage(string title, MappingRuleType ruleType)
@@ -1595,6 +1620,8 @@ public class MappingForm : Form
         _channelComboBox.SelectedValue = channelCode;
     }
 
+    private void OnChannelComboBoxSelectedIndexChanged(object? sender, EventArgs e) => LoadRulesForSelectedChannel();
+
     private async void LoadRulesForSelectedChannel()
     {
         // Use SelectedValue which corresponds to ValueMember ("ChannelCode")
@@ -1604,6 +1631,18 @@ public class MappingForm : Form
         // 채널 변경 전, 저장되지 않은 변경사항이 있는지 비동기적으로 확인
         if (!await PromptToSaveChanges()) return;
 
+        LoadRulesForSelectedChannelCore(selectedChannel);
+    }
+
+    /// <summary>
+    /// 채널의 규칙 그리드/조건부 매핑/미매핑 목록을 다시 불러오는 실제 로직. 사용자가 채널
+    /// 드롭다운을 직접 바꿀 때는 위 <see cref="LoadRulesForSelectedChannel"/>가 저장 확인 모달을
+    /// 먼저 띄운 뒤 호출하지만, <see cref="StartNewConditionRuleFor"/>처럼 다른 창에서 막 연
+    /// 직후(같은 틱) 호출되는 경로는 이 모달이 "Visible=False로 생성되는" 경쟁 상태를 그대로
+    /// 재현하므로(정산파일 로드 멈춤과 동일 원인) 모달 없이 곧바로 이 메서드만 호출한다.
+    /// </summary>
+    private void LoadRulesForSelectedChannelCore(string selectedChannel)
+    {
         // 채널 변경 시, dirty 상태 초기화
         _dirtyTabs.Clear();
 
@@ -1664,6 +1703,7 @@ public class MappingForm : Form
             // "모달이 안 보이게 생성되는" 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체했다.
             _globalStatusLabel.ForeColor = Color.DarkGreen;
             _globalStatusLabel.Text = $"'{selectedChannel}' 채널의 변경된 {savedTabsCount}개 탭의 규칙이 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+            if (savedTabsCount > 0) MappingRulesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -1758,6 +1798,7 @@ public class MappingForm : Form
                 // 그리드를 막 다시 그린 직후라 같은 위험 패턴 — 모달 대신 상태표시줄로 안내한다.
                 _globalStatusLabel.ForeColor = Color.DarkGreen;
                 _globalStatusLabel.Text = $"데이터를 성공적으로 반영했습니다. ({DateTime.Now:HH:mm:ss})";
+                MappingRulesChanged?.Invoke();
             }
         }
         catch (Exception ex)
