@@ -711,69 +711,85 @@ public class OfsForm : Form
             .ToList();
     }
 
+    /// <summary>
+    /// ContextMenuStrip의 Click 핸들러 안에서 DataGridView.DataSource를 다시 통째로 갈아끼우는
+    /// 등 무거운 작업을 곧바로 하면, 메뉴가 완전히 닫히기 전(Win32 메시지 처리가 덜 끝난 상태)에
+    /// 그 작업이 겹쳐 마우스 커서가 멈춘 것처럼 보이는 경쟁 상태가 이 환경에서 재현됐다(분리배송
+    /// 처리 클릭 시 신고). 다음 메시지 루프 틱으로 미뤄 메뉴가 완전히 닫힌 뒤에 실제 작업을
+    /// 실행한다.
+    /// </summary>
     private void OnMergeIntoOneShipmentClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedOrderItems();
-        if (selected.Count < 2)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("합포장으로 묶을 줄을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count < 2)
+            {
+                MessageBox.Show("합포장으로 묶을 줄을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        if (selected.Select(o => o.Recipient).Distinct().Count() > 1)
-        {
-            var confirm = MessageBox.Show(
-                "선택한 줄들의 수취인이 서로 다릅니다. 그래도 한 송장으로 합포장하시겠습니까?",
-                "수취인 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            if (confirm != DialogResult.Yes) return;
-        }
+            if (selected.Select(o => o.Recipient).Distinct().Count() > 1)
+            {
+                var confirm = MessageBox.Show(
+                    "선택한 줄들의 수취인이 서로 다릅니다. 그래도 한 송장으로 합포장하시겠습니까?",
+                    "수취인 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (confirm != DialogResult.Yes) return;
+            }
 
-        ClearStaleInvoiceLabelOverrides(selected);
-        var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
-        foreach (var item in selected)
-        {
-            item.ShipmentGroupId = groupId;
-        }
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            ClearStaleInvoiceLabelOverrides(selected);
+            var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
+            foreach (var item in selected)
+            {
+                item.ShipmentGroupId = groupId;
+            }
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+        });
     }
 
     private void OnSplitIntoNewShipmentClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedOrderItems();
-        if (selected.Count == 0)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("분리배송으로 분리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("분리배송으로 분리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        ClearStaleInvoiceLabelOverrides(selected);
-        var baseId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
-        var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
-        foreach (var item in selected)
-        {
-            item.ShipmentGroupId = newGroupId;
-        }
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            ClearStaleInvoiceLabelOverrides(selected);
+            var baseId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
+            var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+            foreach (var item in selected)
+            {
+                item.ShipmentGroupId = newGroupId;
+            }
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+        });
     }
 
     private void OnResetShipmentGroupClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedOrderItems();
-        if (selected.Count == 0)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        ClearStaleInvoiceLabelOverrides(selected);
-        foreach (var item in selected)
-        {
-            item.ShipmentGroupId = null;
-        }
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            ClearStaleInvoiceLabelOverrides(selected);
+            foreach (var item in selected)
+            {
+                item.ShipmentGroupId = null;
+            }
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+        });
     }
 
     /// <summary>
@@ -958,47 +974,61 @@ public class OfsForm : Form
             .ToList();
     }
 
+    /// <summary>
+    /// 하단 미리보기의 ContextMenuStrip Click 핸들러에서 바로 DataGridView.DataSource를 다시
+    /// 갈아끼우면, 메뉴가 완전히 닫히기 전(Win32 메시지 처리가 덜 끝난 상태)에 그 작업이 겹쳐
+    /// 마우스 커서가 멈춘 것처럼 보이는 경쟁 상태가 이 환경에서 재현됐다("분리배송 처리 클릭하면
+    /// 멈춤" 신고). 다음 메시지 루프 틱으로 미뤄 메뉴가 완전히 닫힌 뒤에 실행한다.
+    /// </summary>
     private void OnMergePreviewGroupsClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedPreviewRows();
-        if (selected.Count < 2)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("합포장으로 합칠 묶음을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count < 2)
+            {
+                MessageBox.Show("합포장으로 합칠 묶음을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        PushPreviewUndoSnapshot();
+            PushPreviewUndoSnapshot();
 
-        var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
-        ClearStaleInvoiceLabelOverrides(itemsToRegroup);
-        var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
-        foreach (var item in itemsToRegroup)
-        {
-            item.ShipmentGroupId = groupId;
-        }
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
+            ClearStaleInvoiceLabelOverrides(itemsToRegroup);
+            var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
+            foreach (var item in itemsToRegroup)
+            {
+                item.ShipmentGroupId = groupId;
+            }
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+            _statusLabel.Text = $"{selected.Count}개 묶음을 합포장으로 합쳤습니다. ({DateTime.Now:HH:mm:ss})";
+        });
     }
 
     private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedPreviewRows();
-        if (selected.Count == 0)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        PushPreviewUndoSnapshot();
+            PushPreviewUndoSnapshot();
 
-        var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
-        ClearStaleInvoiceLabelOverrides(itemsToRegroup);
-        foreach (var item in itemsToRegroup)
-        {
-            item.ShipmentGroupId = null;
-        }
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
+            ClearStaleInvoiceLabelOverrides(itemsToRegroup);
+            foreach (var item in itemsToRegroup)
+            {
+                item.ShipmentGroupId = null;
+            }
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+            _statusLabel.Text = $"{selected.Count}개 묶음을 분리배송 처리했습니다. ({DateTime.Now:HH:mm:ss})";
+        });
     }
 
     /// <summary>
@@ -1010,46 +1040,48 @@ public class OfsForm : Form
     private void OnDuplicatePreviewRowClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedPreviewRows();
-        if (selected.Count != 1)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (selected.Count != 1)
+            {
+                MessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        PushPreviewUndoSnapshot();
+            PushPreviewUndoSnapshot();
 
-        var template = selected[0].Items[0];
-        // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
-        // 송장으로 묶이게 한다(원본이 아직 기본값=그룹화 없음 상태였다면 지금 명시값으로 고정).
-        // 묶음 구성이 바뀌므로(줄이 하나 늘어남) 옛 InvoiceLabel 오버라이드가 남아있으면 지운다.
-        ClearStaleInvoiceLabelOverrides([template]);
-        var groupId = ShipmentGrouping.GetEffectiveGroupId(template);
-        template.ShipmentGroupId = groupId;
+            var template = selected[0].Items[0];
+            // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
+            // 송장으로 묶이게 한다(원본이 아직 기본값=그룹화 없음 상태였다면 지금 명시값으로 고정).
+            // 묶음 구성이 바뀌므로(줄이 하나 늘어남) 옛 InvoiceLabel 오버라이드가 남아있으면 지운다.
+            ClearStaleInvoiceLabelOverrides([template]);
+            var groupId = ShipmentGrouping.GetEffectiveGroupId(template);
+            template.ShipmentGroupId = groupId;
 
-        var duplicate = new OfsOrderItem
-        {
-            ChannelCode = template.ChannelCode,
-            OrderNo = template.OrderNo,
-            ProductName = string.Empty, // 상품명만 공란 — 여기에 송장에 표시할 메시지를 직접 입력한다.
-            OptionName = template.OptionName,
-            Quantity = template.Quantity,
-            Recipient = template.Recipient,
-            Phone = template.Phone,
-            Address = template.Address,
-            DeliveryMessage = template.DeliveryMessage,
-            MappedSku = template.MappedSku,
-            Status = template.Status,
-            TrackingNo = template.TrackingNo,
-            ShipmentGroupId = groupId,
-        };
+            var duplicate = new OfsOrderItem
+            {
+                ChannelCode = template.ChannelCode,
+                OrderNo = template.OrderNo,
+                ProductName = string.Empty, // 상품명만 공란 — 여기에 송장에 표시할 메시지를 직접 입력한다.
+                OptionName = template.OptionName,
+                Quantity = template.Quantity,
+                Recipient = template.Recipient,
+                Phone = template.Phone,
+                Address = template.Address,
+                DeliveryMessage = template.DeliveryMessage,
+                MappedSku = template.MappedSku,
+                Status = template.Status,
+                TrackingNo = template.TrackingNo,
+                ShipmentGroupId = groupId,
+            };
 
-        _orders.Add(duplicate);
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            _orders.Add(duplicate);
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
 
-        MessageBox.Show(
-            "줄을 복사했습니다. 위 상세 목록 맨 아래 새 줄의 '상품명' 칸에 송장에 표시할 메시지를 입력하세요.",
-            "복사 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // 그리드를 막 다시 그린 직후 모달을 띄우면 같은 위험 패턴이라 상태표시줄로 대체.
+            _statusLabel.Text = "줄을 복사했습니다. 위 상세 목록 맨 아래 새 줄의 '상품명' 칸에 송장에 표시할 메시지를 입력하세요.";
+        });
     }
 
     /// <summary>
@@ -1103,28 +1135,32 @@ public class OfsForm : Form
 
     private void OnUndoPreviewEditClick(object? sender, EventArgs e)
     {
-        if (_previewUndoStack.Count == 0)
+        BeginInvoke(() =>
         {
-            MessageBox.Show("실행취소할 변경 내용이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+            if (_previewUndoStack.Count == 0)
+            {
+                MessageBox.Show("실행취소할 변경 내용이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        var snapshot = _previewUndoStack[^1];
-        _previewUndoStack.RemoveAt(_previewUndoStack.Count - 1);
+            var snapshot = _previewUndoStack[^1];
+            _previewUndoStack.RemoveAt(_previewUndoStack.Count - 1);
 
-        _orders.RaiseListChangedEvents = false;
-        try
-        {
-            _orders.Clear();
-            foreach (var item in snapshot) _orders.Add(item);
-        }
-        finally
-        {
-            _orders.RaiseListChangedEvents = true;
-        }
-        _orders.ResetBindings();
+            _orders.RaiseListChangedEvents = false;
+            try
+            {
+                _orders.Clear();
+                foreach (var item in snapshot) _orders.Add(item);
+            }
+            finally
+            {
+                _orders.RaiseListChangedEvents = true;
+            }
+            _orders.ResetBindings();
 
-        _ordersGrid.Invalidate();
-        RefreshExportPreview();
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+            _statusLabel.Text = $"이전 상태로 되돌렸습니다. ({DateTime.Now:HH:mm:ss})";
+        });
     }
 }

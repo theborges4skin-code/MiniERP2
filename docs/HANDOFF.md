@@ -9,6 +9,28 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **201/201 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## OFS "분리배송 처리 클릭하면 멈춤" — ContextMenuStrip 경쟁 상태 — 2026-06-28
+
+사용자 신고: 하단 택배사 출력 미리보기에서 우클릭 → "분리배송 처리(묶음 풀기)" 클릭 시 마우스
+커서가 멈춘 것처럼 보임(다른 모달-경쟁상태 버그들과는 증상이 비슷하지만 원인은 달랐음).
+
+**원인**: 이 메뉴 항목들(`OnMergePreviewGroupsClick`/`OnResetPreviewGroupsClick`/
+`OnDuplicatePreviewRowClick`/`OnUndoPreviewEditClick`, 상단 그리드의 `OnMergeIntoOneShipmentClick`/
+`OnSplitIntoNewShipmentClick`/`OnResetShipmentGroupClick`도 동일)은 `ContextMenuStrip`의 `Click`
+핸들러 안에서 곧바로 `_previewGrid.DataSource`를 통째로 다시 만든다(`RefreshExportPreview`).
+ContextMenuStrip이 완전히 닫히는(Win32 메시지 처리) 것보다 먼저 DataGridView 재바인딩 같은 무거운
+UI 작업을 같은 호출 스택에서 실행하면 멈춘 것처럼 보이는 경쟁 상태가 생긴다 — WinForms의 잘 알려진
+함정으로, 이 세션에서 반복됐던 "모달이 Visible=False로 생성되는" 경쟁 상태와는 다른 원인이지만
+증상(멈춘 것처럼 보임)은 비슷하다.
+
+**고침**: 위 7개 핸들러 전부 본문을 `BeginInvoke(() => { ... })`로 감싸 다음 메시지 루프 틱으로
+미뤄서, 메뉴가 완전히 닫힌 뒤에 실제 작업이 실행되게 했다. 곁들여 `OnDuplicatePreviewRowClick`이
+그리드 재구성 직후 띄우던 완료 모달도 같은 위험 패턴이라 상태표시줄로 교체(이 세션 전체에서
+반복된 처방과 동일).
+
+201/201 통과(UI 이벤트 핸들러 타이밍이라 회귀 테스트 없음 — 수동 확인 필요: 하단 미리보기에서
+우클릭 "분리배송 처리"/"합포장"/"이 줄 복사"/"실행취소"가 멈춤 없이 바로 처리되는지).
+
 ## OFS 분리배송/합포장 후 품목 내용이 비거나 이상하게 보이던 버그 — 2026-06-28
 
 사용자 신고: 발주서에서 분리배송 처리나 줄복사를 하면 하단 택배사 출력 미리보기에 반영이
