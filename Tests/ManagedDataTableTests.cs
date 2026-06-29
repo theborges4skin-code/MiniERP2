@@ -161,4 +161,40 @@ public class ManagedDataTableTests
         Assert.HasCount(1, updated.Details);
         Assert.AreEqual("새조건", updated.Details[0].TargetValue);
     }
+
+    /// <summary>
+    /// 회귀 테스트 — 같은 채널에 같은 Key(사람이 적는 설명 문구일 뿐 DB에 유니크 제약이 없음)를
+    /// 가진 조건부 매핑 규칙이 2건 있으면, 예전엔 (ChannelCode, Key)를 DataTable의 PrimaryKey로
+    /// 잘못 가정해서 LoadCurrent()가 System.Data.ConstraintException을 던져 데이터관리창을 여는
+    /// 순간 프로그램 전체가 죽었다. 이제 DB의 실제 기본키인 Id를 쓰므로 죽지 않아야 한다.
+    /// </summary>
+    [TestMethod]
+    public void ConditionalMapping_DuplicateChannelAndKey_LoadCurrentDoesNotThrow()
+    {
+        var repository = new MappingRepository();
+        repository.AddConditionRuleWithDetails("CH-A", "같은설명", "SKU-1",
+        [
+            new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = "상품A", Logic = ConditionLogic.And },
+        ]);
+        repository.AddConditionRuleWithDetails("CH-A", "같은설명", "SKU-2",
+        [
+            new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = "상품B", Logic = ConditionLogic.And },
+        ]);
+
+        var adapter = new ConditionalMappingManagedTable();
+        var table = adapter.LoadCurrent();
+
+        Assert.HasCount(2, table.Rows);
+
+        // 두 행을 Id로 정확히 구분해 각각 수정할 수 있어야 한다(예전엔 Key로만 찾아 첫 번째
+        // 행만 계속 고치는 버그가 있었음).
+        table.Rows[1]["TargetSku"] = "SKU-2-수정됨";
+        var result = ManagedTableChangeApplier.Apply(adapter, table);
+
+        Assert.AreEqual(1, result.Updated);
+        var rules = repository.GetAllConditionRulesWithDetails();
+        Assert.HasCount(2, rules);
+        Assert.IsTrue(rules.Any(r => r.Rule.TargetSku == "SKU-1"));
+        Assert.IsTrue(rules.Any(r => r.Rule.TargetSku == "SKU-2-수정됨"));
+    }
 }

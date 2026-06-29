@@ -7,7 +7,37 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**215/215 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**216/216 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## 데이터관리창 크래시 — ConstraintException, (ChannelCode,Key) 중복 — 2026-06-28
+
+사용자 신고: "데이터관리" 버튼을 누르면 프로그램이 즉시 종료됨(JIT 디버깅 안내창). 스택트레이스:
+`ConditionalMappingManagedTable.LoadCurrent` → `DataTable.Rows.Add` →
+`System.Data.ConstraintException: Column 'ChannelCode, Key' is constrained to be unique. Value
+'275B7A29, 보르피린 50ml...' is already present.`
+
+**원인**: `ConditionalMappingManagedTable`이 `table.PrimaryKey = [ChannelCode, Key]`로 설정하는데,
+이건 처음부터 잘못된 가정이었다(클래스 자체 doc 주석에도 "DB에 유니크 제약은 없지만"이라고
+적혀있었음). 조건부 매핑의 "Key"는 사람이 적는 설명 문구일 뿐이라 같은 채널에 같은 Key를 가진
+규칙이 실제로 여러 개 있을 수 있다(바로 이런 중복을 다루기 위해 "전체 조건부규칙 관리"의 "중복
+규칙 병합" 기능이 있다). `RuleCondition` 테이블의 진짜 기본키는 `Id`(자동증가)뿐이고
+(ChannelCode, Key)는 DB 레벨에서도 제약이 없다. 사용자의 실제 DB에 채널 "275B7A29"에 "보르피린
+50ml..." 라는 같은 설명의 규칙이 2건 이상 있어서, 데이터관리창을 여는 순간(LoadCurrent가 전체
+조건부 규칙을 DataTable에 채우면서) 잘못된 유니크 제약에 걸려 처리되지 않은 예외로 프로그램
+전체가 죽었다.
+
+**고침**: `DataManagement/ConditionalMappingManagedTable.cs` — DataTable에 읽기전용 `Id` 열을
+추가하고, `PrimaryKey`/`KeyColumns`를 `[ChannelCode, Key]`에서 진짜 고유한 `[Id]`로 교체.
+`Update`/`Delete`도 이제 Id로 정확히 대상 규칙을 찾는다(예전엔 `FindExisting(channelCode, key)`가
+Key 텍스트로 첫 번째 일치 행만 찾아서, 중복 Key가 있는 채널에서는 수정/삭제가 **엉뚱한 규칙에
+적용될 수 있는 잠재 버그**도 같이 있었음 — 이번에 같이 해결됨).
+
+**참고**: 엑셀로 내보내기→고쳐서 다시 가져오기(중복 덮어쓰기 판단)는 이제 Id 컬럼이 포함된
+엑셀이어야 정확히 매칭된다(헤더 선택에서 Id를 포함해서 내보낼 것). Id 없이 다시 가져오면
+새 규칙으로 추가된다(기존 규칙을 잘못 덮어쓰는 것보다 안전한 기본 동작).
+
+216/216 통과(`Tests/ManagedDataTableTests.cs`에 같은 (ChannelCode,Key) 중복 2건을 만들어
+`LoadCurrent()`가 안 죽고, Id로 정확히 구분해 각각 수정 가능한지 검증하는 회귀 테스트 추가).
 
 ## "매핑된 SKU"로 내보내면 수량이 안 붙던 버그 — 2026-06-28
 

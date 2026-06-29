@@ -9,28 +9,33 @@ namespace MiniERP2.DataManagement;
 /// 있게 합니다. 한 규칙이 여러 상세조건을 가질 수 있어, 엑셀 한 행 = 한 규칙으로 맞추기 위해
 /// 상세조건 목록을 "Condition" 한 열에 직렬화한 문자열로 표현합니다
 /// (형식: <c>AND ProductName Contains "셔츠" ; OR OptionName Contains "블루"</c>).
-/// 자연키는 (ChannelCode, Key)입니다 — DB에 유니크 제약은 없지만, 이 관리창에서 일괄편집할 때는
-/// 채널 안에서 Key를 규칙을 구분하는 고유 설명으로 쓴다고 가정합니다.
+/// 자연키는 DB의 실제 기본키인 Id입니다 — (ChannelCode, Key)는 유니크 제약이 없고 Key는 사람이
+/// 적는 설명 문구일 뿐이라 실제로 같은 채널에 같은 Key를 가진 규칙이 여러 개 있을 수 있다(조건부
+/// 매핑 "중복 규칙 병합" 기능이 바로 이 상황을 다룬다). 예전엔 (ChannelCode, Key)를 DataTable의
+/// PrimaryKey로 잘못 가정해서, 그런 중복이 있는 채널에서 데이터관리창을 열면
+/// System.Data.ConstraintException으로 프로그램 전체가 죽었다.
 /// </summary>
 public class ConditionalMappingManagedTable : IManagedDataTable
 {
     private readonly MappingRepository _repository = new();
 
     public string DisplayName => "조건부 매핑";
-    public string[] KeyColumns => ["ChannelCode", "Key"];
+    public string[] KeyColumns => ["Id"];
 
     public DataTable LoadCurrent()
     {
         var table = new DataTable(DisplayName);
+        var idColumn = table.Columns.Add("Id", typeof(long));
+        idColumn.ReadOnly = true; // 사용자가 직접 편집하면 안 되는 내부 식별자 — 그리드가 자동으로 읽기전용 처리한다.
         table.Columns.Add("ChannelCode", typeof(string));
         table.Columns.Add("Key", typeof(string));
         table.Columns.Add("TargetSku", typeof(string));
         table.Columns.Add("Condition", typeof(string));
-        table.PrimaryKey = [table.Columns["ChannelCode"]!, table.Columns["Key"]!];
+        table.PrimaryKey = [idColumn];
 
         foreach (var (rule, details) in _repository.GetAllConditionRulesWithDetails())
         {
-            table.Rows.Add(rule.ChannelCode, rule.Key, rule.TargetSku, SerializeConditions(details));
+            table.Rows.Add(rule.Id, rule.ChannelCode, rule.Key, rule.TargetSku, SerializeConditions(details));
         }
         table.AcceptChanges();
         return table;
@@ -47,38 +52,18 @@ public class ConditionalMappingManagedTable : IManagedDataTable
 
     public void Update(DataRow row)
     {
-        var channelCode = (string)row["ChannelCode"];
+        var id = Convert.ToInt64(row["Id", DataRowVersion.Original]);
         var key = row["Key"] as string ?? string.Empty;
-        var existing = FindExisting(channelCode, key);
-        if (existing is null)
-        {
-            // 매칭되는 기존 규칙을 못 찾으면(동시 편집 등으로 이미 삭제된 경우) 새로 만든다.
-            Insert(row);
-            return;
-        }
-
         var targetSku = row["TargetSku"] as string ?? string.Empty;
         var details = ParseConditions(row["Condition"] as string ?? string.Empty);
-        _repository.UpdateConditionRuleSummary(existing.Value.Rule.Id, key, targetSku);
-        _repository.ReplaceConditionDetails(existing.Value.Rule.Id, details);
+        _repository.UpdateConditionRuleSummary(id, key, targetSku);
+        _repository.ReplaceConditionDetails(id, details);
     }
 
     public void Delete(DataRow row)
     {
-        var channelCode = (string)row["ChannelCode", DataRowVersion.Original];
-        var key = row["Key", DataRowVersion.Original] as string ?? string.Empty;
-        var existing = FindExisting(channelCode, key);
-        if (existing != null) _repository.DeleteConditionRule(existing.Value.Rule.Id);
-    }
-
-    private (MappingRule Rule, List<MappingConditionDetail> Details)? FindExisting(string channelCode, string key)
-    {
-        var all = _repository.GetAllConditionRulesWithDetails();
-        foreach (var entry in all)
-        {
-            if (entry.Rule.ChannelCode == channelCode && entry.Rule.Key == key) return entry;
-        }
-        return null;
+        var id = Convert.ToInt64(row["Id", DataRowVersion.Original]);
+        _repository.DeleteConditionRule(id);
     }
 
     private static string SerializeConditions(List<MappingConditionDetail> details) =>
