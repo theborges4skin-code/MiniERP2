@@ -103,6 +103,9 @@ public class OrderLoader
                     Status = "로드 완료"
                 };
 
+                // 매핑된 필드 값이 전부 공란인 행(엑셀의 빈 줄, 서식만 있는 꼬리 행 등)은 건너뛴다.
+                if (IsBlankRow(orderItem)) continue;
+
                 // SKU 자동 매핑 적용
                 skuMapper.ApplyMapping(orderItem);
                 items.Add(orderItem);
@@ -111,6 +114,22 @@ public class OrderLoader
 
         return items;
     }
+
+    /// <summary>
+    /// 매핑된 모든 필드 값이 공란인 행인지 판단한다(엑셀의 빈 줄, 서식만 있는 꼬리 행 등을
+    /// 걸러내기 위함). 고정값(예: 고정거래처의 수취인)이 설정된 필드는 항상 채워져 있으므로,
+    /// 그런 채널은 이 검사로 행이 걸러지지 않는다(의도된 동작 — 실제로 빈 행이 아님). 수량은
+    /// 빈칸이어도 0으로 기본값이 들어가 정보가 없다는 신호가 아니라서 판단에서 제외한다.
+    /// </summary>
+    public static bool IsBlankRow(OfsOrderItem item) =>
+        string.IsNullOrWhiteSpace(item.OrderNo)
+        && string.IsNullOrWhiteSpace(item.ProductName)
+        && string.IsNullOrWhiteSpace(item.OptionName)
+        && string.IsNullOrWhiteSpace(item.Recipient)
+        && string.IsNullOrWhiteSpace(item.Phone)
+        && string.IsNullOrWhiteSpace(item.Address)
+        && string.IsNullOrWhiteSpace(item.DeliveryMessage)
+        && item.OrderDate is null;
 
     private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
     {

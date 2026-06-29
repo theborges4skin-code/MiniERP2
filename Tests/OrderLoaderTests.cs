@@ -126,4 +126,46 @@ public class OrderLoaderTests
         Assert.HasCount(1, items);
         Assert.IsNull(items[0].OrderDate);
     }
+
+    [TestMethod]
+    public async Task LoadFromFileAsync_RowWithAllMappedFieldsBlank_IsSkipped()
+    {
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "주문번호";
+            sheet.Cells[1, 2].Value = "상품명";
+            sheet.Cells[1, 3].Value = "발주일";
+            sheet.Cells[2, 1].Value = "ORDER-1";
+            sheet.Cells[2, 2].Value = "상품A";
+            sheet.Cells[2, 3].Value = new DateTime(2026, 6, 20);
+            sheet.Cells[2, 3].Style.Numberformat.Format = "yyyy-mm-dd";
+            // 3행: 셀 서식만 있고 값은 전부 공란인 줄(엑셀에서 흔히 남는 빈 줄)
+            sheet.Cells[3, 1].Style.Font.Bold = true;
+            sheet.Cells[4, 1].Value = "ORDER-2";
+            sheet.Cells[4, 2].Value = "상품B";
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-A");
+        var items = await new OrderLoader().LoadFromFileAsync(skuMapper, BuildChannelConfig(), _excelFilePath);
+
+        Assert.HasCount(2, items);
+        Assert.AreEqual("ORDER-1", items[0].OrderNo);
+        Assert.AreEqual("ORDER-2", items[1].OrderNo);
+    }
+
+    [TestMethod]
+    public void IsBlankRow_AllMappedFieldsBlank_ReturnsTrue()
+    {
+        Assert.IsTrue(OrderLoader.IsBlankRow(new OfsOrderItem { Quantity = 0 }));
+    }
+
+    [TestMethod]
+    public void IsBlankRow_OnlyOneFieldFilled_ReturnsFalse()
+    {
+        Assert.IsFalse(OrderLoader.IsBlankRow(new OfsOrderItem { ProductName = "상품A" }));
+        Assert.IsFalse(OrderLoader.IsBlankRow(new OfsOrderItem { OrderDate = new DateTime(2026, 6, 20) }));
+    }
 }
