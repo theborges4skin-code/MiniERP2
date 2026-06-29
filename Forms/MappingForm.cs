@@ -22,6 +22,9 @@ public class MappingForm : Form
     private ComboBox _channelComboBox = new();
     private TabControl _ruleTabControl = new();
     private readonly HashSet<TabPage> _dirtyTabs = new();
+    /// <summary>저장 확인이 끝나 닫기를 다시 시도하는 경우 OnFormClosing의 확인 절차를 또 거치지
+    /// 않게 하는 플래그. <see cref="OnFormClosing"/> 참고.</summary>
+    private bool _closeConfirmed;
     private readonly Dictionary<MappingRuleType, HashSet<string>> _conflictingKeysByType = new();
     private DataGridView _conflictGrid = new();
 
@@ -1736,6 +1739,20 @@ public class MappingForm : Form
             return;
         }
 
+        await SaveDirtyTabsAsync(selectedChannel);
+    }
+
+    /// <summary>
+    /// 실제 저장 작업(백그라운드 DB 저장 + 상태표시줄 갱신)만 담당한다. 저장 버튼 클릭과
+    /// "닫기 전 저장하시겠습니까?" 확인(<see cref="PromptToSaveChanges"/>)이 공유한다 — 예전엔
+    /// 후자가 이미 UI 스레드에 있으면서도 `Task.Run(() => Invoke(...))`로 자기 자신을 다시
+    /// 불러들이는 우회적인 방식을 썼는데, `OnSaveClick`이 async void라 그 `Invoke`가 실제 저장
+    /// 완료를 기다리지 않고 곧바로 반환해버려서, 폼이 닫히는 시점과 경합해
+    /// `ObjectDisposedException("MappingForm")`이 나는 버그가 있었다. 이미 UI 스레드에서
+    /// 호출되므로 Invoke가 필요 없다 — 그냥 await로 직접 호출한다.
+    /// </summary>
+    private async Task SaveDirtyTabsAsync(string selectedChannel)
+    {
         var dirtyTabsToSave = _dirtyTabs.ToList();
         int savedTabsCount = 0;
 
@@ -1903,7 +1920,11 @@ public class MappingForm : Form
         switch (result)
         {
             case DialogResult.Yes:
-                await Task.Run(() => Invoke(new Action(() => OnSaveClick(null, EventArgs.Empty))));
+                var selectedChannel = _channelComboBox.SelectedValue as string;
+                if (!string.IsNullOrEmpty(selectedChannel))
+                {
+                    await SaveDirtyTabsAsync(selectedChannel);
+                }
                 return _dirtyTabs.Count == 0; // 저장이 성공적으로 완료되었는지(dirty flag가 해제되었는지) 확인
             case DialogResult.No:
                 return true; // 변경사항을 무시하고 계속 진행
@@ -1913,14 +1934,30 @@ public class MappingForm : Form
         }
     }
 
+    /// <summary>
+    /// WinForms는 async void FormClosing 핸들러가 await에서 멈춘 뒤에도 일단 그대로 폼을
+    /// 닫아버린다(나중에 e.Cancel을 true로 바꿔도 이미 늦음 — 동기적으로 반환된 시점에 닫을지
+    /// 말지가 이미 결정됨). 그 틈에 PromptToSaveChanges의 백그라운드 저장 작업이 이미 닫혀(disposed)
+    /// 버린 이 폼을 다시 건드리려다 ObjectDisposedException("MappingForm")이 나는 버그가 있었다.
+    /// 그래서 변경사항이 있으면 일단 동기적으로 닫기를 막아두고(e.Cancel = true), 확인/저장이 다
+    /// 끝난 뒤에만 _closeConfirmed를 켜고 Close()를 다시 호출해 실제로 닫는다.
+    /// </summary>
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (!await PromptToSaveChanges())
+        if (_closeConfirmed) return;
+
+        if (_dirtyTabs.Count == 0)
         {
-            e.Cancel = true;
+            _unmappedGrid.SaveLayout();
             return;
         }
 
+        e.Cancel = true;
+
+        if (!await PromptToSaveChanges()) return;
+
         _unmappedGrid.SaveLayout();
+        _closeConfirmed = true;
+        Close();
     }
 }

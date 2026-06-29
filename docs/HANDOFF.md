@@ -9,6 +9,38 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **201/201 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## 매핑관리창 ObjectDisposedException 크래시 — async void FormClosing 경합 — 2026-06-28
+
+사용자가 발주서를 불러와 미매핑건을 기존 CSKU로 매핑하던 중(매핑관리창이 뜨고 닫히는 흐름)
+실제 크래시(JIT 디버깅 안내창)를 신고. 스택트레이스: `MappingForm.OnFormClosing` →
+`PromptToSaveChanges` → `Control.Invoke` → `ObjectDisposedException: Object name: 'MappingForm'`.
+
+**원인**: `OnFormClosing`이 `async void`인데, `await PromptToSaveChanges()`에서 멈춘 뒤 WinForms는
+그 핸들러가 "이미 반환됐다"고 보고 **그냥 폼을 닫아버린다** — `async void` 핸들러의 await 이후
+실행이 끝나길 기다려주지 않는, C#/WinForms의 잘 알려진 함정이다. `PromptToSaveChanges`가
+"예"(저장) 선택 시 `await Task.Run(() => Invoke(new Action(() => OnSaveClick(...))))`로 저장을
+실행하는데, 이 백그라운드 작업이 끝나기 전에 폼이 이미 닫혀(Dispose) 있으면 그 `Invoke` 호출
+자체가 `ObjectDisposedException`을 던진다. 더해서 `OnSaveClick`이 `async void`라 `Invoke`가
+실제 저장(내부 `await Task.Run`)이 끝나기도 전에 반환해버려서, `_dirtyTabs.Count == 0`로 저장
+성공 여부를 판단하는 것도 타이밍에 따라 틀릴 수 있었다(부수적 버그).
+
+**고침**:
+- `OnSaveClick`의 실제 저장 로직(커서/Enabled 전환 + DB 저장 + 상태표시줄)을
+  `SaveDirtyTabsAsync(string channelCode)`로 분리. 이미 UI 스레드에서 호출되므로
+  `Task.Run(() => Invoke(...))` 같은 우회 없이 그냥 `await`로 직접 호출.
+- `OnFormClosing`을 "동기적으로 먼저 막고, 확인이 다 끝난 뒤에만 다시 닫기" 패턴으로 재작성:
+  변경사항이 있으면 `e.Cancel = true`를 **즉시(동기적으로)** 설정해 폼이 닫히지 않게 막은 뒤,
+  `await PromptToSaveChanges()`로 확인/저장을 진행하고, 성공하면 `_closeConfirmed = true`를 켜고
+  `Close()`를 다시 호출해 실제로 닫는다(재호출 시 `OnFormClosing`이 플래그를 보고 바로 통과).
+
+다른 화면(DataManagementForm/OutboundHistoryForm)의 `OnFormClosing`은 전부 동기 메서드(await
+없음)라 같은 위험이 없음을 확인 — `AdMappingForm`은 `FormClosing` 자체를 안 씀. 이 버그는
+MappingForm에만 있었다.
+
+201/201 통과(async 타이밍 버그라 단위테스트로 재현하기 어려움 — 수동 확인 필요: 매핑관리창에서
+변경 후 닫기(X) → "저장하시겠습니까?" → 예 선택 → 크래시 없이 저장되고 닫히는지, 취소를 누르면
+실제로 안 닫히는지).
+
 ## OFS "분리배송 처리" — 줄이 1개뿐인 묶음은 복사해서 새 송장으로 분리 — 2026-06-28
 
 직전 항목(멈춤 수정) 적용 후 사용자가 실제로 테스트: 멈추지 않고 "1개 묶음을 분리배송
