@@ -7,7 +7,41 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**201/201 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**213/213 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## OFS 택배사 출력 미리보기 — 실제 택배사 헤더 그대로 + 박스타입/운임 등 수동입력 — 2026-06-28
+
+사용자 요청: 하단 미리보기가 고정된 칸(수취인/연락처/주소/배송메세지/품목/총수량/운송장번호/줄수)
+대신, 실제 택배사 양식에서 세팅한 헤더 그대로 보여주고, 거기에 박스타입/내품수량 등을 수동으로
+입력해 택배사프로그램 업로드 전에 운임/선착불 유무 등을 조정할 수 있게 해달라는 것. `AskUserQuestion`
+으로 "미리보기에 택배사 선택 드롭다운이 없는데 어떻게 정할지" 확인 — 새 드롭다운 추가 + 마지막
+선택 기억으로 결정.
+
+**새 `Utils/CourierFieldResolver.cs`** — 택배사 헤더 하나(HeaderMappingEntry)에 대한 "한 묶음의
+실제 출력값" 계산(`Resolve`)/수정(`Apply`) 로직을 `CourierExporter`와 OFS 미리보기가 공유한다
+(미리보기에서 본 내용 = 실제 내보내기 결과, 항상 일치). 헤더의 PropertyName이 비어있으면(예:
+박스타입/내품수량/운임/선착불유무) `OfsOrderItem.ManualFieldValues`(새 필드, 헤더→값 딕셔너리,
+묶음의 대표 줄에만 저장)에서 직접 입력값을 읽고 쓴다. `IsEditable`로 어떤 헤더가 직접 수정
+가능한지 판단(매핑 없음/품목 결합 속성/수취인·연락처·주소·배송메세지·운송장번호는 가능, 매핑된
+SKU 등 계산값은 불가).
+
+**`Forms/CourierExporter.cs`**: 기존 인라인 로직(고정값 오버라이드/품목결합/매핑SKU/리플렉션)을
+전부 `CourierFieldResolver.Resolve` 호출로 교체(중복 제거, 미리보기와 동작 100% 일치 보장).
+
+**`Forms/OfsForm.cs`**: 미리보기 툴바에 택배사 선택 드롭다운(`_previewCourierCombo`) 신설 —
+`SettingsService`의 기존 "마지막 폴더" 저장소를 재사용해 마지막 선택을 기억(`OfsPreviewCourier`
+키). `_previewGrid`를 고정 컬럼(`BindingList<ShipmentPreviewRow>` + `DataPropertyName`)에서
+선택된 택배사의 헤더마다 동적으로 만드는 `DataTable` 바인딩으로 전면 교체 — 그룹↔그리드행
+매핑은 숨겨진 `__rowIndex` 컬럼으로 추적. `ShipmentPreviewRow`는 `Items`만 남기고 기존 계산
+속성(OrderNos/Recipient/.../LineCount)은 전부 제거(더 이상 안 씀). 채널별 고정값 오버라이드가
+있는 칸은 셀 단위로 읽기전용 처리(컬럼 전체가 아니라 — 같은 헤더라도 채널마다 고정값 여부가
+다를 수 있어서). `Forms/CourierConfigForm.cs`의 헤더-속성 매핑 안내 문구에도 "비워두면 미리보기
+에서 직접 입력" 힌트 추가.
+
+213/213 통과(`Tests/CourierFieldResolverTests.cs` 12개 신규 — Resolve/Apply/IsEditable의
+수동입력·고정값우선순위·매핑SKU·품목결합·브로드캐스트 케이스 검증). 수동 확인 필요: OFS에서
+미리보기 택배사 드롭다운을 바꾸면 헤더가 그 택배사 설정대로 바뀌는지, 매핑 안 된 헤더(빈 칸으로
+둔 박스타입 등)에 입력한 값이 "택배사 양식으로 내보내기"한 실제 엑셀에도 그대로 들어가는지.
 
 ## 매핑관리창 ObjectDisposedException 크래시 — async void FormClosing 경합 — 2026-06-28
 

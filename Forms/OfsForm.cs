@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Data;
 using MiniERP2.Controls;
 using MiniERP2.Config;
 using MiniERP2.DataLoaders;
@@ -33,6 +34,16 @@ public class OfsForm : Form
     private ToolStripStatusLabel _statusLabel = new();
     private BindingList<OfsOrderItem> _orders = new();
     private string? _lastChannelCode;
+
+    // 택배사 출력 미리보기 — 실제 택배사 양식의 헤더 그대로 보여달라는 요청으로, 고정된 컬럼이
+    // 아니라 선택된 택배사(_previewCourierCombo)의 HeaderMappingJson을 기준으로 매번 다시 그린다.
+    private ComboBox _previewCourierCombo = new();
+    private List<ShipmentPreviewRow> _previewRowModels = new();
+    private List<HeaderMappingEntry> _previewHeaderEntries = new();
+    // RefreshExportPreview()가 DataTable을 새로 채우는 동안에도 CellValueChanged가 발생하는데,
+    // 그건 사용자 편집이 아니라 화면을 갱신하는 중이라 모델에 다시 쓰면 안 된다(무한 루프/오염 방지).
+    private bool _isRefreshingPreview;
+    private const string LastPreviewCourierSettingKey = "OfsPreviewCourier";
 
     // 택배사 출력 미리보기에서 직접 편집/합포장/분리배송/복사한 내용을 최근 5건까지 실행취소할 수
     // 있게 보관한다. 각 항목은 그 조작 직전의 _orders 전체 스냅샷(복제본)이다.
@@ -820,65 +831,14 @@ public class OfsForm : Form
     /// 써서, 내보내기 전에 미리 어떤 모습으로 나갈지 확인할 수 있게 한다. 배송메세지/운송장번호는
     /// 여기서 수정하면 묶음에 속한 모든 원본 줄에 그대로 반영된다.
     /// </summary>
+    /// <summary>
+    /// 한 묶음(=송장 1건)에 속한 원본 줄들. 미리보기 그리드는 이제 고정된 속성이 아니라 선택된
+    /// 택배사의 헤더 매핑을 기준으로 동적으로 그려지므로(CourierFieldResolver 참고), 이 클래스는
+    /// 그룹 자체(Items)만 들고 있는다.
+    /// </summary>
     private class ShipmentPreviewRow
     {
         public required List<OfsOrderItem> Items { get; init; }
-
-        public string OrderNos => string.Join(", ", Items.Select(i => i.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct());
-
-        public string? Recipient
-        {
-            get => Items[0].Recipient;
-            set { foreach (var item in Items) item.Recipient = value; }
-        }
-
-        public string? Phone
-        {
-            get => Items[0].Phone;
-            set { foreach (var item in Items) item.Phone = value; }
-        }
-
-        public string? Address
-        {
-            get => Items[0].Address;
-            set { foreach (var item in Items) item.Address = value; }
-        }
-
-        public string? DeliveryMessage
-        {
-            get => Items[0].DeliveryMessage;
-            set { foreach (var item in Items) item.DeliveryMessage = value; }
-        }
-
-        /// <summary>
-        /// 실제 송장에 출력될 품목 내용입니다. 직접 고치면 이 묶음의 첫 줄(Items[0])의
-        /// InvoiceLabel을 그 값으로 덮어쓰고, 나머지 줄들의 InvoiceLabel은 빈 문자열로 비워
-        /// (BuildCombinedItemDescription이 빈 줄은 걸러내므로) 결합 결과가 입력한 값 그대로
-        /// 나가게 한다. CourierExporter도 같은 InvoiceLabel을 읽으므로 실제 내보내기에도 그대로
-        /// 반영된다(별도의 미리보기 전용 오버라이드 저장소가 필요 없음).
-        /// </summary>
-        public string ItemsDescription
-        {
-            get => ShipmentGrouping.BuildCombinedItemDescription(Items);
-            set
-            {
-                Items[0].InvoiceLabel = value;
-                for (int i = 1; i < Items.Count; i++)
-                {
-                    Items[i].InvoiceLabel = string.Empty;
-                }
-            }
-        }
-
-        public int TotalQuantity => Items.Sum(i => i.Quantity);
-
-        public string? TrackingNo
-        {
-            get => Items[0].TrackingNo;
-            set { foreach (var item in Items) item.TrackingNo = value; }
-        }
-
-        public int LineCount => Items.Count;
     }
 
     private Control CreateExportPreviewPanel()
@@ -889,6 +849,16 @@ public class OfsForm : Form
 
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
         toolStrip.Controls.Add(new Label { Text = "택배사 출력 미리보기(묶음 단위) — 매핑 성공한 줄만 표시", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Padding = new Padding(0, 4, 10, 0) });
+
+        // 사용자 요청: 실제 택배사 양식에서 세팅한 헤더 그대로 보여주고, 거기에 매핑된 속성이
+        // 없는 칸(박스타입/내품수량/운임/선착불유무 등)은 직접 입력해 업로드 전에 조정할 수 있게.
+        // 어떤 택배사 기준인지 고를 드롭다운을 새로 두고, 마지막으로 고른 택배사를 기억한다(거의
+        // 안 바뀌는 값이라서).
+        toolStrip.Controls.Add(new Label { Text = "택배사:", AutoSize = true, Padding = new Padding(10, 4, 4, 0) });
+        _previewCourierCombo = new ComboBox { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(CourierMaster.CourierName) };
+        _previewCourierCombo.SelectedIndexChanged += OnPreviewCourierChanged;
+        toolStrip.Controls.Add(_previewCourierCombo);
+
         var btnRefreshPreview = new Button { Text = "새로고침", Size = new Size(80, 24) };
         btnRefreshPreview.Click += (s, e) => RefreshExportPreview();
         toolStrip.Controls.Add(btnRefreshPreview);
@@ -903,20 +873,8 @@ public class OfsForm : Form
             AllowUserToAddRows = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        // 주문번호들/총수량/줄수는 여러 줄을 합친 순수 집계값이라 직접 수정할 단일 대상이 없어
-        // 읽기전용으로 둔다. 그 외(수취인/연락처/주소/배송메세지/품목/운송장번호)는 모두 직접
-        // 고칠 수 있게 했고, 고치면 해당 묶음의 원본 줄에 그대로 반영된다(각 속성의 setter 처리).
-        _previewGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "OrderNos", HeaderText = "주문번호", DataPropertyName = "OrderNos", Width = 150, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 90 },
-            new DataGridViewTextBoxColumn { Name = "Phone", HeaderText = "연락처", DataPropertyName = "Phone", Width = 110 },
-            new DataGridViewTextBoxColumn { Name = "Address", HeaderText = "주소", DataPropertyName = "Address", Width = 200 },
-            new DataGridViewTextBoxColumn { Name = "DeliveryMessage", HeaderText = "배송메세지", DataPropertyName = "DeliveryMessage", Width = 140 },
-            new DataGridViewTextBoxColumn { Name = "ItemsDescription", HeaderText = "품목(실제 출력될 내용)", DataPropertyName = "ItemsDescription", Width = 220 },
-            new DataGridViewTextBoxColumn { Name = "TotalQuantity", HeaderText = "총수량", DataPropertyName = "TotalQuantity", Width = 60, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "TrackingNo", HeaderText = "운송장번호", DataPropertyName = "TrackingNo", Width = 130 },
-            new DataGridViewTextBoxColumn { Name = "LineCount", HeaderText = "줄수", DataPropertyName = "LineCount", Width = 50, ReadOnly = true }
-        );
+        // 컬럼은 고정돼 있지 않다 — 선택된 택배사의 헤더 매핑(HeaderMappingJson)에 따라
+        // RefreshExportPreview()가 매번 다시 만든다(OnPreviewCourierChanged 참고).
         _previewGrid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         // 셀 편집을 시작하는 순간(커밋 전) 실행취소용 스냅샷을 떠둔다 — CellValueChanged는 값이
         // 이미 바뀐 뒤에 발생해서 "편집 전" 상태를 잡을 수 없기 때문이다.
@@ -925,9 +883,45 @@ public class OfsForm : Form
         _previewGrid.CellFormatting += OnPreviewGridCellFormatting;
         SetupPreviewGridContextMenu();
 
+        LoadPreviewCouriers();
+
         layout.Controls.Add(toolStrip, 0, 0);
         layout.Controls.Add(_previewGrid, 0, 1);
         return layout;
+    }
+
+    /// <summary>
+    /// 미리보기 택배사 드롭다운을 채우고, 마지막으로 골랐던 택배사(설정 파일에 기억됨)를 다시
+    /// 선택한다. 그 택배사가 더는 없으면(삭제됨) 첫 번째 택배사로 대체한다.
+    /// </summary>
+    private void LoadPreviewCouriers()
+    {
+        var couriers = _courierRepository.GetAll();
+        _previewCourierCombo.DataSource = couriers;
+
+        if (couriers.Count == 0) return;
+
+        var lastCourierName = _settingsService.GetLastFolder(LastPreviewCourierSettingKey);
+        var toSelect = couriers.FirstOrDefault(c => c.CourierName == lastCourierName) ?? couriers[0];
+        _previewCourierCombo.SelectedItem = toSelect;
+    }
+
+    private void OnPreviewCourierChanged(object? sender, EventArgs e)
+    {
+        if (_previewCourierCombo.SelectedItem is CourierMaster courier)
+        {
+            _settingsService.SetLastFolder(LastPreviewCourierSettingKey, courier.CourierName);
+        }
+        RefreshExportPreview();
+    }
+
+    /// <summary>그리드 행 인덱스를 _previewRowModels의 묶음으로 되돌린다(DataTable 바인딩이라 DataBoundItem이 DataRowView).</summary>
+    private ShipmentPreviewRow? GetPreviewRowModel(int gridRowIndex)
+    {
+        if (gridRowIndex < 0 || gridRowIndex >= _previewGrid.Rows.Count) return null;
+        if (_previewGrid.Rows[gridRowIndex].Cells["__rowIndex"].Value is not int modelIndex) return null;
+        if (modelIndex < 0 || modelIndex >= _previewRowModels.Count) return null;
+        return _previewRowModels[modelIndex];
     }
 
     /// <summary>
@@ -936,8 +930,8 @@ public class OfsForm : Form
     /// </summary>
     private void OnPreviewGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
-        if (e.RowIndex < 0 || e.RowIndex >= _previewGrid.Rows.Count) return;
-        if (_previewGrid.Rows[e.RowIndex].DataBoundItem is not ShipmentPreviewRow row) return;
+        var row = GetPreviewRowModel(e.RowIndex);
+        if (row == null) return;
 
         var isOverflow = ShipmentGrouping.CountDescriptionLines(row.Items) > 4;
         _previewGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = isOverflow ? Color.MistyRose : _previewGrid.DefaultCellStyle.BackColor;
@@ -945,12 +939,26 @@ public class OfsForm : Form
     }
 
     /// <summary>
-    /// 미리보기에서 배송메세지/운송장번호를 고치면 그 묶음에 속한 모든 원본 줄(ShipmentPreviewRow.
-    /// Items)에 즉시 반영된다(속성 setter가 처리). 위쪽 상세 그리드도 같이 보이도록 무효화한다.
+    /// 미리보기 셀을 고치면(택배사 헤더에 매핑된 속성이 있는 칸은 그 묶음의 모든 원본 줄에,
+    /// 매핑이 없는 칸은 그 줄만의 수동 입력값으로) 반영한다 — CourierFieldResolver.Apply 참고.
+    /// RefreshExportPreview가 DataTable을 다시 채우는 동안에도 이 이벤트가 발생하므로
+    /// _isRefreshingPreview로 그 경우는 무시한다(사용자 편집이 아님).
     /// </summary>
     private void OnPreviewGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
     {
-        if (e.RowIndex < 0) return;
+        if (_isRefreshingPreview) return;
+        if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+        var columnName = _previewGrid.Columns[e.ColumnIndex].Name;
+        if (columnName == "__rowIndex") return;
+
+        var row = GetPreviewRowModel(e.RowIndex);
+        var entry = _previewHeaderEntries.FirstOrDefault(en => en.Header == columnName);
+        if (row == null || entry == null) return;
+
+        var newValue = Convert.ToString(_previewGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value) ?? string.Empty;
+        CourierFieldResolver.Apply(entry, row.Items, newValue);
+
         _ordersGrid.Invalidate();
     }
 
@@ -969,7 +977,7 @@ public class OfsForm : Form
     private List<ShipmentPreviewRow> GetSelectedPreviewRows()
     {
         return _previewGrid.SelectedRows.Cast<DataGridViewRow>()
-            .Select(r => r.DataBoundItem)
+            .Select(r => GetPreviewRowModel(r.Index))
             .OfType<ShipmentPreviewRow>()
             .ToList();
     }
@@ -1115,17 +1123,115 @@ public class OfsForm : Form
 
     /// <summary>
     /// 매핑 성공한 줄을 묶음 단위로 모아 미리보기 그리드를 다시 채운다. 발주서 로드, 매핑 적용,
-    /// 분리배송/합포장 조작 등 미리보기에 영향을 줄 수 있는 작업 뒤에 호출한다.
+    /// 분리배송/합포장 조작 등 미리보기에 영향을 줄 수 있는 작업 뒤에 호출한다. 컬럼은 고정이
+    /// 아니라 선택된 택배사의 헤더 매핑(HeaderMappingJson) 그대로 — 실제 출력될 헤더/내용을
+    /// 내보내기 전에 미리 보고 싶다는 요청에 따른 것이다(CourierFieldResolver로 실제 내보내기와
+    /// 같은 로직을 공유해 미리보기와 실제 결과가 항상 일치하게 한다).
     /// </summary>
     private void RefreshExportPreview()
     {
-        var rows = _orders
+        var courier = _previewCourierCombo.SelectedItem as CourierMaster;
+
+        _previewRowModels = _orders
             .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku))
             .GroupBy(ShipmentGrouping.GetEffectiveGroupId)
             .Select(g => new ShipmentPreviewRow { Items = g.ToList() })
             .ToList();
 
-        _previewGrid.DataSource = new BindingList<ShipmentPreviewRow>(rows);
+        if (courier == null)
+        {
+            _previewHeaderEntries = [];
+            _previewGrid.Columns.Clear();
+            _previewGrid.DataSource = null;
+            return;
+        }
+
+        // 같은 헤더 이름이 중복 설정돼 있으면 DataTable 컬럼 이름 충돌이 나므로, 먼저 나온 것만
+        // 살린다(정상적인 택배사 설정에서는 발생하지 않는 방어 코드).
+        var entries = CourierHeaderMapping.Parse(courier.HeaderMappingJson)
+            .GroupBy(en => en.Header)
+            .Select(g => g.First())
+            .ToList();
+
+        var headersChanged = !entries.Select(en => en.Header).SequenceEqual(_previewHeaderEntries.Select(en => en.Header));
+        _previewHeaderEntries = entries;
+        if (headersChanged || _previewGrid.Columns.Count == 0)
+        {
+            RebuildPreviewColumns(entries);
+        }
+
+        var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+
+        var table = new DataTable();
+        table.Columns.Add("__rowIndex", typeof(int));
+        foreach (var entry in entries) table.Columns.Add(entry.Header, typeof(string));
+
+        for (int i = 0; i < _previewRowModels.Count; i++)
+        {
+            var row = _previewRowModels[i];
+            var channelCode = row.Items[0].ChannelCode;
+            var channelConfig = !string.IsNullOrEmpty(channelCode) ? channelConfigsByCode.GetValueOrDefault(channelCode) : null;
+
+            var dataRow = table.NewRow();
+            dataRow["__rowIndex"] = i;
+            foreach (var entry in entries)
+            {
+                dataRow[entry.Header] = CourierFieldResolver.Resolve(entry, row.Items, courier, channelConfig) ?? string.Empty;
+            }
+            table.Rows.Add(dataRow);
+        }
+
+        _isRefreshingPreview = true;
+        try
+        {
+            _previewGrid.DataSource = table;
+        }
+        finally
+        {
+            _isRefreshingPreview = false;
+        }
+
+        if (_previewGrid.Columns["__rowIndex"] is { } hiddenColumn) hiddenColumn.Visible = false;
+
+        // 채널별 고정값 오버라이드가 있는 칸은 직접 입력해도 실제 내보내기엔 반영되지 않으니,
+        // 그 줄의 그 칸만 셀 단위로 읽기전용으로 막는다(컬럼 전체를 막으면 다른 채널 줄까지 같이
+        // 막혀버려서 — 고정값은 채널마다 다를 수 있어 셀 단위로 처리).
+        for (int i = 0; i < _previewRowModels.Count; i++)
+        {
+            var row = _previewRowModels[i];
+            var channelCode = row.Items[0].ChannelCode;
+            var channelConfig = !string.IsNullOrEmpty(channelCode) ? channelConfigsByCode.GetValueOrDefault(channelCode) : null;
+            foreach (var entry in entries)
+            {
+                if (CourierFieldResolver.GetFixedOverride(channelConfig, courier.CourierName, entry.Header) != null)
+                {
+                    _previewGrid.Rows[i].Cells[entry.Header].ReadOnly = true;
+                }
+            }
+        }
+    }
+
+    /// <summary>선택된 택배사의 헤더 목록이 바뀌었을 때만 호출 — 그리드 컬럼을 그 헤더 그대로 다시 만든다.</summary>
+    private void RebuildPreviewColumns(List<HeaderMappingEntry> entries)
+    {
+        _previewGrid.Columns.Clear();
+        _previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "__rowIndex", DataPropertyName = "__rowIndex", Visible = false });
+
+        foreach (var entry in entries)
+        {
+            _previewGrid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = entry.Header,
+                HeaderText = entry.Header,
+                DataPropertyName = entry.Header,
+                // 매핑된 속성이 없는 칸(박스타입/내품수량/운임/선착불유무 등)과, 그룹 전체에 같은
+                // 값을 적용해야 의미가 맞는 칸(수취인/연락처/주소/배송메세지/운송장번호/품목)만
+                // 직접 고칠 수 있게 한다. 나머지(매핑된 SKU 등 계산된 값)는 읽기전용.
+                ReadOnly = !CourierFieldResolver.IsEditable(entry.PropertyName),
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                MinimumWidth = 80,
+            });
+        }
     }
 
     /// <summary>

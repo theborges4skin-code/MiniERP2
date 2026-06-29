@@ -18,16 +18,6 @@ public class CourierExporter
     }
 
     /// <summary>
-    /// "품목"란에 매핑됐을 가능성이 있는 속성들. 이 속성에 한해서만, 같은 묶음(송장) 안의 모든
-    /// 줄을 줄바꿈으로 이어붙인 문자열로 출력한다(나머지 속성은 묶음의 대표 줄 값을 그대로 쓴다).
-    /// </summary>
-    private static readonly HashSet<string> ItemDescriptionProperties = new(StringComparer.OrdinalIgnoreCase)
-    {
-        nameof(OfsOrderItem.InvoiceLabel),
-        nameof(OfsOrderItem.ProductName),
-    };
-
-    /// <summary>
     /// 주문 목록을 지정된 택배사 양식의 엑셀 파일로 비동기적으로 내보냅니다. 같은 묶음(송장 1건
     /// 단위, <see cref="ShipmentGrouping.GetEffectiveGroupId"/>)에 속한 줄들은 출력에서 한 행으로
     /// 합쳐진다(기본값은 주문번호 단위, OFS 그리드에서 분리배송/합포장을 지정하면 그 값을 따른다).
@@ -80,52 +70,23 @@ public class CourierExporter
                 var groupItems = group.ToList();
                 var representative = groupItems[0];
 
-                var combinedDescription = ShipmentGrouping.BuildCombinedItemDescription(groupItems, courier.QuantityNotationFormat);
                 if (ShipmentGrouping.CountDescriptionLines(groupItems) > 4)
                 {
                     overflowGroups.Add(representative.OrderNo ?? group.Key);
                 }
 
+                var channelConfig = channelConfigsByCode != null && !string.IsNullOrEmpty(representative.ChannelCode)
+                    ? channelConfigsByCode.GetValueOrDefault(representative.ChannelCode)
+                    : null;
+
                 for (int col = 0; col < entries.Count; col++)
                 {
-                    var (header, propertyName) = entries[col];
-
-                    var fixedValue = GetFixedOverride(channelConfigsByCode, representative.ChannelCode, courier.CourierName, header);
-                    if (fixedValue != null)
-                    {
-                        worksheet.Cells[row, col + 1].Value = fixedValue;
-                        continue;
-                    }
-
-                    if (string.IsNullOrEmpty(propertyName)) continue;
-
-                    if (ItemDescriptionProperties.Contains(propertyName))
-                    {
-                        worksheet.Cells[row, col + 1].Value = combinedDescription;
-                        continue;
-                    }
-
-                    // "매핑된 SKU"는 내부 CSKU 코드일 뿐 실제 송장에 찍어서는 안 되는 값이다 —
-                    // 그 CSKU에 설정된 송장표시명(상품명)을 대신 출력한다(설정이 없으면 CSKU 코드
-                    // 그대로 출력해 빈 칸이 되는 것보다는 낫게 한다).
-                    if (string.Equals(propertyName, nameof(OfsOrderItem.MappedSku), StringComparison.OrdinalIgnoreCase))
-                    {
-                        // SkuMapper를 거친 정상 흐름이면 이미 InvoiceDisplayName이 채워져 있어 DB
-                        // 조회가 필요 없다 — 발주/출고 이력에서 재출력하는 경우(채워지지 않음)에만
-                        // 채널코드+CSKU코드로 다시 조회한다.
-                        var invoiceDisplayName = !string.IsNullOrWhiteSpace(representative.InvoiceDisplayName)
-                            ? representative.InvoiceDisplayName
-                            : ResolveInvoiceDisplayName(representative, invoiceDisplayNameCache);
-                        worksheet.Cells[row, col + 1].Value = !string.IsNullOrWhiteSpace(invoiceDisplayName) ? invoiceDisplayName : representative.MappedSku;
-                        continue;
-                    }
-
-                    // 리플렉션을 사용하여 OfsOrderItem의 속성 값을 가져옵니다(묶음의 대표 줄 기준).
-                    var property = typeof(OfsOrderItem).GetProperty(propertyName);
-                    if (property != null)
-                    {
-                        worksheet.Cells[row, col + 1].Value = property.GetValue(representative);
-                    }
+                    // 미리보기(OfsForm)와 같은 로직(CourierFieldResolver)을 공유해, 미리본 내용과
+                    // 실제 내보내기 결과가 항상 일치하게 한다.
+                    var value = CourierFieldResolver.Resolve(
+                        entries[col], groupItems, courier, channelConfig,
+                        item => ResolveInvoiceDisplayName(item, invoiceDisplayNameCache));
+                    worksheet.Cells[row, col + 1].Value = value;
                 }
                 row++;
             }
@@ -147,15 +108,5 @@ public class CourierExporter
         var name = _channelSkuRepository.GetByChannelAndCskuCode(item.ChannelCode, item.MappedSku)?.InvoiceDisplayName;
         cache[key] = name;
         return name;
-    }
-
-    private static string? GetFixedOverride(IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode, string? channelCode, string courierName, string header)
-    {
-        if (channelConfigsByCode == null || string.IsNullOrEmpty(channelCode)) return null;
-        if (!channelConfigsByCode.TryGetValue(channelCode, out var config)) return null;
-
-        return config.CourierHeaderOverrides
-            .FirstOrDefault(o => o.CourierName == courierName && o.Header == header)
-            ?.FixedValue;
     }
 }

@@ -140,7 +140,8 @@ public class CourierConfigForm : Form
         _legendLabel = new Label
         {
             Dock = DockStyle.Fill,
-            Text = "매핑할 데이터 속성명: " + string.Join("  ·  ", PropertyOptions.Select(p => $"{p.Property}({p.Label})")),
+            Text = "매핑할 데이터 속성명(비워두면 OFS 택배사 출력 미리보기에서 직접 입력 — 박스타입/내품수량/운임 등): "
+                + string.Join("  ·  ", PropertyOptions.Select(p => $"{p.Property}({p.Label})")),
             AutoSize = false,
         };
 

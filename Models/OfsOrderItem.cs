@@ -50,4 +50,12 @@ public class OfsOrderItem
     /// <see cref="Utils.ShipmentGrouping.GetEffectiveGroupId"/>를 사용하세요.
     /// </summary>
     public string? ShipmentGroupId { get; set; }
+
+    /// <summary>
+    /// 택배사 양식에 매핑된 OfsOrderItem 속성이 없는 헤더(예: 박스타입/내품수량/운임/선착불유무
+    /// 등)의 값을 사용자가 직접 입력해 보관합니다(헤더 텍스트 → 값). OFS의 택배사 출력 미리보기에서
+    /// 입력하며, 그 묶음의 대표 줄(Items[0])에만 저장됩니다 — <see cref="Utils.CourierFieldResolver"/>
+    /// 참고.
+    /// </summary>
+    public Dictionary<string, string>? ManualFieldValues { get; set; }
 }
