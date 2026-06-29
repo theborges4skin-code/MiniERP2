@@ -9,6 +9,36 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **201/201 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## OFS 분리배송/합포장 후 품목 내용이 비거나 이상하게 보이던 버그 — 2026-06-28
+
+사용자 신고: 발주서에서 분리배송 처리나 줄복사를 하면 하단 택배사 출력 미리보기에 반영이
+안 되거나(매핑 후에도) 내용이 이상하게 나옴. 코드를 보면 `RefreshExportPreview()`는 모든
+그룹 변경 핸들러(분리/합포장/묶음해제, 줄복사)에서 이미 호출되고 있어 "반영 자체가 안 됨"은
+아니었음 — `AskUserQuestion`으로 정확한 증상을 재확인한 결과 "매핑 후에도 안 보이거나 내용이
+이상함"으로 확인, 진짜 원인을 추적.
+
+**원인**: `ShipmentPreviewRow.ItemsDescription`(하단 미리보기의 "품목" 칸을 직접 수정하면)
+setter가 그 묶음의 첫 줄에는 입력한 텍스트를, **나머지 줄에는 빈 문자열("")**을 `InvoiceLabel`에
+써둔다(`BuildCombinedItemDescription`이 빈 줄을 걸러내는 방식으로 합쳐진 결과를 유지하기 위함 —
+의도된 동작, `Tests/ShipmentGroupingTests.cs:112`에 문서화돼 있음). 그런데
+`ShipmentGrouping.GetDescriptionLines`가 `i.InvoiceLabel ?? BuildAutoLabel(...)`로 **null만
+검사**하기 때문에, 이렇게 빈 문자열("")이 박힌 줄은 **나중에 분리배송/합포장/묶음해제로 그룹
+구성이 바뀌어도 그대로 빈 문자열로 남아** 자동 라벨(상품명+수량)로 절대 돌아가지 못했다. 예:
+2줄을 합포장한 뒤 품목 칸을 직접 고치면 2번째 줄이 InvoiceLabel=""이 되는데, 그 줄을 나중에
+"분리배송으로 분리"해서 혼자 만들어도 여전히 빈 칸으로만 보임 — 사용자가 본 "내용이 이상함"이
+정확히 이 현상.
+
+**고침**: `Forms/OfsForm.cs`에 `ClearStaleInvoiceLabelOverrides(IEnumerable<OfsOrderItem>)` 신설
+— 그룹 구성을 바꾸는 모든 지점(`OnMergeIntoOneShipmentClick`/`OnSplitIntoNewShipmentClick`/
+`OnResetShipmentGroupClick`(상단 그리드), `OnMergePreviewGroupsClick`/`OnResetPreviewGroupsClick`
+(하단 미리보기), `OnDuplicatePreviewRowClick`(줄복사))에서 **그룹을 바꾸기 직전에** 영향받는
+모든 줄(옮겨가는 줄 + 그 줄이 원래/새로 속하게 될 묶음의 다른 줄까지)의 `InvoiceLabel`을
+`null`로 지운다. 이러면 새 그룹 구성 기준으로 항상 자동 라벨부터 다시 계산된다.
+
+201/201 통과(UI 이벤트 핸들러 로직이라 회귀 테스트는 추가 안 함 — 수동 확인 필요: 2줄을
+합포장 → 품목 칸을 직접 수정 → 다시 "분리배송으로 분리"로 한 줄만 떼어낸 뒤, 그 줄의 품목
+내용이 상품명+수량으로 정상 복원되는지).
+
 ## SKU 매핑 도우미 송장표시명 자동기입 + 전체 화면 창크기 기억 확대 — 2026-06-28
 
 사용자 요청 2건(스크린샷 — 미매핑건 매핑 시 "송장표시명(선택)"이 비어있는 화면): (1) 송장표시명에

@@ -728,6 +728,7 @@ public class OfsForm : Form
             if (confirm != DialogResult.Yes) return;
         }
 
+        ClearStaleInvoiceLabelOverrides(selected);
         var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
         foreach (var item in selected)
         {
@@ -746,6 +747,7 @@ public class OfsForm : Form
             return;
         }
 
+        ClearStaleInvoiceLabelOverrides(selected);
         var baseId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
         var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
         foreach (var item in selected)
@@ -765,12 +767,33 @@ public class OfsForm : Form
             return;
         }
 
+        ClearStaleInvoiceLabelOverrides(selected);
         foreach (var item in selected)
         {
             item.ShipmentGroupId = null;
         }
         _ordersGrid.Invalidate();
         RefreshExportPreview();
+    }
+
+    /// <summary>
+    /// "품목(실제 출력될 내용)" 칸을 직접 수정하면 그 묶음의 줄들에 InvoiceLabel을 덮어써 둔다
+    /// (맨 위 줄엔 입력한 텍스트, 나머지 줄엔 빈 문자열 — BuildCombinedItemDescription이 빈 줄은
+    /// 걸러내는 방식으로 합쳐진 결과를 그대로 유지하기 위함, <see cref="ShipmentPreviewRow.
+    /// ItemsDescription"/> 참고). 그런데 이 묶음을 나중에 합포장/분리배송/묶음해제로 다시 묶으면,
+    /// 새 구성에 맞지 않는 옛 오버라이드가 그대로 남아 "분리배송 처리 후 그 줄의 품목 내용이
+    /// 비어 보임/엉뚱하게 보임" 버그가 있었다(예: 빈 InvoiceLabel("")을 가진 줄이 분리되어 혼자가
+    /// 돼도, null이 아니라 빈 문자열이라 자동 라벨로 안 돌아가고 계속 빈 줄로 표시됨). 그룹 구성을
+    /// 바꾸는 작업 직전에, 영향받는 묶음(들 — 옮겨가는 줄과 그 줄이 원래/새로 속하게 될 묶음의
+    /// 다른 줄까지 전부)의 InvoiceLabel을 지워서 새 구성 기준으로 다시 계산되게 한다.
+    /// </summary>
+    private void ClearStaleInvoiceLabelOverrides(IEnumerable<OfsOrderItem> itemsAboutToRegroup)
+    {
+        var affectedGroupIds = itemsAboutToRegroup.Select(ShipmentGrouping.GetEffectiveGroupId).ToHashSet();
+        foreach (var item in _orders.Where(o => affectedGroupIds.Contains(ShipmentGrouping.GetEffectiveGroupId(o))))
+        {
+            item.InvoiceLabel = null;
+        }
     }
 
     // ===================== 택배사 출력 미리보기 =====================
@@ -946,8 +969,10 @@ public class OfsForm : Form
 
         PushPreviewUndoSnapshot();
 
+        var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
+        ClearStaleInvoiceLabelOverrides(itemsToRegroup);
         var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
-        foreach (var item in selected.SelectMany(r => r.Items))
+        foreach (var item in itemsToRegroup)
         {
             item.ShipmentGroupId = groupId;
         }
@@ -966,7 +991,9 @@ public class OfsForm : Form
 
         PushPreviewUndoSnapshot();
 
-        foreach (var item in selected.SelectMany(r => r.Items))
+        var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
+        ClearStaleInvoiceLabelOverrides(itemsToRegroup);
+        foreach (var item in itemsToRegroup)
         {
             item.ShipmentGroupId = null;
         }
@@ -994,6 +1021,8 @@ public class OfsForm : Form
         var template = selected[0].Items[0];
         // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
         // 송장으로 묶이게 한다(원본이 아직 기본값=그룹화 없음 상태였다면 지금 명시값으로 고정).
+        // 묶음 구성이 바뀌므로(줄이 하나 늘어남) 옛 InvoiceLabel 오버라이드가 남아있으면 지운다.
+        ClearStaleInvoiceLabelOverrides([template]);
         var groupId = ShipmentGrouping.GetEffectiveGroupId(template);
         template.ShipmentGroupId = groupId;
 
