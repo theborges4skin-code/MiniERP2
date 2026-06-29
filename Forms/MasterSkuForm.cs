@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -131,7 +132,9 @@ public class MasterSkuForm : Form
             return;
         }
 
-        new CostHistoryForm(item.Sku).ShowDialog(this);
+        using var historyForm = new CostHistoryForm(item.Sku);
+        FormManager.ApplyBoundsTracking(historyForm);
+        historyForm.ShowDialog(this);
     }
 
     private void OnGridCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -147,7 +150,9 @@ public class MasterSkuForm : Form
             if (!string.IsNullOrWhiteSpace(sku))
             {
                 // CSKU 관리창을 모달 다이얼로그로 엽니다.
-                new CSkuForm(sku).ShowDialog(this);
+                using var cskuForm = new CSkuForm(sku);
+                FormManager.ApplyBoundsTracking(cskuForm);
+                cskuForm.ShowDialog(this);
             }
         }
     }

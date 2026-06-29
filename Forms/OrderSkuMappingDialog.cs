@@ -106,7 +106,9 @@ public class OrderSkuMappingDialog : Form
 
         var invoiceNamePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         invoiceNamePanel.Controls.Add(new Label { Text = "송장표시명(선택, 채널별):", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
-        _txtInvoiceDisplayName = new TextBox { Width = 350 };
+        // 후보가 하나도 없어 PrefillFromExistingChannelSku가 한 번도 안 불리는 경우에도 빈칸으로
+        // 남지 않게, 여기서도 발주서 원본 상품명을 기본값으로 채워둔다.
+        _txtInvoiceDisplayName = new TextBox { Width = 350, Text = _orderItem.ProductName ?? string.Empty };
         invoiceNamePanel.Controls.Add(_txtInvoiceDisplayName);
 
         var exactRulePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -141,12 +143,14 @@ public class OrderSkuMappingDialog : Form
     /// 후보 목록에서 SKU를 선택하면 "채널명 앞 3글자_마스터SKU" 형태의 CSKU 코드를 기본값으로
     /// 제안합니다(편집 가능). 그 기본 코드로 이미 저장된 CSKU(납품가/송장표시명)가 있으면 함께
     /// 미리 채워 보여줍니다. 매번 빈 칸에서 다시 입력하지 않고 기존 설정을 바로 확인/수정할 수 있게 합니다.
+    /// 송장표시명은 아직 채널별로 설정된 적이 없으면(신규 매핑) 발주서의 원본 상품명을 기본값으로
+    /// 채워서, 빈 칸으로 매핑하다가 송장에 상품명이 안 찍히는 실수를 줄인다.
     /// </summary>
     private void PrefillFromExistingChannelSku()
     {
         _txtCskuCode.Text = string.Empty;
         _txtSupplyPrice.Text = string.Empty;
-        _txtInvoiceDisplayName.Text = string.Empty;
+        _txtInvoiceDisplayName.Text = _orderItem.ProductName ?? string.Empty;
         _radioVatIncluded.Checked = true;
 
         if (_candidateGrid.CurrentRow?.DataBoundItem is not ItemModel selected) return;
@@ -160,7 +164,10 @@ public class OrderSkuMappingDialog : Form
         if (existing == null) return;
 
         _txtSupplyPrice.Text = existing.SupplyPrice.ToString();
-        _txtInvoiceDisplayName.Text = existing.InvoiceDisplayName ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(existing.InvoiceDisplayName))
+        {
+            _txtInvoiceDisplayName.Text = existing.InvoiceDisplayName;
+        }
     }
 
     private string BuildDefaultCskuCode(string masterSku)

@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -118,7 +119,9 @@ public class CSkuForm : Form
         }
 
         // Open the history form as a dialog.
-        new ChannelSkuPriceHistoryForm(csku.ChannelCode, csku.CskuCode).ShowDialog(this);
+        using var historyForm = new ChannelSkuPriceHistoryForm(csku.ChannelCode, csku.CskuCode);
+        FormManager.ApplyBoundsTracking(historyForm);
+        historyForm.ShowDialog(this);
     }
 
     /// <summary>

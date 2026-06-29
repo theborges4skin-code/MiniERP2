@@ -7,6 +7,7 @@ using MiniERP2.DataLoaders;
 using MiniERP2.Database;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -886,6 +887,7 @@ public class SettlementForm : Form
 
         var syntheticItem = new OfsOrderItem { ProductName = data.ProductName, OptionName = data.OptionName, Quantity = data.Qty };
         using var dialog = new OrderSkuMappingDialog(syntheticItem, data.ChannelCode);
+        FormManager.ApplyBoundsTracking(dialog);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         ReapplyMappingAndProfit(data);

@@ -365,6 +365,7 @@ public class OfsForm : Form
         if (!EnsureMasterDbNotEmpty()) return;
 
         using var dialog = new OrderSkuMappingDialog(item, item.ChannelCode);
+        FormManager.ApplyBoundsTracking(dialog);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         item.MappedSku = dialog.ResultMappedSku;

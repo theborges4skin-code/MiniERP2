@@ -3,6 +3,7 @@ using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -1276,6 +1277,7 @@ public class MappingForm : Form
         }
 
         using var listForm = new ConditionRuleListForm(_mappingRepository, channelCode);
+        FormManager.ApplyBoundsTracking(listForm);
         if (listForm.ShowDialog(this) != DialogResult.OK || listForm.SelectedRuleId == null) return;
 
         LoadConditionRules(channelCode);

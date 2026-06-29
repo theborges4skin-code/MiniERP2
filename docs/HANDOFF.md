@@ -9,6 +9,31 @@
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
 **201/201 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
 
+## SKU 매핑 도우미 송장표시명 자동기입 + 전체 화면 창크기 기억 확대 — 2026-06-28
+
+사용자 요청 2건(스크린샷 — 미매핑건 매핑 시 "송장표시명(선택)"이 비어있는 화면): (1) 송장표시명에
+발주서 원본 상품명이 기본으로 채워지게, (2) 프로그램 전체에 대해 창 크기 기억.
+
+**(1)** `Forms/OrderSkuMappingDialog.cs`의 `PrefillFromExistingChannelSku()`가 후보 선택 시마다
+`_txtInvoiceDisplayName.Text = string.Empty;`로 무조건 비우고, 그 CSKU에 이미 저장된
+InvoiceDisplayName이 있을 때만 채웠다 — 신규 매핑(첫 등록)은 항상 빈칸이었음. 기본값을
+`_orderItem.ProductName`으로 바꾸고, 기존 InvoiceDisplayName이 있을 때만 그걸로 덮어쓰도록
+수정. 후보가 하나도 없어 `PrefillFromExistingChannelSku`가 안 불리는 경우에도 대비해
+`InitializeComponent()`에서 텍스트박스 생성 시점에도 같은 기본값을 넣어둠.
+
+**(2)** `FormManager.ApplyBoundsTracking`은 `FormManager.Show<T>()`(MainHub 사이드바 9개 버튼)
+경로로만 자동 적용되고 있었음 — 생성자 인자가 있어서 `Show<T>()`(매개변수 없는 `new()` 제약)를
+못 쓰는 화면들(채널코드/마스터SKU 등을 받는 모달들)은 빠져 있었다. 아래 5곳에
+`FormManager.ApplyBoundsTracking(폼)`을 생성 직후·`ShowDialog()` 전에 추가:
+`CSkuForm.cs`(ChannelSkuPriceHistoryForm), `MasterSkuForm.cs`(CostHistoryForm, CSkuForm),
+`MappingForm.cs`(ConditionRuleListForm), `OfsForm.cs`/`SettlementForm.cs`(OrderSkuMappingDialog).
+나머지(채널추가/그룹이동/임시매핑값입력 등 작은 고정크기 확인용 다이얼로그)는 일부러 안 건드림 —
+크기 기억이 의미 없고(고정 레이아웃), 실수로 늘려놓은 크기가 계속 남으면 오히려 더 헷갈림.
+
+201/201 통과(둘 다 UI 동작이라 회귀 테스트 없음 — 수동 확인 필요: SKU 매핑 도우미를 열면
+송장표시명에 상품명이 바로 채워지는지, CSKU 관리/원가이력/조건부규칙목록/SKU매핑도우미 창을
+크게 키운 뒤 닫고 다시 열면 그 크기로 열리는지).
+
 ## OFS 발주서 로드 — 필드값 전체 공란 행 자동 제외 — 2026-06-28
 
 사용자 요청: 발주서 불러올 때 매핑된 필드값이 전부 공란인 행(엑셀의 빈 줄, 서식만 있는 꼬리
