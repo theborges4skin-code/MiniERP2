@@ -282,7 +282,8 @@ public class CourierExporterTests
     public async Task ExportAsync_MappedSkuHeader_OutputsInvoiceDisplayNameInsteadOfCskuCode()
     {
         // "매핑된 SKU"는 내부 CSKU 코드일 뿐 실제 송장에 출력해서는 안 된다 — 그 CSKU에 설정된
-        // 송장표시명을 대신 출력해야 한다는 버그 수정의 회귀 테스트.
+        // 송장표시명을 대신 출력해야 한다는 버그 수정의 회귀 테스트. 사용자 요청에 따라 InvoiceLabel/
+        // ProductName과 같은 "품목" 칸으로 취급돼 수량표기형식까지 조합돼 나가야 한다.
         new ChannelSkuRepository().Upsert(new ChannelSkuModel
         {
             ChannelCode = "CH-A", CskuCode = "CSKU-001", Msku = "MASTER-1", SupplyPrice = 1000m, InvoiceDisplayName = "샴푸 500ml",
@@ -293,7 +294,7 @@ public class CourierExporterTests
             CourierName = "테스트택배",
             HeaderMappingJson = CourierHeaderMapping.Serialize(new[] { new HeaderMappingEntry("상품명", "MappedSku") })
         };
-        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-001" } };
+        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-001", Quantity = 3 } };
 
         var exporter = new CourierExporter();
         await exporter.ExportAsync(orders, courier, _filePath);
@@ -301,7 +302,7 @@ public class CourierExporterTests
         ExcelLicense.Ensure();
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
-        Assert.AreEqual("샴푸 500ml", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("샴푸 500ml 3개", sheet.Cells[2, 1].Value);
     }
 
     [TestMethod]
@@ -312,7 +313,7 @@ public class CourierExporterTests
             CourierName = "테스트택배",
             HeaderMappingJson = CourierHeaderMapping.Serialize(new[] { new HeaderMappingEntry("상품명", "MappedSku") })
         };
-        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-NO-DISPLAY-NAME" } };
+        var orders = new List<OfsOrderItem> { new() { ChannelCode = "CH-A", MappedSku = "CSKU-NO-DISPLAY-NAME", Quantity = 2 } };
 
         var exporter = new CourierExporter();
         await exporter.ExportAsync(orders, courier, _filePath);
@@ -320,6 +321,6 @@ public class CourierExporterTests
         ExcelLicense.Ensure();
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
-        Assert.AreEqual("CSKU-NO-DISPLAY-NAME", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("CSKU-NO-DISPLAY-NAME 2개", sheet.Cells[2, 1].Value);
     }
 }

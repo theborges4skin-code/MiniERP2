@@ -67,15 +67,30 @@ public class CourierFieldResolverTests
         Assert.AreEqual("AAA", value);
     }
 
+    /// <summary>
+    /// "매핑된 SKU" 헤더는 InvoiceLabel/ProductName처럼 "품목" 칸으로 취급돼 수량까지 조합돼
+    /// 나가야 한다(사용자 신고: "매핑된 SKU는 나오는데 수량이 따로 안 나옴").
+    /// </summary>
     [TestMethod]
-    public void Resolve_MappedSkuWithInvoiceDisplayName_ReturnsInvoiceDisplayName()
+    public void Resolve_MappedSkuWithInvoiceDisplayName_CombinesQuantity()
     {
         var entry = new HeaderMappingEntry("품목코드", "MappedSku");
-        var item = new OfsOrderItem { MappedSku = "CSKU1", InvoiceDisplayName = "이공이공 핸드워시" };
+        var item = new OfsOrderItem { MappedSku = "CSKU1", InvoiceDisplayName = "이공이공 핸드워시", Quantity = 3 };
 
         var value = CourierFieldResolver.Resolve(entry, [item], BuildCourier("[]"), null);
 
-        Assert.AreEqual("이공이공 핸드워시", value);
+        Assert.AreEqual("이공이공 핸드워시 3개", value);
+    }
+
+    [TestMethod]
+    public void Resolve_MappedSkuWithoutInvoiceDisplayName_FallsBackToResolverThenAppliesQuantity()
+    {
+        var entry = new HeaderMappingEntry("품목코드", "MappedSku");
+        var item = new OfsOrderItem { MappedSku = "CSKU1", ProductName = "원본상품명", Quantity = 2 };
+
+        var value = CourierFieldResolver.Resolve(entry, [item], BuildCourier("[]"), null, _ => "조회된송장명");
+
+        Assert.AreEqual("조회된송장명 2개", value);
     }
 
     [TestMethod]
@@ -101,10 +116,18 @@ public class CourierFieldResolverTests
         Assert.IsTrue(CourierFieldResolver.IsEditable(null));
     }
 
+    /// <summary>MappedSku는 InvoiceLabel/ProductName과 같은 "품목" 칸 취급이라 편집 가능해야 한다.</summary>
     [TestMethod]
-    public void IsEditable_MappedSku_ReturnsFalse()
+    public void IsEditable_MappedSku_ReturnsTrue()
     {
-        Assert.IsFalse(CourierFieldResolver.IsEditable("MappedSku"));
+        Assert.IsTrue(CourierFieldResolver.IsEditable("MappedSku"));
+    }
+
+    [TestMethod]
+    public void IsEditable_OtherComputedProperty_ReturnsFalse()
+    {
+        Assert.IsFalse(CourierFieldResolver.IsEditable("Status"));
+        Assert.IsFalse(CourierFieldResolver.IsEditable("Quantity"));
     }
 
     [TestMethod]

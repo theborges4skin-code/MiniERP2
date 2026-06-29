@@ -9,12 +9,18 @@ namespace MiniERP2.Utils;
 /// </summary>
 public static class CourierFieldResolver
 {
-    /// <summary>"품목" 칸에 매핑됐을 가능성이 있는 속성들 — 같은 묶음의 모든 줄을 합친 결합
-    /// 표시문자열로 출력한다(나머지 속성은 묶음의 대표 줄 값을 그대로 쓴다).</summary>
+    /// <summary>
+    /// "품목" 칸에 매핑됐을 가능성이 있는 속성들 — 같은 묶음의 모든 줄을 합친 결합 표시문자열로
+    /// 출력한다(나머지 속성은 묶음의 대표 줄 값을 그대로 쓴다). MappedSku도 여기 포함된다 —
+    /// "매핑된 SKU"는 실제로는 CSKU의 송장표시명을 보여주는 칸이라 InvoiceLabel/ProductName과
+    /// 같은 "품목 표시" 범주이고, 사용자 요청대로 수량표기형식까지 조합돼 나가야 한다(이전엔
+    /// 송장표시명만 나오고 수량이 안 붙는 버그였음).
+    /// </summary>
     private static readonly HashSet<string> ItemDescriptionProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         nameof(OfsOrderItem.InvoiceLabel),
         nameof(OfsOrderItem.ProductName),
+        nameof(OfsOrderItem.MappedSku),
     };
 
     /// <summary>그룹의 모든 줄에 같은 값을 적용해야 의미가 맞는(=대표 줄 1곳만 고치면 안 되는) 속성들.</summary>
@@ -72,15 +78,30 @@ public static class CourierFieldResolver
 
         if (ItemDescriptionProperties.Contains(entry.PropertyName))
         {
-            return ShipmentGrouping.BuildCombinedItemDescription(groupItems, courier.QuantityNotationFormat);
-        }
+            if (string.Equals(entry.PropertyName, nameof(OfsOrderItem.MappedSku), StringComparison.OrdinalIgnoreCase))
+            {
+                // BuildCombinedItemDescription은 InvoiceDisplayName이 비어있으면 ProductName으로
+                // 대체하는데, "매핑된 SKU" 헤더는 발주/출고 이력 재출력처럼 둘 다 비어있을 수
+                // 있는 경로에서도 CSKU 코드만 덜렁 보여주는 것보다는 나은 값을 보여줘야 한다.
+                // 우선순위: 이미 채워진 InvoiceDisplayName > CSKU 재조회 결과 > ProductName(있으면
+                // BuildAutoLabel이 알아서 씀, 그대로 둠) > 최후의 수단으로 CSKU 코드 자체.
+                foreach (var item in groupItems)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.InvoiceDisplayName)) continue;
 
-        if (string.Equals(entry.PropertyName, nameof(OfsOrderItem.MappedSku), StringComparison.OrdinalIgnoreCase))
-        {
-            var invoiceDisplayName = !string.IsNullOrWhiteSpace(representative.InvoiceDisplayName)
-                ? representative.InvoiceDisplayName
-                : resolveInvoiceDisplayNameFallback?.Invoke(representative);
-            return !string.IsNullOrWhiteSpace(invoiceDisplayName) ? invoiceDisplayName : representative.MappedSku;
+                    var resolved = resolveInvoiceDisplayNameFallback?.Invoke(item);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        item.InvoiceDisplayName = resolved;
+                    }
+                    else if (string.IsNullOrWhiteSpace(item.ProductName))
+                    {
+                        item.InvoiceDisplayName = item.MappedSku;
+                    }
+                }
+            }
+
+            return ShipmentGrouping.BuildCombinedItemDescription(groupItems, courier.QuantityNotationFormat);
         }
 
         var property = typeof(OfsOrderItem).GetProperty(entry.PropertyName);

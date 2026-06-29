@@ -7,7 +7,28 @@
 상태만 보려면 아래 "지금 빌드/테스트 상태"와 가장 최근 커밋 메시지(`git log -1`)를 보면 된다.
 
 **지금 빌드/테스트 상태(2026-06-28 기준)**: `dotnet build` 오류 0, `dotnet test`
-**213/213 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+**215/215 통과**. 전부 `origin/main`에 푸시됨(최신 커밋은 `git log -1` 참고).
+
+## "매핑된 SKU"로 내보내면 수량이 안 붙던 버그 — 2026-06-28
+
+직전 항목(미리보기) 적용 후 사용자 테스트: 택배양식 출력 시 매핑된 SKU는 잘 나오는데 수량이
+따로 안 나온다는 신고. 원인: `CourierFieldResolver`에서 "매핑된 SKU"(MappedSku) 헤더가
+`ItemDescriptionProperties`(품목 칸 — 수량까지 조합해서 묶음 전체를 합치는 카테고리)에 안 들어
+있어서, InvoiceLabel/ProductName과 달리 CSKU의 송장표시명만 단독으로 출력되고 수량표기형식이
+전혀 적용되지 않았다(이건 이번에 새로 생긴 버그가 아니라 리팩터링 전부터 있던 동작이었음 —
+미리보기를 새로 만들면서 사용자가 처음 눈에 띄게 된 것).
+
+`MappedSku`를 `ItemDescriptionProperties`에 추가해 InvoiceLabel/ProductName과 동일하게
+`ShipmentGrouping.BuildCombinedItemDescription`(CSKU 송장표시명 + 택배사별 수량표기형식,
+합포장이면 여러 줄 조합)을 타도록 통일. 기존에 따로 있던 "InvoiceDisplayName 우선, 없으면 DB
+재조회, 그것도 없으면 코드 그대로" 분기는 제거하고, 그 fallback 로직을
+`BuildCombinedItemDescription` 호출 직전에 InvoiceDisplayName을 미리 채워두는 전처리로
+재구성(우선순위: 이미 채워진 InvoiceDisplayName → CSKU 재조회 결과 → ProductName(있으면
+BuildAutoLabel이 자동으로 씀) → 최후의 수단으로 CSKU 코드 자체). 부수효과로 MappedSku 헤더도
+이제 다른 품목 칸처럼 미리보기에서 직접 수정 가능해졌다(일관성 있고 자연스러운 변화).
+
+215/215 통과(`CourierFieldResolverTests`/`CourierExporterTests`의 MappedSku 관련 테스트를 새
+동작에 맞게 갱신 — 수량이 결합된 결과를 기대하도록 수정).
 
 ## OFS 택배사 출력 미리보기 — 실제 택배사 헤더 그대로 + 박스타입/운임 등 수동입력 — 2026-06-28
 
