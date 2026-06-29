@@ -27,6 +27,11 @@ public class ChannelConfigForm : Form
     private PropertyGrid _propertyGrid = new();
     private Label _statusLabel = new();
     private TreeView _channelTreeView = new();
+    /// <summary>
+    /// TreeView는 기본적으로 단일 선택만 지원해서, Ctrl+클릭으로 여러 채널 노드를 함께 선택할 수
+    /// 있게 직접 추적한다(소속 그룹과 무관하게 채널만 담음 — 그룹 노드는 다중선택 대상이 아니다).
+    /// </summary>
+    private readonly List<TreeNode> _selectedChannelNodes = new();
     private DataGridView _orderMappingGrid = new();
     private DataGridView _settlementMappingGrid = new();
     private DataGridView _courierOverrideGrid = new();
@@ -88,8 +93,16 @@ public class ChannelConfigForm : Form
             Dock = DockStyle.Fill,
             HideSelection = false,
             ItemHeight = 22,
+            DrawMode = TreeViewDrawMode.OwnerDrawText,
+            AllowDrop = true,
         };
         _channelTreeView.AfterSelect += OnChannelSelected;
+        _channelTreeView.DrawNode += OnChannelTreeDrawNode;
+        _channelTreeView.NodeMouseClick += OnChannelTreeNodeMouseClick;
+        _channelTreeView.ItemDrag += OnChannelTreeItemDrag;
+        _channelTreeView.DragEnter += OnChannelTreeDragEnter;
+        _channelTreeView.DragOver += OnChannelTreeDragOver;
+        _channelTreeView.DragDrop += OnChannelTreeDragDrop;
         SetupTreeViewContextMenu();
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
@@ -528,6 +541,9 @@ public class ChannelConfigForm : Form
 
     private void PopulateTreeView()
     {
+        // 다시 그리면 기존 TreeNode 인스턴스가 전부 새로 만들어지므로, 이전 노드를 참조하던
+        // 다중선택 상태를 같이 비운다(안 비우면 더 이상 트리에 없는 노드를 계속 강조하게 됨).
+        _selectedChannelNodes.Clear();
         _channelTreeView.Nodes.Clear();
 
         var favoritesNode = new TreeNode("⭐ 즐겨찾기") { Tag = "GROUP_FAVORITES" };
@@ -570,16 +586,148 @@ public class ChannelConfigForm : Form
         contextMenu.Opening += (s, e) =>
         {
             var selectedNode = _channelTreeView.SelectedNode;
-            bool isChannel = selectedNode?.Tag is SalesChannel;
-            bool isGroup = selectedNode?.Tag is string tag && tag.StartsWith("GROUP_");
+            var selectedChannelCount = GetSelectedChannels().Count;
+            bool isGroup = _selectedChannelNodes.Count == 0 && selectedNode?.Tag is string tag && tag.StartsWith("GROUP_");
 
-            favoriteItem.Visible = isChannel;
-            moveToGroupItem.Visible = isChannel;
+            favoriteItem.Visible = selectedChannelCount > 0;
+            favoriteItem.Text = selectedChannelCount > 1 ? $"즐겨찾기에 추가/제거 ({selectedChannelCount}개)" : "즐겨찾기에 추가/제거";
+            moveToGroupItem.Visible = selectedChannelCount > 0;
+            moveToGroupItem.Text = selectedChannelCount > 1 ? $"그룹 이동... ({selectedChannelCount}개)" : "그룹 이동...";
             renameGroupItem.Visible = isGroup && selectedNode?.Text != "미분류" && selectedNode?.Text != "⭐ 즐겨찾기";
             deleteGroupItem.Visible = isGroup && selectedNode?.Text != "미분류" && selectedNode?.Text != "⭐ 즐겨찾기";
         };
 
         _channelTreeView.ContextMenuStrip = contextMenu;
+    }
+
+    /// <summary>Ctrl+클릭으로 다중선택된 채널이 있으면 그걸, 없으면 지금 단일선택된 채널 1개를 반환한다.</summary>
+    private List<SalesChannel> GetSelectedChannels()
+    {
+        if (_selectedChannelNodes.Count > 0)
+        {
+            return _selectedChannelNodes.Select(n => n.Tag).OfType<SalesChannel>().ToList();
+        }
+        return _channelTreeView.SelectedNode?.Tag is SalesChannel channel ? [channel] : [];
+    }
+
+    private void OnChannelTreeDrawNode(object? sender, DrawTreeNodeEventArgs e)
+    {
+        var node = e.Node!;
+        bool isSelected = _selectedChannelNodes.Contains(node) || node == _channelTreeView.SelectedNode;
+
+        var backColor = isSelected ? SystemColors.Highlight : _channelTreeView.BackColor;
+        var foreColor = isSelected ? SystemColors.HighlightText : _channelTreeView.ForeColor;
+
+        using var backBrush = new SolidBrush(backColor);
+        e.Graphics.FillRectangle(backBrush, e.Bounds);
+        TextRenderer.DrawText(e.Graphics, node.Text, node.NodeFont ?? _channelTreeView.Font, e.Bounds, foreColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        e.DrawDefault = false;
+    }
+
+    /// <summary>
+    /// Ctrl+클릭으로 채널 노드를 다중선택에 추가/제거한다(여러 채널을 한 그룹으로 옮기기 위함).
+    /// 그룹 노드를 클릭하거나 Ctrl 없이 클릭하면 다중선택을 비워 일반 단일선택으로 되돌린다.
+    /// </summary>
+    private void OnChannelTreeNodeMouseClick(object? sender, TreeNodeMouseClickEventArgs e)
+    {
+        if (e.Node.Tag is not SalesChannel)
+        {
+            if (_selectedChannelNodes.Count > 0)
+            {
+                _selectedChannelNodes.Clear();
+                _channelTreeView.Invalidate();
+            }
+            return;
+        }
+
+        if (ModifierKeys.HasFlag(Keys.Control))
+        {
+            if (!_selectedChannelNodes.Remove(e.Node))
+            {
+                _selectedChannelNodes.Add(e.Node);
+            }
+        }
+        else
+        {
+            _selectedChannelNodes.Clear();
+        }
+        _channelTreeView.Invalidate();
+    }
+
+    /// <summary>다중선택된 채널(또는 드래그를 시작한 채널 1개)을 드래그 데이터로 싣는다.</summary>
+    private void OnChannelTreeItemDrag(object? sender, ItemDragEventArgs e)
+    {
+        if (e.Item is not TreeNode node || node.Tag is not SalesChannel) return;
+
+        var channels = GetSelectedChannels();
+        if (channels.Count == 0) return;
+
+        _channelTreeView.DoDragDrop(channels, DragDropEffects.Move);
+    }
+
+    private void OnChannelTreeDragEnter(object? sender, DragEventArgs e)
+    {
+        e.Effect = e.Data?.GetDataPresent(typeof(List<SalesChannel>)) == true ? DragDropEffects.Move : DragDropEffects.None;
+    }
+
+    private void OnChannelTreeDragOver(object? sender, DragEventArgs e)
+    {
+        var targetNode = _channelTreeView.GetNodeAt(_channelTreeView.PointToClient(new Point(e.X, e.Y)));
+        e.Effect = targetNode != null && e.Data?.GetDataPresent(typeof(List<SalesChannel>)) == true
+            ? DragDropEffects.Move
+            : DragDropEffects.None;
+    }
+
+    /// <summary>
+    /// 채널 노드를 그룹 노드 위로 드래그&드롭하면 그 그룹으로 옮긴다. "⭐ 즐겨찾기" 그룹에
+    /// 드롭하면 GroupName이 아니라 IsFavorite를 켠다(즐겨찾기는 그룹과 별개 축이라서). 채널 노드
+    /// 위에 드롭하면 그 채널이 속한 그룹으로 옮긴다(그룹을 직접 못 찾아도 직관적으로 동작하게).
+    /// </summary>
+    private void OnChannelTreeDragDrop(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetData(typeof(List<SalesChannel>)) is not List<SalesChannel> draggedChannels || draggedChannels.Count == 0) return;
+
+        var targetNode = _channelTreeView.GetNodeAt(_channelTreeView.PointToClient(new Point(e.X, e.Y)));
+        if (targetNode == null) return;
+
+        if (targetNode.Tag is string favoritesTag && favoritesTag == "GROUP_FAVORITES")
+        {
+            foreach (var channel in draggedChannels)
+            {
+                channel.IsFavorite = true;
+                _salesChannelRepository.Upsert(channel);
+            }
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"{draggedChannels.Count}개 채널을 즐겨찾기에 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        else if (targetNode.Tag is string groupTag && groupTag.StartsWith("GROUP_"))
+        {
+            var targetGroupName = targetNode.Text == "미분류" ? null : targetNode.Text;
+            foreach (var channel in draggedChannels)
+            {
+                channel.GroupName = targetGroupName;
+                _salesChannelRepository.Upsert(channel);
+            }
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"{draggedChannels.Count}개 채널을 '{targetNode.Text}' 그룹으로 옮겼습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        else if (targetNode.Tag is SalesChannel targetChannel)
+        {
+            var targetGroupName = targetChannel.GroupName;
+            foreach (var channel in draggedChannels)
+            {
+                channel.GroupName = targetGroupName;
+                _salesChannelRepository.Upsert(channel);
+            }
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"{draggedChannels.Count}개 채널을 '{targetGroupName ?? "미분류"}' 그룹으로 옮겼습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        else
+        {
+            return;
+        }
+
+        PopulateTreeView();
     }
 
     private void OnChannelSelected(object? sender, EventArgs e)
@@ -725,16 +873,22 @@ public class ChannelConfigForm : Form
 
     private void OnFavoriteClick(object? sender, EventArgs e)
     {
-        if (_channelTreeView.SelectedNode?.Tag is not SalesChannel selectedChannel) return;
+        var channels = GetSelectedChannels();
+        if (channels.Count == 0) return;
 
-        selectedChannel.IsFavorite = !selectedChannel.IsFavorite;
-        _salesChannelRepository.Upsert(selectedChannel);
+        foreach (var channel in channels)
+        {
+            channel.IsFavorite = !channel.IsFavorite;
+            _salesChannelRepository.Upsert(channel);
+        }
         PopulateTreeView();
     }
 
+    /// <summary>Ctrl+클릭으로 다중선택된 채널이 있으면 전부 같은 그룹으로 옮긴다(없으면 단일선택 1개).</summary>
     private void OnMoveChannelToGroupClick(object? sender, EventArgs e)
     {
-        if (_channelTreeView.SelectedNode?.Tag is not SalesChannel selectedChannel) return;
+        var channels = GetSelectedChannels();
+        if (channels.Count == 0) return;
 
         var existingGroups = _channels
             .Select(c => c.GroupName)
@@ -744,15 +898,22 @@ public class ChannelConfigForm : Form
             .Select(g => g!)
             .ToList();
 
-        using var dialog = new MoveChannelToGroupDialog(existingGroups, selectedChannel.GroupName ?? string.Empty, selectedChannel.ChannelName);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        if (dialog.GroupName == selectedChannel.GroupName) return;
+        var description = channels.Count == 1 ? channels[0].ChannelName : $"채널 {channels.Count}개";
+        var currentGroupHint = channels.Count == 1 ? channels[0].GroupName ?? string.Empty : string.Empty;
 
-        selectedChannel.GroupName = dialog.GroupName;
-        _salesChannelRepository.Upsert(selectedChannel);
+        using var dialog = new MoveChannelToGroupDialog(existingGroups, currentGroupHint, description);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        foreach (var channel in channels)
+        {
+            channel.GroupName = dialog.GroupName;
+            _salesChannelRepository.Upsert(channel);
+        }
 
         PopulateTreeView();
-        SelectChannelByCode(selectedChannel.ChannelCode);
+        if (channels.Count == 1) SelectChannelByCode(channels[0].ChannelCode);
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"{channels.Count}개 채널을 '{dialog.GroupName ?? "미분류"}' 그룹으로 옮겼습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     private void OnRenameGroupClick(object? sender, EventArgs e)
