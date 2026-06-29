@@ -958,7 +958,7 @@ public class OfsForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("합포장(선택한 묶음들을 하나로 합치기)", null, OnMergePreviewGroupsClick);
-        menu.Items.Add("분리배송 처리(묶음 풀기)", null, OnResetPreviewGroupsClick);
+        menu.Items.Add("분리배송 처리(묶음 풀기/줄이 1개면 복사해서 새 송장으로)", null, OnResetPreviewGroupsClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("이 줄 복사(상품명 공란 — 송장에 표시할 메시지용)", null, OnDuplicatePreviewRowClick);
         menu.Items.Add(new ToolStripSeparator());
@@ -1006,6 +1006,13 @@ public class OfsForm : Form
         });
     }
 
+    /// <summary>
+    /// 줄이 2개 이상인 묶음(합포장돼 있던 것)을 선택하면 각자 단독 묶음으로 풀어준다(기존 동작).
+    /// 줄이 1개뿐인 묶음은 풀어낼 게 없어 아무 변화도 안 보이는 것처럼 보인다는 사용자 신고가
+    /// 있었음 — 그런 경우는 그 줄을 통째로 복사해 새 별도 송장으로 만들어준다(품목/수량은 사용자가
+    /// 그 다음에 직접 수동으로 나눠 입력할 것을 전제로 함). 두 동작 모두 한 메뉴("분리배송 처리")로
+    /// 묶어 제공하며, 선택한 묶음마다 줄 수에 따라 적합한 동작을 자동으로 고른다.
+    /// </summary>
     private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
     {
         var selected = GetSelectedPreviewRows();
@@ -1013,21 +1020,43 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("분리배송 처리할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             PushPreviewUndoSnapshot();
 
-            var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
-            ClearStaleInvoiceLabelOverrides(itemsToRegroup);
-            foreach (var item in itemsToRegroup)
+            var multiItemGroups = selected.Where(r => r.Items.Count > 1).ToList();
+            var ungroupedCount = 0;
+            if (multiItemGroups.Count > 0)
             {
-                item.ShipmentGroupId = null;
+                var itemsToUngroup = multiItemGroups.SelectMany(r => r.Items).ToList();
+                ClearStaleInvoiceLabelOverrides(itemsToUngroup);
+                foreach (var item in itemsToUngroup)
+                {
+                    item.ShipmentGroupId = null;
+                }
+                ungroupedCount = multiItemGroups.Count;
             }
+
+            var singleItemGroups = selected.Where(r => r.Items.Count == 1).ToList();
+            foreach (var row in singleItemGroups)
+            {
+                var template = row.Items[0];
+                var duplicate = CloneOrderItem(template);
+                duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
+                duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                duplicate.ShipmentGroupId = $"{ShipmentGrouping.GetEffectiveGroupId(template)}-분리{Guid.NewGuid().ToString("N")[..6]}";
+                _orders.Add(duplicate);
+            }
+
             _ordersGrid.Invalidate();
             RefreshExportPreview();
-            _statusLabel.Text = $"{selected.Count}개 묶음을 분리배송 처리했습니다. ({DateTime.Now:HH:mm:ss})";
+
+            var messageParts = new List<string>();
+            if (ungroupedCount > 0) messageParts.Add($"{ungroupedCount}개 묶음을 분리배송 처리");
+            if (singleItemGroups.Count > 0) messageParts.Add($"{singleItemGroups.Count}건을 복사해 새 송장으로 분리(품목/수량을 직접 수정하세요)");
+            _statusLabel.Text = $"{string.Join(", ", messageParts)}했습니다. ({DateTime.Now:HH:mm:ss})";
         });
     }
 
