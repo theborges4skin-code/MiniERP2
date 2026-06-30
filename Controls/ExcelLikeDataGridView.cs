@@ -36,6 +36,7 @@ public class ExcelLikeDataGridView : DataGridView
     public ExcelLikeDataGridView()
     {
         // 엑셀과 유사한 동작을 위한 기본 속성 설정
+        DoubleBuffered = true;
         AllowUserToOrderColumns = true;
         AllowUserToResizeRows = true;
         MultiSelect = true;

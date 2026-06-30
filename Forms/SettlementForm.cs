@@ -198,6 +198,7 @@ public class SettlementForm : Form
         // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
         // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
         var unbindStopwatch = Stopwatch.StartNew();
+        _settlementGrid.SuspendLayout();
         _settlementGrid.DataSource = null;
         unbindStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 그리드 분리 완료 ({unbindStopwatch.Elapsed.TotalSeconds:F2}s)");
@@ -209,6 +210,7 @@ public class SettlementForm : Form
 
         var bindStopwatch = Stopwatch.StartNew();
         _settlementGrid.DataSource = new BindingList<SettlementData>(view);
+        _settlementGrid.ResumeLayout(false);
         bindStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 데이터 바인딩 완료 ({bindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
@@ -378,18 +380,17 @@ public class SettlementForm : Form
             return;
         }
 
-        var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode);
-
-        // 데이터가 많으면 로드가 수 초 이상 걸릴 수 있는데, 창은 떠 있지만 조작이 안 되니 멈춘
-        // 것처럼 보일 수 있다는 피드백 — 진행 안내창을 띄워 "작업 중"임을 분명히 보여준다.
-        // 비밀번호 입력 등 다른 모달 창이 이 창을 owner로 열리면 그 창이 닫힐 때 owner의 Enabled를
-        // 강제로 되돌려놓으므로, 여기서는 Enabled를 건드리지 않고 진행 안내창 + 대기 커서만으로
-        // "작업 중"을 표시한다.
+        // SkuMapper 생성자는 DB 쿼리를 6회 실행한다. UI 스레드에서 동기 호출하면 "읽는 중" 상태
+        // 표시 직후에 멈추는 증상이 나타나므로 진행창을 띄운 뒤 백그라운드에서 생성한다.
         using var progressDialog = new LoadingProgressDialog($"'{channelDialog.SelectedChannel.ChannelName}' 채널의 정산 파일을 불러오는 중입니다...");
         progressDialog.Show(this);
         Cursor = Cursors.WaitCursor;
         _statusLabel.ForeColor = SystemColors.ControlText; // 이전 오류로 빨간 글씨가 남아있을 수 있어 매번 초기화한다.
         _statusLabel.Text = $"'{channelDialog.SelectedChannel.ChannelName}' 채널의 설정으로 정산 파일을 읽는 중입니다...";
+
+        var mappingRepository = _mappingRepository;
+        var channelCode = channelConfig.ChannelCode;
+        var skuMapper = await Task.Run(() => new SkuMapper(mappingRepository, channelCode));
 
         try
         {
@@ -500,14 +501,12 @@ public class SettlementForm : Form
     {
         if (_settlementRows.Count == 0)
         {
-            MessageBox.Show("저장할 이익분석 결과가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = "저장할 이익분석 결과가 없습니다.";
             return;
         }
 
-        var result = MessageBox.Show($"{_settlementRows.Count}건의 이익분석 결과를 저장하시겠습니까?", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        if (result != DialogResult.Yes) return;
-
         Cursor = Cursors.WaitCursor;
+        _statusLabel.Text = $"{_settlementRows.Count}건 저장 중...";
         try
         {
             var rowsToSave = _settlementRows.ToList();
@@ -516,7 +515,8 @@ public class SettlementForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "저장 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"저장 오류: {ex.Message}";
         }
         finally
         {
