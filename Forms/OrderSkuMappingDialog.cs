@@ -263,29 +263,17 @@ public class OrderSkuMappingDialog : Form
             return;
         }
 
-        var existing = _channelSkuRepository.GetByChannelAndCskuCode(_channelCode, cskuCode);
-        if (existing != null)
+        decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice);
+        var supplyPrice = enteredPrice > 0
+            ? (_radioVatExcluded.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
+            : 0m;
+
+        if (!_channelSkuRepository.CreateIfNew(_channelCode, cskuCode, masterSku, supplyPrice, _txtInvoiceDisplayName.Text))
         {
             MessageBox.Show(
                 $"기존 CSKU '{cskuCode}'가 이미 존재합니다. 이 상품명/옵션명 조합을 그 CSKU에 매핑하는 조건을 추가합니다.",
                 "기존 CSKU 존재", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
         }
-
-        var hasPrice = decimal.TryParse(_txtSupplyPrice.Text, out var enteredPrice);
-        var invoiceDisplayName = string.IsNullOrWhiteSpace(_txtInvoiceDisplayName.Text) ? null : _txtInvoiceDisplayName.Text.Trim();
-        var supplyPrice = hasPrice
-            ? (_radioVatExcluded.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
-            : 0m;
-
-        _channelSkuRepository.Upsert(new ChannelSkuModel
-        {
-            ChannelCode = _channelCode,
-            CskuCode = cskuCode,
-            Msku = masterSku,
-            SupplyPrice = supplyPrice,
-            InvoiceDisplayName = invoiceDisplayName,
-        });
     }
 
     /// <summary>

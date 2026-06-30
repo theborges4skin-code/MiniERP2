@@ -15,10 +15,12 @@ namespace MiniERP2.Forms;
 public class MasterSkuForm : Form
 {
     private readonly ItemRepository _itemRepository = new();
+    private readonly ChannelSkuRepository _channelSkuRepository = new();
     private readonly SettingsService _settingsService = new();
     private ExcelLikeDataGridView _itemsGrid = new();
     private BindingList<ItemModel> _items = new();
     private Label _statusLabel = new();
+    private Dictionary<string, string> _cskuSummaryCache = new();
 
     public MasterSkuForm()
     {
@@ -86,8 +88,20 @@ public class MasterSkuForm : Form
             new DataGridViewTextBoxColumn { Name = "ProductGroup", HeaderText = "상품그룹", DataPropertyName = "ProductGroup", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve1", HeaderText = "예비1", DataPropertyName = "Reserve1", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve2", HeaderText = "예비2", DataPropertyName = "Reserve2", Width = 120 },
-            new DataGridViewTextBoxColumn { Name = "Reserve3", HeaderText = "예비3", DataPropertyName = "Reserve3", Width = 120 }
+            new DataGridViewTextBoxColumn { Name = "Reserve3", HeaderText = "예비3", DataPropertyName = "Reserve3", Width = 120 },
+            new DataGridViewTextBoxColumn
+            {
+                Name = "CskuInfo",
+                HeaderText = "연결 CSKU",
+                DataPropertyName = string.Empty,
+                Width = 200,
+                ReadOnly = true,
+                Tag = "no-export",
+                DefaultCellStyle = new DataGridViewCellStyle { ForeColor = Color.DimGray },
+            }
         );
+
+        _itemsGrid.CellFormatting += OnItemsGridCellFormatting;
 
         SetupContextMenu();
 
@@ -162,6 +176,21 @@ public class MasterSkuForm : Form
         var allItems = _itemRepository.GetAll();
         _items = new BindingList<ItemModel>(allItems);
         _itemsGrid.DataSource = _items;
+
+        _cskuSummaryCache = _channelSkuRepository.GetAll()
+            .GroupBy(c => c.Msku, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => $"{g.Count()}건 ({string.Join(", ", g.Select(c => c.ChannelCode).Distinct())})",
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void OnItemsGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || _itemsGrid.Columns[e.ColumnIndex].Name != "CskuInfo") return;
+        if (_itemsGrid.Rows[e.RowIndex].DataBoundItem is not ItemModel item) return;
+        e.Value = _cskuSummaryCache.TryGetValue(item.Sku, out var summary) ? summary : "-";
+        e.FormattingApplied = true;
     }
 
     private void OnRefreshClick(object? sender, EventArgs e)
@@ -372,7 +401,7 @@ public class MasterSkuForm : Form
 
             // 그리드의 현재 보이는 열 순서대로 헤더를 만듭니다.
             var visibleColumns = _itemsGrid.Columns.Cast<DataGridViewColumn>()
-                .Where(c => c.Visible)
+                .Where(c => c.Visible && c.Tag as string != "no-export")
                 .OrderBy(c => c.DisplayIndex)
                 .ToList();
 

@@ -183,6 +183,26 @@ public class ChannelSkuRepository
         return cskus;
     }
 
+    /// <summary>
+    /// 해당 (채널, CSKU코드) 조합이 아직 없으면 새로 생성하고 true를 반환한다.
+    /// 이미 존재하면 아무것도 하지 않고 false를 반환한다. 두 화면(MappingForm,
+    /// OrderSkuMappingDialog)의 중복된 "존재 확인 후 Upsert" 로직을 한 곳으로 모은 것.
+    /// </summary>
+    public bool CreateIfNew(string channelCode, string cskuCode, string masterSku,
+        decimal supplyPrice, string? invoiceDisplayName)
+    {
+        if (GetByChannelAndCskuCode(channelCode, cskuCode) != null) return false;
+        Upsert(new ChannelSkuModel
+        {
+            ChannelCode = channelCode,
+            CskuCode = cskuCode,
+            Msku = masterSku,
+            SupplyPrice = supplyPrice,
+            InvoiceDisplayName = string.IsNullOrWhiteSpace(invoiceDisplayName) ? null : invoiceDisplayName.Trim(),
+        });
+        return true;
+    }
+
     /// <summary>채널 불문하고 모든 CSKU를 가져옵니다(데이터 관리창의 전체 내보내기/조회용).</summary>
     public List<ChannelSkuModel> GetAll()
     {

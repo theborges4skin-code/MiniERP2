@@ -673,29 +673,17 @@ public class MappingForm : Form
     {
         if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
 
-        var existing = _channelSkuRepository.GetByChannelAndCskuCode(_unmappedChannelCode, cskuCode);
-        if (existing != null)
+        decimal.TryParse(_unmappedSupplyPriceTextBox.Text, out var enteredPrice);
+        var supplyPrice = enteredPrice > 0
+            ? (_unmappedVatExcludedRadio.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
+            : 0m;
+
+        if (!_channelSkuRepository.CreateIfNew(_unmappedChannelCode, cskuCode, masterSku, supplyPrice, _unmappedInvoiceNameTextBox.Text))
         {
             MessageBox.Show(
                 $"기존 CSKU '{cskuCode}'가 이미 존재합니다. 이 상품명/옵션명 조합을 그 CSKU에 매핑하는 조건을 추가합니다.",
                 "기존 CSKU 존재", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
         }
-
-        var hasPrice = decimal.TryParse(_unmappedSupplyPriceTextBox.Text, out var enteredPrice);
-        var invoiceDisplayName = string.IsNullOrWhiteSpace(_unmappedInvoiceNameTextBox.Text) ? null : _unmappedInvoiceNameTextBox.Text.Trim();
-        var supplyPrice = hasPrice
-            ? (_unmappedVatExcludedRadio.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
-            : 0m;
-
-        _channelSkuRepository.Upsert(new ChannelSkuModel
-        {
-            ChannelCode = _unmappedChannelCode,
-            CskuCode = cskuCode,
-            Msku = masterSku,
-            SupplyPrice = supplyPrice,
-            InvoiceDisplayName = invoiceDisplayName,
-        });
     }
 
     private static readonly Dictionary<string, StdField> UnmappedGridColumnToStdField = new()
