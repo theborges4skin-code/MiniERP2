@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Mapping;
@@ -18,6 +19,7 @@ public class MappingForm : Form
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly ItemRepository _itemRepository = new();
     private readonly ChannelSkuRepository _channelSkuRepository = new();
+    private readonly ChannelConfigService _channelConfigService = new();
 
     private ComboBox _channelComboBox = new();
     private TabControl _ruleTabControl = new();
@@ -61,6 +63,7 @@ public class MappingForm : Form
     private Label _conditionPreviewLabel = new();
     private Label _conditionSaveFeedbackLabel = new();
     private Label _globalStatusLabel = new();
+    private Label _channelTypeLabel = new();
     private long _selectedConditionRuleId = -1;
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
@@ -122,9 +125,11 @@ public class MappingForm : Form
         btnSave.Click += OnSaveClick;
 
         _globalStatusLabel = new Label { AutoSize = true, Padding = new Padding(15, 8, 0, 0), ForeColor = Color.DarkGreen };
+        _channelTypeLabel = new Label { AutoSize = true, Padding = new Padding(6, 8, 0, 0), ForeColor = Color.SteelBlue, Font = new Font(Font.FontFamily, Font.Size, FontStyle.Bold) };
 
         panel.Controls.Add(channelLabel);
         panel.Controls.Add(_channelComboBox);
+        panel.Controls.Add(_channelTypeLabel);
         panel.Controls.Add(btnSave);
         panel.Controls.Add(_globalStatusLabel);
 
@@ -1688,6 +1693,11 @@ public class MappingForm : Form
     /// </summary>
     private void LoadRulesForSelectedChannelCore(string selectedChannel)
     {
+        var channelConfig = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == selectedChannel);
+        var channelType = channelConfig?.ChannelType ?? ChannelType.General;
+        _channelTypeLabel.Text = $"[{channelType.ToKoreanLabel()}]";
+        _channelTypeLabel.ForeColor = channelType.IsMarketplace() ? Color.SteelBlue : Color.DarkGreen;
+
         // 채널 변경 시, dirty 상태 초기화
         _dirtyTabs.Clear();
 
