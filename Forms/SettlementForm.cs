@@ -32,6 +32,7 @@ public class SettlementForm : Form
     private ExcelLikeDataGridView _settlementGrid = new();
     private BindingList<SettlementData> _settlementRows = new();
     private MappingForm? _subscribedMappingForm;
+    private string? _settlementGridClickedColumnName;
     private ToolStripStatusLabel _statusLabel = new();
 
     private ExcelLikeDataGridView _summaryGrid = new();
@@ -874,6 +875,12 @@ public class SettlementForm : Form
     /// 복사/붙여넣기 항목보다 앞에 끼워넣어, 그리드의 동적 "이 창의 기능" 메뉴 갱신 로직이
     /// 이 항목들을 지우지 않도록 한다(ExcelLikeDataGridView.OnContextMenuOpening 참고).
     /// </summary>
+    private static readonly Dictionary<string, StdField> SettlementColumnToStdField = new()
+    {
+        ["ProductName"] = StdField.ProductName,
+        ["OptionName"] = StdField.OptionName,
+    };
+
     private void SetupSettlementGridContextMenu()
     {
         var menu = _settlementGrid.ContextMenuStrip!;
@@ -882,6 +889,17 @@ public class SettlementForm : Form
         menu.Items.Insert(0, new ToolStripMenuItem("임시 매핑으로 등록", null, OnAddTempRuleFromSettlementRowClick));
         menu.Items.Insert(0, new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromSettlementRowClick));
         menu.Items.Insert(0, new ToolStripMenuItem("SKU 매핑 도우미", null, OnOpenMappingHelperFromSettlementRowClick));
+
+        // 우클릭한 셀을 기억해 조건부 매핑 시 그 열의 조건만 전달할 수 있게 한다.
+        _settlementGrid.MouseDown += (s, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var hit = _settlementGrid.HitTest(e.X, e.Y);
+            if (hit.RowIndex < 0) return;
+            var colIdx = hit.ColumnIndex >= 0 ? hit.ColumnIndex : 0;
+            _settlementGrid.CurrentCell = _settlementGrid.Rows[hit.RowIndex].Cells[colIdx];
+            _settlementGridClickedColumnName = _settlementGrid.Columns[colIdx].Name;
+        };
     }
 
     private SettlementData? GetSelectedSettlementRow()
@@ -941,7 +959,21 @@ public class SettlementForm : Form
         // 기준으로 미리볼 수 있게 지금 로드된 정산 데이터를 넘긴다(참조 그대로 — 나중에 다시
         // 매핑하거나 정산파일을 새로 불러와도 항상 최신 상태로 반영됨).
         mappingForm.SetSettlementPreviewData(_settlementRows);
-        mappingForm.StartNewConditionRuleFor(data.ChannelCode!, data.ProductName, data.OptionName);
+
+        // 우클릭한 컬럼이 상품명/옵션명이면 그 컬럼의 조건만, 그 외면 상품명+옵션명 모두 전달한다.
+        var conditions = new List<(StdField Field, string Value)>();
+        var clickedCol = _settlementGridClickedColumnName;
+        if (clickedCol != null && SettlementColumnToStdField.TryGetValue(clickedCol, out var stdField))
+        {
+            var val = clickedCol == "ProductName" ? data.ProductName : data.OptionName;
+            if (!string.IsNullOrWhiteSpace(val)) conditions.Add((stdField, val));
+        }
+        if (conditions.Count == 0)
+        {
+            if (!string.IsNullOrWhiteSpace(data.ProductName)) conditions.Add((StdField.ProductName, data.ProductName));
+            if (!string.IsNullOrWhiteSpace(data.OptionName)) conditions.Add((StdField.OptionName, data.OptionName));
+        }
+        mappingForm.StartNewConditionRuleFor(data.ChannelCode!, conditions);
 
         _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 거기서 대상 SKU/CSKU와 조건을 마무리해 저장하면 이 목록에 자동으로 반영됩니다.";
     }

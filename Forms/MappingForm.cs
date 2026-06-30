@@ -65,6 +65,8 @@ public class MappingForm : Form
     private Label _globalStatusLabel = new();
     private Label _channelTypeLabel = new();
     private long _selectedConditionRuleId = -1;
+    private ListBox _skuSearchListBox = new();
+    private string[] _allSkuCodes = Array.Empty<string>();
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
     // 상단(미매핑 목록)/하단(마스터DB 검색+CSKU 입력)으로 분리되어 있다.
@@ -1144,9 +1146,10 @@ public class MappingForm : Form
         );
         _conditionRuleGrid.SelectionChanged += OnConditionRuleSelectionChanged;
 
-        // 우측(이제 전체 폭): 선택한 규칙의 요약 정보 + 상세조건 목록
-        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        // 우측(이제 전체 폭): 선택한 규칙의 요약 정보 + SKU 검색 목록 + 상세조건 목록
+        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
@@ -1160,6 +1163,7 @@ public class MappingForm : Form
         summaryPanel.Controls.Add(new Label { Text = "대상 SKU:", AutoSize = true, Padding = new Padding(10, 7, 3, 0) });
         summaryPanel.Controls.Add(_conditionTargetSkuTextBox);
         summaryPanel.Controls.Add(btnSaveSummary);
+        _conditionTargetSkuTextBox.TextChanged += (s, e) => FilterSkuSearchList();
         _conditionPreviewLabel = new Label
         {
             Text = "예상 매칭 건수: -",
@@ -1241,9 +1245,21 @@ public class MappingForm : Form
         };
         detailButtonPanel.Controls.Add(_conditionSaveFeedbackLabel);
 
+        _skuSearchListBox = new ListBox { Dock = DockStyle.Fill };
+        _skuSearchListBox.Click += (s, e) =>
+        {
+            if (_skuSearchListBox.SelectedItem is string selected && _conditionTargetSkuTextBox.Enabled)
+                _conditionTargetSkuTextBox.Text = selected;
+        };
+        var skuSearchLabel = new Label { Text = "대상 SKU 검색 — 타이핑하면 자동 필터, 클릭 시 자동 입력", Dock = DockStyle.Top, Height = 18, ForeColor = Color.DimGray };
+        var skuSearchPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 3) };
+        skuSearchPanel.Controls.Add(_skuSearchListBox);
+        skuSearchPanel.Controls.Add(skuSearchLabel);
+
         rightPanel.Controls.Add(summaryPanel, 0, 0);
-        rightPanel.Controls.Add(_conditionDetailGrid, 0, 1);
-        rightPanel.Controls.Add(detailButtonPanel, 0, 2);
+        rightPanel.Controls.Add(skuSearchPanel, 0, 1);
+        rightPanel.Controls.Add(_conditionDetailGrid, 0, 2);
+        rightPanel.Controls.Add(detailButtonPanel, 0, 3);
 
         mainLayout.Controls.Add(topToolbar, 0, 0);
         mainLayout.Controls.Add(rightPanel, 0, 1);
@@ -1282,6 +1298,7 @@ public class MappingForm : Form
             _conditionKeyTextBox.Text = string.Empty;
             _conditionTargetSkuTextBox.Text = string.Empty;
             _conditionDetailGrid.DataSource = null;
+            _skuSearchListBox.Items.Clear();
         }
         UpdateConditionPreview();
     }
@@ -1293,17 +1310,19 @@ public class MappingForm : Form
         _selectedConditionRuleId = -1;
         SetConditionDetailEditorEnabled(false);
 
-        // 노션 5.1: 대상 SKU 입력 시 타이핑하면서 검색되도록 자동완성을 단다(마스터SKU + 이
-        // 채널의 CSKU 코드). 채널이 바뀔 때마다 다시 구성한다.
+        // 대상 SKU 자동완성 + 하단 검색 목록 갱신. 채널이 바뀔 때마다 다시 구성한다.
         var codes = _itemRepository.GetAll().Select(i => i.Sku)
             .Concat(_channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c)
             .ToArray();
+        _allSkuCodes = codes;
         var source = new AutoCompleteStringCollection();
         source.AddRange(codes);
         _conditionTargetSkuTextBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
         _conditionTargetSkuTextBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
         _conditionTargetSkuTextBox.AutoCompleteCustomSource = source;
+        FilterSkuSearchList();
     }
 
     private void OnConditionRuleSelectionChanged(object? sender, EventArgs e)
@@ -1412,7 +1431,8 @@ public class MappingForm : Form
     /// 다른 채널 탭에 저장 안 한 변경사항이 있었다면 그 변경사항은 경고 없이 버려진다(이 창을 다시
     /// 열 때 즉시 새 조건부 규칙을 만드는 게 목적이라, 모달로 막는 것보다 이 트레이드오프가 낫다).
     /// </summary>
-    public void StartNewConditionRuleFor(string channelCode, string? productName, string? optionName)
+    /// <param name="initialConditions">초기 조건 목록. 우클릭한 셀의 필드와 값만 넘기면 그것만 조건으로 추가된다.</param>
+    public void StartNewConditionRuleFor(string channelCode, IList<(StdField Field, string Value)> initialConditions)
     {
         if (_channelComboBox.SelectedValue as string != channelCode)
         {
@@ -1422,25 +1442,20 @@ public class MappingForm : Form
             LoadRulesForSelectedChannelCore(channelCode);
         }
 
-        var details = new List<MappingConditionDetail>();
-        if (!string.IsNullOrWhiteSpace(productName))
-        {
-            details.Add(new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = productName, Logic = ConditionLogic.And });
-        }
-        if (!string.IsNullOrWhiteSpace(optionName))
-        {
-            details.Add(new MappingConditionDetail { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = optionName, Logic = ConditionLogic.And });
-        }
+        var details = initialConditions
+            .Select(c => new MappingConditionDetail { HeaderField = c.Field, Operator = ConditionOperator.Contains, TargetValue = c.Value, Logic = ConditionLogic.And })
+            .ToList();
 
-        var summaryKey = $"{productName} {optionName}".Trim();
-        // 이 시점의 새 규칙은 대상SKU가 아직 비어 있어(사용자가 "조건부 매핑(상세)" 탭에서 마무리
-        // 해야 함) 실제로 매핑되는 건 없다 — 여기서 MappingRulesChanged를 굳이 호출하지 않는다(이
-        // 창을 막 띄운 같은 흐름에서 마감/이익분석의 무거운 재계산을 재진입시키는 위험도 피한다).
-        // 실제로 매핑이 완성되는 시점(상세조건/요약 저장)에 그쪽에서 이벤트를 발생시킨다.
+        var summaryKey = string.Join(" ", initialConditions.Select(c => c.Value)).Trim();
         var newRuleId = _mappingRepository.AddConditionRuleWithDetails(channelCode, summaryKey, string.Empty, details);
         LoadConditionRules(channelCode);
         SelectConditionRuleById(newRuleId);
+
+        // OnTabSelecting을 잠시 떼어 탭 전환 시 "변경사항 저장?" 모달이 뜨지 않게 한다.
+        // (창이 막 보이게 된 직후 같은 틱에서 모달을 띄우면 Visible=False 경쟁 상태가 재현됨.)
+        _ruleTabControl.Selecting -= OnTabSelecting;
         _ruleTabControl.SelectedTab = _conditionDetailTabPage;
+        _ruleTabControl.Selecting += OnTabSelecting;
     }
 
     /// <summary>
@@ -1448,6 +1463,19 @@ public class MappingForm : Form
     /// "정산파일 로드"를 다시 안 해도 미매핑 목록에 즉시 반영되게 한다.
     /// </summary>
     public event Action? MappingRulesChanged;
+
+    private void FilterSkuSearchList()
+    {
+        var query = _conditionTargetSkuTextBox.Text.Trim();
+        _skuSearchListBox.BeginUpdate();
+        _skuSearchListBox.Items.Clear();
+        if (!string.IsNullOrEmpty(query))
+        {
+            foreach (var code in _allSkuCodes.Where(s => s.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(20))
+                _skuSearchListBox.Items.Add(code);
+        }
+        _skuSearchListBox.EndUpdate();
+    }
 
     private void OnAddConditionRuleClick(object? sender, EventArgs e)
     {
@@ -1513,19 +1541,16 @@ public class MappingForm : Form
         if (_selectedConditionRuleId < 0) return;
         var ruleId = _selectedConditionRuleId;
 
+        // 상세조건도 함께 저장 — "상세조건 저장" 버튼을 따로 누르지 않아도 됨.
+        if (_conditionDetailGrid.DataSource is BindingList<MappingConditionDetail> details)
+            _mappingRepository.ReplaceConditionDetails(ruleId, details.ToList());
+
         _mappingRepository.UpdateConditionRuleSummary(ruleId, _conditionKeyTextBox.Text, _conditionTargetSkuTextBox.Text);
 
-        var selectedChannel = _channelComboBox.SelectedValue as string;
-        if (!string.IsNullOrEmpty(selectedChannel))
-        {
-            // LoadConditionRules가 목록을 다시 불러오며 선택을 초기화하므로, 같은 규칙을 다시
-            // 선택해 편집을 이어갈 수 있게 한다(왼쪽 목록을 없앤 뒤로 재선택할 다른 방법이 없음).
-            LoadConditionRules(selectedChannel);
-            SelectConditionRuleById(ruleId);
-        }
-        // 노션 5.1: 저장 직후 MessageBox를 띄우면 "저장이 오래 걸린다"고 느껴지는 원인이었던
-        // 모달 표시 문제(다른 창/그리드 갱신 직후 모달 경쟁 상태)와 같은 패턴이라 비모달 라벨로 대체.
-        _conditionSaveFeedbackLabel.Text = $"규칙 정보 저장됨 ({DateTime.Now:HH:mm:ss})";
+        // 저장 후 에디터를 초기화해 연속 작업(미매핑리스트에서 다음 항목 클릭)이 바로 가능하게 한다.
+        _selectedConditionRuleId = -1;
+        SetConditionDetailEditorEnabled(false);
+        _conditionSaveFeedbackLabel.Text = $"저장됨 ({DateTime.Now:HH:mm:ss}) — 미매핑 목록에서 다음 항목을 클릭하거나 '전체 조건부규칙 보기'로 재편집하세요.";
         MappingRulesChanged?.Invoke();
     }
 
