@@ -15,9 +15,10 @@ public static class ExcelFileOpener
         ExcelLicense.Ensure();
 
         if (Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase))
-        {
             return CsvWorkbookReader.LoadAsPackage(filePath);
-        }
+
+        if (Path.GetExtension(filePath).Equals(".xls", StringComparison.OrdinalIgnoreCase))
+            return XlsWorkbookReader.LoadAsPackage(filePath);
 
         try
         {

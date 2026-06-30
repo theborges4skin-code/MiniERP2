@@ -359,7 +359,7 @@ public class SettlementForm : Form
     {
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Filter = "Excel Files (*.xlsx, *.xls)|*.xlsx;*.xls|All files (*.*)|*.*",
             Multiselect = true,
             Title = "정산 파일을 선택하세요",
             InitialDirectory = _settingsService.GetLastFolder("SettlementLoad") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
@@ -1173,7 +1173,7 @@ public class SettlementForm : Form
     {
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Filter = "Excel Files (*.xlsx, *.xls)|*.xlsx;*.xls|All files (*.*)|*.*",
             Title = "거래처 제공 마감내역 파일을 선택하세요",
             InitialDirectory = _settingsService.GetLastFolder("StatementLoad") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
