@@ -775,7 +775,7 @@ public class SettlementForm : Form
         {
             data.Status = "매핑 실패";
             data.Profit = 0m;
-            RefreshProfitAnalysisView();
+            BeginInvoke(RefreshProfitAnalysisView);
             return;
         }
 
@@ -805,7 +805,7 @@ public class SettlementForm : Form
 
         var skuMapper = new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository);
         SettlementLoader.ApplyMappingAndProfit(data, skuMapper, _itemRepository, channelConfig, _channelSkuRepository);
-        RefreshProfitAnalysisView();
+        BeginInvoke(RefreshProfitAnalysisView);
     }
 
     /// <summary>
