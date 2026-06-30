@@ -140,7 +140,6 @@ public class MappingForm : Form
         tabControl.TabPages.Add(CreateRuleTabPage("예외 처리", MappingRuleType.Exception));
         tabControl.TabPages.Add(CreateRuleTabPage("1:1 매핑", MappingRuleType.Exact));
         tabControl.TabPages.Add(CreateRuleTabPage("임시 매핑", MappingRuleType.Temp));
-        tabControl.TabPages.Add(CreateRuleTabPage("조건부 매핑", MappingRuleType.Condition));
         _conditionDetailTabPage = CreateConditionDetailTabPage();
         tabControl.TabPages.Add(_conditionDetailTabPage);
         tabControl.TabPages.Add(CreateConflictTabPage());
@@ -290,7 +289,7 @@ public class MappingForm : Form
         var btnRegisterTemp = new Button { Text = "임시 SKU 등록 후 매핑", Size = new Size(150, 30) };
         btnRegisterTemp.Click += (s, e) => RegisterTempSkuAndMap();
         var btnAddCondition = new Button { Text = "조건부 매핑 규칙 추가", Size = new Size(150, 30) };
-        btnAddCondition.Click += (s, e) => AddConditionRuleFromSelectedUnmapped();
+        btnAddCondition.Click += (s, e) => AddCellAsConditionToRule();
         var btnExclude = new Button { Text = "예외 처리(매핑 제외)", Size = new Size(140, 30) };
         btnExclude.Click += (s, e) => ExcludeSelectedUnmapped();
         secondaryButtonPanel.Controls.Add(btnRegisterTemp);
@@ -316,8 +315,7 @@ public class MappingForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("1:1 매핑 적용", null, (s, e) => ApplyExactMappingToSelectedUnmapped());
         menu.Items.Add("임시 SKU 등록 후 매핑", null, (s, e) => RegisterTempSkuAndMap());
-        menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => AddConditionRuleFromSelectedUnmapped());
-        menu.Items.Add("이 셀 값을 조건부 규칙에 조건으로 추가", null, (s, e) => AddCellAsConditionToRule());
+        menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => AddCellAsConditionToRule());
         menu.Items.Add("예외 처리(매핑 제외)", null, (s, e) => ExcludeSelectedUnmapped());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("이 셀 내용을 CSKU 상품명으로 사용", null, (s, e) => UseCurrentCellAsInvoiceDisplayName());
@@ -594,7 +592,11 @@ public class MappingForm : Form
         }
 
         RefreshUnmappedGrid();
-        RunCskuSearch();
+        _unmappedCskuCodeTextBox.Text = string.Empty;
+        _unmappedSupplyPriceTextBox.Text = string.Empty;
+        _unmappedInvoiceNameTextBox.Text = string.Empty;
+        _unmappedVatIncludedRadio.Checked = true;
+        _masterSearchBox.Text = string.Empty;
         _onMappingApplied?.Invoke();
     }
 
@@ -616,6 +618,48 @@ public class MappingForm : Form
         {
             sibling.MappedSku = targetSku;
             sibling.Status = status;
+        }
+    }
+
+    /// <summary>
+    /// 상세조건 저장 직후, 현재 채널의 모든 조건부 매핑 규칙을 아직 매핑되지 않은 발주 항목들에
+    /// 재적용한다. 조건 편집 → 저장 즉시 미매핑 목록에 결과가 반영되게 하기 위함이다.
+    /// </summary>
+    private void ReapplyConditionRulesToUnmappedItems()
+    {
+        if (_sourceOrders == null || string.IsNullOrEmpty(_unmappedChannelCode)) return;
+
+        var conditionRules = _mappingRepository.GetRules(MappingRuleType.Condition, _unmappedChannelCode);
+        if (conditionRules.Count == 0) return;
+
+        var rulesWithDetails = conditionRules
+            .Where(r => !string.IsNullOrWhiteSpace(r.TargetSku))
+            .Select(r => (rule: r, details: _mappingRepository.GetConditionDetails(r.Id)))
+            .Where(rd => rd.details.Count > 0)
+            .ToList();
+
+        if (rulesWithDetails.Count == 0) return;
+
+        var changed = false;
+        foreach (var order in _sourceOrders)
+        {
+            if (order.ChannelCode != _unmappedChannelCode) continue;
+            if (order.Status != "매핑 실패" && order.Status != "매핑 키 없음") continue;
+
+            foreach (var (rule, details) in rulesWithDetails)
+            {
+                if (!ConditionEvaluator.Matches(details, order)) continue;
+                order.MappedSku = rule.TargetSku;
+                order.Status = "매핑(조건부)";
+                changed = true;
+                break;
+            }
+        }
+
+        if (changed)
+        {
+            RefreshUnmappedGrid();
+            _onMappingApplied?.Invoke();
         }
     }
 
@@ -652,58 +696,6 @@ public class MappingForm : Form
             SupplyPrice = supplyPrice,
             InvoiceDisplayName = invoiceDisplayName,
         });
-    }
-
-    /// <summary>
-    /// 선택한 미매핑 항목의 상품명/옵션명을 그대로 포함하는 조건(AND)으로 조건부 매핑 규칙을 만들고,
-    /// "조건부 매핑(상세)" 탭으로 이동해 바로 다듬을 수 있게 한다.
-    /// </summary>
-    private void AddConditionRuleFromSelectedUnmapped()
-    {
-        if (_unmappedGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
-        {
-            MessageBox.Show("조건부 매핑을 추가할 미매핑 항목을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        var masterSku = ResolveSelectedMasterSku();
-        if (masterSku == null)
-        {
-            MessageBox.Show("마스터DB 후보 또는 CSKU 검색결과에서 매핑할 대상을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
-
-        var details = new List<MappingConditionDetail>();
-        if (!string.IsNullOrWhiteSpace(item.ProductName))
-        {
-            details.Add(new MappingConditionDetail { HeaderField = StdField.ProductName, Operator = ConditionOperator.Contains, TargetValue = item.ProductName, Logic = ConditionLogic.And });
-        }
-        if (!string.IsNullOrWhiteSpace(item.OptionName))
-        {
-            details.Add(new MappingConditionDetail { HeaderField = StdField.OptionName, Operator = ConditionOperator.Contains, TargetValue = item.OptionName, Logic = ConditionLogic.And });
-        }
-
-        if (details.Count == 0)
-        {
-            MessageBox.Show("이 항목에는 조건으로 쓸 상품명/옵션명이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-
-        var cskuCode = ResolveCskuCodeOrShowError();
-        if (cskuCode == null) return;
-
-        SaveChannelSkuInfoFromUnmappedPanel(cskuCode, masterSku);
-
-        var summaryKey = $"{item.ProductName} {item.OptionName}".Trim();
-        var newRuleId = _mappingRepository.AddConditionRuleWithDetails(_unmappedChannelCode, summaryKey, cskuCode, details);
-
-        MessageBox.Show(
-            "조건부 매핑 규칙을 추가했습니다. '조건부 매핑(상세)' 탭에서 조건을 다듬을 수 있습니다(기본값은 상품명/옵션명을 그대로 포함하는 조건입니다).",
-            "추가 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-        LoadConditionRules(_unmappedChannelCode);
-        SelectConditionRuleById(newRuleId);
-        _ruleTabControl.SelectedTab = _conditionDetailTabPage;
     }
 
     private static readonly Dictionary<string, StdField> UnmappedGridColumnToStdField = new()
@@ -1579,6 +1571,7 @@ public class MappingForm : Form
 
         _mappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
         _conditionSaveFeedbackLabel.Text = $"상세조건 저장됨 ({DateTime.Now:HH:mm:ss})";
+        ReapplyConditionRulesToUnmappedItems();
         MappingRulesChanged?.Invoke();
     }
 
