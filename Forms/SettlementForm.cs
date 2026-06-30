@@ -512,13 +512,6 @@ public class SettlementForm : Form
         {
             var rowsToSave = _settlementRows.ToList();
             await Task.Run(() => _settlementRepository.Insert(rowsToSave));
-            _statusLabel.Text = $"{rowsToSave.Count}건 저장 완료.";
-
-            // 99.1: 저장 시 분석 결과 요약을 별도로 보여준다(하단 상품그룹별 요약 그리드는 항상 떠 있음).
-            // RefreshProfitAnalysisView()처럼 그리드를 크게 다시 그리는 호출 직후 모달을 띄우면 그
-            // 모달이 안 보이게 생성되는 경쟁 상태가 반복 재현돼서(정산파일 로드 멈춤과 동일 원인),
-            // 여기도 모달 대신 상태표시줄로 안내한다.
-            RefreshProfitAnalysisView();
             _statusLabel.Text = $"{rowsToSave.Count}건 저장 완료. {_summaryTotalsLabel.Text}";
         }
         catch (Exception ex)
