@@ -807,43 +807,66 @@ public class SettlementForm : Form
     /// 않아도(엑셀을 다시 읽지 않음) 미매핑 목록이 즉시 갱신되도록 채널별로 SkuMapper를 한 번씩만
     /// 만들어 재사용한다.
     /// </summary>
-    private void ReapplyMappingForAllRows()
+    private async void ReapplyMappingForAllRows()
     {
         if (_settlementRows.Count == 0) return;
 
-        var channelConfigs = _channelConfigService.Load();
-        var mapperCache = new Dictionary<string, (SkuMapper Mapper, ChannelConfig Config)>();
-        var cskuCacheByChannel = new Dictionary<string, IReadOnlyDictionary<string, ChannelSkuModel>>();
-        // ApplyMappingAndProfit이 행마다 ItemRepository.GetBySku/ChannelSkuRepository.
-        // ResolveMasterSku를 호출하면 그때마다 새 SQLite 연결을 여는데, 정산 데이터 전체를
-        // 한꺼번에 다시 매핑할 때는 그 비용이 누적돼 수천 건이면 "저장 후 반응 없음"으로 보일
-        // 만큼 느려진다. 한 번만 전체 품목을 읽어 캐시로 넘긴다.
-        var itemCache = _itemRepository.GetAll().ToDictionary(i => i.Sku);
+        _statusLabel.ForeColor = SystemColors.ControlText;
+        _statusLabel.Text = "매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신하는 중...";
+        Cursor = Cursors.WaitCursor;
 
-        foreach (var data in _settlementRows)
+        try
         {
-            if (string.IsNullOrEmpty(data.ChannelCode)) continue;
+            var channelConfigs = _channelConfigService.Load();
+            // _settlementRows에서 참조 스냅샷만 뽑는다. 실제 데이터 객체는 같은 인스턴스를
+            // 가리키므로, Task.Run 안에서 Msku/Status 등을 수정해도 _settlementRows와 동기화된다.
+            var snapshot = _settlementRows.ToList();
+            var mappingRepo = _mappingRepository;
+            var channelSkuRepo = _channelSkuRepository;
+            var itemRepo = _itemRepository;
 
-            if (!mapperCache.TryGetValue(data.ChannelCode, out var entry))
+            await Task.Run(() =>
             {
-                var channelConfig = channelConfigs.FirstOrDefault(c => c.ChannelCode == data.ChannelCode);
-                if (channelConfig == null) continue;
+                var mapperCache = new Dictionary<string, (SkuMapper Mapper, ChannelConfig Config)>();
+                var cskuCacheByChannel = new Dictionary<string, IReadOnlyDictionary<string, ChannelSkuModel>>();
+                var itemCache = itemRepo.GetAll().ToDictionary(i => i.Sku);
 
-                entry = (new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository), channelConfig);
-                mapperCache[data.ChannelCode] = entry;
-            }
+                foreach (var data in snapshot)
+                {
+                    if (string.IsNullOrEmpty(data.ChannelCode)) continue;
 
-            if (!cskuCacheByChannel.TryGetValue(data.ChannelCode, out var cskuCache))
-            {
-                cskuCache = _channelSkuRepository.GetAllByChannel(data.ChannelCode).ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
-                cskuCacheByChannel[data.ChannelCode] = cskuCache;
-            }
+                    if (!mapperCache.TryGetValue(data.ChannelCode, out var entry))
+                    {
+                        var channelConfig = channelConfigs.FirstOrDefault(c => c.ChannelCode == data.ChannelCode);
+                        if (channelConfig == null) continue;
 
-            SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, _itemRepository, entry.Config, _channelSkuRepository, itemCache, cskuCache);
+                        entry = (new SkuMapper(mappingRepo, data.ChannelCode, channelSkuRepo), channelConfig);
+                        mapperCache[data.ChannelCode] = entry;
+                    }
+
+                    if (!cskuCacheByChannel.TryGetValue(data.ChannelCode, out var cskuCache))
+                    {
+                        cskuCache = channelSkuRepo.GetAllByChannel(data.ChannelCode)
+                            .ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
+                        cskuCacheByChannel[data.ChannelCode] = cskuCache;
+                    }
+
+                    SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, itemRepo, entry.Config, channelSkuRepo, itemCache, cskuCache);
+                }
+            });
+
+            RefreshProfitAnalysisView();
+            _statusLabel.Text = $"매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신했습니다. ({DateTime.Now:HH:mm:ss})";
         }
-
-        RefreshProfitAnalysisView();
-        _statusLabel.Text = $"매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신했습니다. ({DateTime.Now:HH:mm:ss})";
+        catch (Exception ex)
+        {
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"갱신 오류: {ex.Message}";
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
     }
 
     /// <summary>
