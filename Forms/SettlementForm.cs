@@ -421,6 +421,8 @@ public class SettlementForm : Form
             loadStopwatch.Stop();
             DiagnosticsLogger.Log($"[SettlementForm] 전체 파일 처리 완료 ({loadStopwatch.Elapsed.TotalSeconds:F2}s) — RefreshProfitAnalysisView 호출 시작");
 
+            _salesChannelRepository.UpdateLastUsedDate(channelConfig.ChannelCode);
+
             progressDialog.SetIndeterminate("화면을 갱신하는 중입니다...");
             var refreshStopwatch = Stopwatch.StartNew();
             RefreshProfitAnalysisView();

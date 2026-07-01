@@ -7,4 +7,5 @@ public class SalesChannel
     public string? GroupName { get; set; }
     public bool IsFavorite { get; set; }
     public int DisplayOrder { get; set; }
+    public DateTime? LastUsedDate { get; set; }
 }

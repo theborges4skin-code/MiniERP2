@@ -67,6 +67,8 @@ public class MappingForm : Form
     private long _selectedConditionRuleId = -1;
     private ListBox _skuSearchListBox = new();
     private string[] _allSkuCodes = Array.Empty<string>();
+    private Button _btnUndoLastMapping = new();
+    private long _lastSavedConditionRuleId = -1;
 
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
     // 상단(미매핑 목록)/하단(마스터DB 검색+CSKU 입력)으로 분리되어 있다.
@@ -1158,11 +1160,14 @@ public class MappingForm : Form
         _conditionTargetSkuTextBox = new TextBox { Width = 150 };
         var btnSaveSummary = new Button { Text = "규칙 정보 저장", Size = new Size(110, 28) };
         btnSaveSummary.Click += OnSaveConditionSummaryClick;
+        _btnUndoLastMapping = new Button { Text = "직전매핑취소", Size = new Size(100, 28), Enabled = false, ForeColor = Color.Firebrick };
+        _btnUndoLastMapping.Click += OnUndoLastMappingClick;
         summaryPanel.Controls.Add(new Label { Text = "키(요약):", AutoSize = true, Padding = new Padding(0, 7, 3, 0) });
         summaryPanel.Controls.Add(_conditionKeyTextBox);
         summaryPanel.Controls.Add(new Label { Text = "대상 SKU:", AutoSize = true, Padding = new Padding(10, 7, 3, 0) });
         summaryPanel.Controls.Add(_conditionTargetSkuTextBox);
         summaryPanel.Controls.Add(btnSaveSummary);
+        summaryPanel.Controls.Add(_btnUndoLastMapping);
         _conditionTargetSkuTextBox.TextChanged += (s, e) => FilterSkuSearchList();
         _conditionPreviewLabel = new Label
         {
@@ -1547,10 +1552,28 @@ public class MappingForm : Form
 
         _mappingRepository.UpdateConditionRuleSummary(ruleId, _conditionKeyTextBox.Text, _conditionTargetSkuTextBox.Text);
 
+        _lastSavedConditionRuleId = ruleId;
+        _btnUndoLastMapping.Enabled = true;
+
         // 저장 후 에디터를 초기화해 연속 작업(미매핑리스트에서 다음 항목 클릭)이 바로 가능하게 한다.
         _selectedConditionRuleId = -1;
         SetConditionDetailEditorEnabled(false);
-        _conditionSaveFeedbackLabel.Text = $"저장됨 ({DateTime.Now:HH:mm:ss}) — 미매핑 목록에서 다음 항목을 클릭하거나 '전체 조건부규칙 보기'로 재편집하세요.";
+        _conditionSaveFeedbackLabel.Text = $"저장됨 ({DateTime.Now:HH:mm:ss}) — 취소하려면 [직전매핑취소] 클릭, 다음 항목 클릭 또는 '전체 조건부규칙 보기'로 재편집하세요.";
+        MappingRulesChanged?.Invoke();
+    }
+
+    private void OnUndoLastMappingClick(object? sender, EventArgs e)
+    {
+        if (_lastSavedConditionRuleId < 0) return;
+        _mappingRepository.DeleteConditionRule(_lastSavedConditionRuleId);
+        _lastSavedConditionRuleId = -1;
+        _btnUndoLastMapping.Enabled = false;
+        _conditionSaveFeedbackLabel.Text = $"직전매핑 취소됨 ({DateTime.Now:HH:mm:ss})";
+
+        var channelCode = _channelComboBox.SelectedValue as string;
+        if (!string.IsNullOrEmpty(channelCode))
+            LoadConditionRules(channelCode);
+
         MappingRulesChanged?.Invoke();
     }
 
@@ -1723,8 +1746,10 @@ public class MappingForm : Form
         _channelTypeLabel.Text = $"[{channelType.ToKoreanLabel()}]";
         _channelTypeLabel.ForeColor = channelType.IsMarketplace() ? Color.SteelBlue : Color.DarkGreen;
 
-        // 채널 변경 시, dirty 상태 초기화
+        // 채널 변경 시, dirty 상태 및 직전매핑취소 상태 초기화
         _dirtyTabs.Clear();
+        _lastSavedConditionRuleId = -1;
+        _btnUndoLastMapping.Enabled = false;
 
         foreach (TabPage tabPage in _ruleTabControl.TabPages)
         {

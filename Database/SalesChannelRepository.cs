@@ -13,8 +13,8 @@ public class SalesChannelRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder 
-            FROM SalesChannelTable 
+            SELECT ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder, LastUsedDate
+            FROM SalesChannelTable
             ORDER BY GroupName, DisplayOrder, ChannelName
             """;
 
@@ -28,10 +28,23 @@ public class SalesChannelRepository
                 ChannelName = reader.GetString(1),
                 GroupName = reader.IsDBNull(2) ? null : reader.GetString(2),
                 IsFavorite = reader.GetBoolean(3),
-                DisplayOrder = reader.GetInt32(4)
+                DisplayOrder = reader.GetInt32(4),
+                LastUsedDate = reader.IsDBNull(5) ? null : DateTime.Parse(reader.GetString(5))
             });
         }
         return channels;
+    }
+
+    public void UpdateLastUsedDate(string channelCode)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE SalesChannelTable SET LastUsedDate = $date WHERE ChannelCode = $channelCode
+            """;
+        command.Parameters.AddWithValue("$date", DateTime.Now.ToString("O"));
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.ExecuteNonQuery();
     }
 
     public void Upsert(SalesChannel channel)
