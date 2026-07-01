@@ -32,6 +32,10 @@ public class SettlementForm : Form
     private ExcelLikeDataGridView _settlementGrid = new();
     private BindingList<SettlementData> _settlementRows = new();
     private MappingForm? _subscribedMappingForm;
+
+    private TableLayoutPanel _profitMainLayout = new();
+    private QuickMappingPanel _quickMapPanel = new();
+    private bool _quickMapAdvancePending;
     private string? _settlementGridClickedColumnName;
     private ToolStripStatusLabel _statusLabel = new();
     private bool _isReapplying;
@@ -77,10 +81,12 @@ public class SettlementForm : Form
     {
         var tabPage = new TabPage("이익분석(자동)");
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        _profitMainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
+        _profitMainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        _profitMainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // QuickMappingPanel (collapsed)
+        _profitMainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _profitMainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        var mainLayout = _profitMainLayout; // alias for rest of method
 
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnLoad = new Button { Text = "정산파일 로드", Size = new Size(120, 30) };
@@ -167,9 +173,16 @@ public class SettlementForm : Form
         _statusLabel = new ToolStripStatusLabel("준비");
         statusStrip.Items.Add(_statusLabel);
 
+        // QuickMappingPanel — 미매핑 행 클릭 시 확장됨
+        _quickMapPanel = new QuickMappingPanel { Visible = false };
+        _quickMapPanel.RuleSaved += OnQuickMapPanelRuleSaved;
+        _quickMapPanel.Skipped += AdvanceToNextUnmappedSettlementRow;
+        _settlementGrid.SelectionChanged += OnSettlementGridSelectionChanged;
+
         mainLayout.Controls.Add(toolStrip, 0, 0);
-        mainLayout.Controls.Add(split, 0, 1);
-        mainLayout.Controls.Add(statusStrip, 0, 2);
+        mainLayout.Controls.Add(_quickMapPanel, 0, 1);
+        mainLayout.Controls.Add(split, 0, 2);
+        mainLayout.Controls.Add(statusStrip, 0, 3);
 
         tabPage.Controls.Add(mainLayout);
         RefreshProfitAnalysisView();
@@ -268,6 +281,12 @@ public class SettlementForm : Form
             $"원본열구성 {rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s, 데이터바인딩 {bindStopwatch.Elapsed.TotalSeconds:F2}s, " +
             $"요약집계 {summaryStopwatch.Elapsed.TotalSeconds:F2}s, 합계 {totalStopwatch.Elapsed.TotalSeconds:F2}s";
         DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 완료 — {LastRefreshDiagnostics}");
+
+        if (_quickMapAdvancePending)
+        {
+            _quickMapAdvancePending = false;
+            AdvanceToNextUnmappedSettlementRow();
+        }
     }
 
     /// <summary>
@@ -839,6 +858,66 @@ public class SettlementForm : Form
 
     /// <summary>SkuMapper.ApplyMapping과 동일한 1:1 매핑 키(상품명+옵션명, 구분자 없음) 형식.</summary>
     private static string BuildExactMappingKey(SettlementData data) => (data.ProductName ?? "") + (data.OptionName ?? "");
+
+    private void OnSettlementGridSelectionChanged(object? sender, EventArgs e)
+    {
+        var row = _settlementGrid.CurrentRow;
+        if (row?.DataBoundItem is not SettlementData data || !SettlementRowStatus.IsUnresolved(data))
+        {
+            HideQuickMapPanel();
+            return;
+        }
+
+        var channelCode = data.ChannelCode ?? "";
+        if (string.IsNullOrEmpty(channelCode)) { HideQuickMapPanel(); return; }
+
+        _quickMapPanel.SetChannelCode(channelCode, settlementMode: true);
+        _quickMapPanel.LoadItem(data.ProductName ?? "", data.OptionName ?? "", data.Qty,
+            data.Revenue > 0 ? data.Revenue : null);
+        ShowQuickMapPanel();
+    }
+
+    private void ShowQuickMapPanel()
+    {
+        _profitMainLayout.RowStyles[1].SizeType = SizeType.Absolute;
+        _profitMainLayout.RowStyles[1].Height = 220;
+        _quickMapPanel.Visible = true;
+    }
+
+    private void HideQuickMapPanel()
+    {
+        _profitMainLayout.RowStyles[1].SizeType = SizeType.Absolute;
+        _profitMainLayout.RowStyles[1].Height = 0;
+        _quickMapPanel.Visible = false;
+    }
+
+    private void OnQuickMapPanelRuleSaved()
+    {
+        _quickMapAdvancePending = true;
+        ReapplyMappingForAllRows();
+    }
+
+    private void AdvanceToNextUnmappedSettlementRow()
+    {
+        BeginInvoke(() =>
+        {
+            var firstUnresolved = _settlementGrid.Rows
+                .Cast<DataGridViewRow>()
+                .FirstOrDefault(r => !r.IsNewRow && r.DataBoundItem is SettlementData d && SettlementRowStatus.IsUnresolved(d));
+
+            if (firstUnresolved != null)
+            {
+                _settlementGrid.ClearSelection();
+                firstUnresolved.Selected = true;
+                _settlementGrid.CurrentCell = firstUnresolved.Cells[0];
+            }
+            else
+            {
+                HideQuickMapPanel();
+                _statusLabel.Text += " — 미매핑 건 없음";
+            }
+        });
+    }
 
     /// <summary>
     /// 채널/매핑 규칙이 바뀐 뒤 한 행만 다시 매핑·손익 계산한다. 정산파일을 다시 불러오지 않고도

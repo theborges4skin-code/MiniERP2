@@ -36,6 +36,9 @@ public class OfsForm : Form
     private string? _lastChannelCode;
     private MappingForm? _subscribedMappingForm;
 
+    private TableLayoutPanel _mainLayout = new();
+    private QuickMappingPanel _quickMapPanel = new();
+
     // 택배사 출력 미리보기 — 실제 택배사 양식의 헤더 그대로 보여달라는 요청으로, 고정된 컬럼이
     // 아니라 선택된 택배사(_previewCourierCombo)의 HeaderMappingJson을 기준으로 매번 다시 그린다.
     private ComboBox _previewCourierCombo = new();
@@ -62,10 +65,12 @@ public class OfsForm : Form
         Size = new Size(1280, 800);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        _mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // QuickMappingPanel (collapsed)
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        var mainLayout = _mainLayout; // alias for rest of method
 
         // 1. Toolbar
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
@@ -150,10 +155,19 @@ public class OfsForm : Form
         _statusLabel = new ToolStripStatusLabel("준비");
         _statusStrip.Items.Add(_statusLabel);
 
+        // QuickMappingPanel — 미매핑 행 클릭 시 확장됨
+        _quickMapPanel = new QuickMappingPanel { Visible = false };
+        _quickMapPanel.RuleSaved += OnQuickMapPanelRuleSaved;
+        _quickMapPanel.Skipped += AdvanceToNextUnmappedOrder;
+
+        // 미매핑 행 선택 시 패널 자동 표시
+        _ordersGrid.SelectionChanged += OnOrdersGridSelectionChanged;
+
         // Add controls to layout
         mainLayout.Controls.Add(toolStrip, 0, 0);
-        mainLayout.Controls.Add(gridSplit, 0, 1);
-        mainLayout.Controls.Add(_statusStrip, 0, 2);
+        mainLayout.Controls.Add(_quickMapPanel, 0, 1);
+        mainLayout.Controls.Add(gridSplit, 0, 2);
+        mainLayout.Controls.Add(_statusStrip, 0, 3);
 
         Controls.Add(mainLayout);
 
@@ -801,6 +815,62 @@ public class OfsForm : Form
             mappingForm.StartNewConditionRuleFor(channelCode, conditions);
             _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 조건/대상 SKU를 완성하고 저장하면 이 목록에 자동으로 반영됩니다.";
         });
+    }
+
+    private void OnOrdersGridSelectionChanged(object? sender, EventArgs e)
+    {
+        var item = _ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem;
+        if (item == null || (item.Status != "매핑 실패" && item.Status != "매핑 키 없음"))
+        {
+            HideQuickMapPanel();
+            return;
+        }
+
+        var channelCode = item.ChannelCode ?? _lastChannelCode ?? "";
+        if (string.IsNullOrEmpty(channelCode)) { HideQuickMapPanel(); return; }
+
+        _quickMapPanel.SetChannelCode(channelCode, settlementMode: false);
+        _quickMapPanel.LoadItem(item.ProductName ?? "", item.OptionName ?? "", item.Quantity, revenue: null);
+        ShowQuickMapPanel();
+    }
+
+    private void ShowQuickMapPanel()
+    {
+        _mainLayout.RowStyles[1].SizeType = SizeType.Absolute;
+        _mainLayout.RowStyles[1].Height = 220;
+        _quickMapPanel.Visible = true;
+    }
+
+    private void HideQuickMapPanel()
+    {
+        _mainLayout.RowStyles[1].SizeType = SizeType.Absolute;
+        _mainLayout.RowStyles[1].Height = 0;
+        _quickMapPanel.Visible = false;
+    }
+
+    private void OnQuickMapPanelRuleSaved()
+    {
+        ReapplyMappingForAllOrders();
+        RefreshExportPreview();
+        AdvanceToNextUnmappedOrder();
+    }
+
+    private void AdvanceToNextUnmappedOrder()
+    {
+        var currentIndex = _ordersGrid.CurrentRow?.Index ?? -1;
+        for (int i = currentIndex + 1; i < _ordersGrid.Rows.Count; i++)
+        {
+            if (_ordersGrid.Rows[i].DataBoundItem is OfsOrderItem next &&
+                (next.Status == "매핑 실패" || next.Status == "매핑 키 없음"))
+            {
+                _ordersGrid.ClearSelection();
+                _ordersGrid.Rows[i].Selected = true;
+                _ordersGrid.CurrentCell = _ordersGrid.Rows[i].Cells[0];
+                return;
+            }
+        }
+        HideQuickMapPanel();
+        _statusLabel.Text = "미매핑 건 없음 — 모든 항목이 매핑되었습니다.";
     }
 
     /// <summary>

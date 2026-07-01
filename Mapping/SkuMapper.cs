@@ -125,17 +125,19 @@ public class SkuMapper
     {
         foreach (var rule in _rules[MappingRuleType.Condition])
         {
+            // TargetSku(CSKU)가 있으면 우선, 없으면 TargetMsku(MSKU 직접) 사용(Settlement 전용 규칙)
+            var resolved = !string.IsNullOrEmpty(rule.TargetSku) ? rule.TargetSku : rule.TargetMsku;
             if (_conditionDetailsByRuleId.TryGetValue(rule.Id, out var details) && details.Count > 0)
             {
                 if (ConditionEvaluator.Matches(details, item))
                 {
-                    targetSku = rule.TargetSku;
+                    targetSku = resolved;
                     return true;
                 }
             }
             else if (!string.IsNullOrWhiteSpace(rule.Key) && key.Contains(rule.Key, StringComparison.OrdinalIgnoreCase))
             {
-                targetSku = rule.TargetSku;
+                targetSku = resolved;
                 return true;
             }
         }

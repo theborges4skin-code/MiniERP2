@@ -11,13 +11,12 @@ public class MappingRepository
     public List<MappingRule> GetRules(MappingRuleType ruleType, string channelCode)
     {
         var tableName = GetTableName(ruleType);
+        var isCondition = ruleType == MappingRuleType.Condition;
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            SELECT Id, ChannelCode, Key, TargetSku
-            FROM {tableName}
-            WHERE ChannelCode = $channelCode
-            """;
+        command.CommandText = isCondition
+            ? $"SELECT Id, ChannelCode, Key, TargetSku, TargetMsku FROM {tableName} WHERE ChannelCode = $channelCode"
+            : $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName} WHERE ChannelCode = $channelCode";
         command.Parameters.AddWithValue("$channelCode", channelCode);
 
         var rules = new List<MappingRule>();
@@ -31,6 +30,7 @@ public class MappingRepository
                 ChannelCode = reader.GetString(1),
                 Key = reader.GetString(2),
                 TargetSku = reader.GetString(3),
+                TargetMsku = isCondition ? reader.GetString(4) : "",
             });
         }
         return rules;
@@ -40,9 +40,12 @@ public class MappingRepository
     public List<MappingRule> GetAllRules(MappingRuleType ruleType)
     {
         var tableName = GetTableName(ruleType);
+        var isCondition = ruleType == MappingRuleType.Condition;
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName}";
+        command.CommandText = isCondition
+            ? $"SELECT Id, ChannelCode, Key, TargetSku, TargetMsku FROM {tableName}"
+            : $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName}";
 
         var rules = new List<MappingRule>();
         using var reader = command.ExecuteReader();
@@ -55,6 +58,7 @@ public class MappingRepository
                 ChannelCode = reader.GetString(1),
                 Key = reader.GetString(2),
                 TargetSku = reader.GetString(3),
+                TargetMsku = isCondition ? reader.GetString(4) : "",
             });
         }
         return rules;
@@ -76,7 +80,7 @@ public class MappingRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, ChannelCode, Key, TargetSku FROM RuleCondition";
+        command.CommandText = "SELECT Id, ChannelCode, Key, TargetSku, TargetMsku FROM RuleCondition";
 
         var rules = new List<MappingRule>();
         using var reader = command.ExecuteReader();
@@ -89,6 +93,7 @@ public class MappingRepository
                 ChannelCode = reader.GetString(1),
                 Key = reader.GetString(2),
                 TargetSku = reader.GetString(3),
+                TargetMsku = reader.GetString(4),
             });
         }
 
@@ -219,17 +224,18 @@ public class MappingRepository
     /// 기존 단순 조건부 규칙(매핑관리창의 단일 Key)과 공존하며, SaveRules(Condition)을 호출하면
     /// 채널 전체의 조건부 규칙(이 규칙 포함)이 함께 삭제될 수 있으니 주의해야 한다.
     /// </summary>
-    public long AddConditionRuleWithDetails(string channelCode, string key, string targetSku, List<MappingConditionDetail> details)
+    public long AddConditionRuleWithDetails(string channelCode, string key, string targetSku, List<MappingConditionDetail> details, string targetMsku = "")
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
 
         using var insertRuleCommand = connection.CreateCommand();
         insertRuleCommand.Transaction = transaction;
-        insertRuleCommand.CommandText = "INSERT INTO RuleCondition (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
+        insertRuleCommand.CommandText = "INSERT INTO RuleCondition (ChannelCode, Key, TargetSku, TargetMsku) VALUES ($channelCode, $key, $targetSku, $targetMsku)";
         insertRuleCommand.Parameters.AddWithValue("$channelCode", channelCode);
         insertRuleCommand.Parameters.AddWithValue("$key", key);
         insertRuleCommand.Parameters.AddWithValue("$targetSku", targetSku);
+        insertRuleCommand.Parameters.AddWithValue("$targetMsku", targetMsku);
         insertRuleCommand.ExecuteNonQuery();
 
         using var lastIdCommand = connection.CreateCommand();
@@ -308,15 +314,16 @@ public class MappingRepository
     }
 
     /// <summary>
-    /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku)만 갱신합니다. 상세조건은 건드리지 않습니다.
+    /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku/TargetMsku)만 갱신합니다. 상세조건은 건드리지 않습니다.
     /// </summary>
-    public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku)
+    public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku, string targetMsku = "")
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE RuleCondition SET Key = $key, TargetSku = $targetSku WHERE Id = $ruleId";
+        command.CommandText = "UPDATE RuleCondition SET Key = $key, TargetSku = $targetSku, TargetMsku = $targetMsku WHERE Id = $ruleId";
         command.Parameters.AddWithValue("$key", key);
         command.Parameters.AddWithValue("$targetSku", targetSku);
+        command.Parameters.AddWithValue("$targetMsku", targetMsku);
         command.Parameters.AddWithValue("$ruleId", ruleId);
         command.ExecuteNonQuery();
     }

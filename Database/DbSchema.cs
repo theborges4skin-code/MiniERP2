@@ -108,7 +108,8 @@ public static class DbSchema
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ChannelCode TEXT NOT NULL,
                 Key TEXT NOT NULL,
-                TargetSku TEXT NOT NULL
+                TargetSku TEXT NOT NULL,
+                TargetMsku TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS RuleTemp (
@@ -185,6 +186,9 @@ public static class DbSchema
             );
             """;
         command.ExecuteNonQuery();
+
+        // RuleCondition에 TargetMsku 추가 — Settlement 전용 규칙(CSKU 없이 MSKU만 매핑)에 사용한다.
+        EnsureColumn(connection, "RuleCondition", "TargetMsku", "TEXT NOT NULL DEFAULT ''");
 
         // 이중 출고 방지(Upsert) 유니크 인덱스.
         // 분리배송(ShipmentGroupId가 다른 동일 OrderNo) 지원을 위해 ShipmentGroupKey 기준으로 교체한다.
