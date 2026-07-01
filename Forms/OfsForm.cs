@@ -108,7 +108,7 @@ public class OfsForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "주문번호", Name = "OrderNo", DataPropertyName = "OrderNo", Width = 150 },
             new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 250 },
             new DataGridViewTextBoxColumn { HeaderText = "옵션명", Name = "OptionName", DataPropertyName = "OptionName", Width = 200 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 60 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "수취인", Name = "Recipient", DataPropertyName = "Recipient", Width = 100 },
             new DataGridViewTextBoxColumn { HeaderText = "연락처", Name = "Phone", DataPropertyName = "Phone", Width = 120 },
             new DataGridViewTextBoxColumn { HeaderText = "주소", Name = "Address", DataPropertyName = "Address", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
@@ -1159,7 +1159,7 @@ public class OfsForm : Form
                 duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
                 duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
                 duplicate.ShipmentGroupId = $"{ShipmentGrouping.GetEffectiveGroupId(template)}-분리{Guid.NewGuid().ToString("N")[..6]}";
-                _orders.Add(duplicate);
+                _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
             }
 
             _ordersGrid.Invalidate();
@@ -1216,7 +1216,7 @@ public class OfsForm : Form
                 ShipmentGroupId = groupId,
             };
 
-            _orders.Add(duplicate);
+            _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
             _ordersGrid.Invalidate();
             RefreshExportPreview();
 
@@ -1285,6 +1285,9 @@ public class OfsForm : Form
             table.Rows.Add(dataRow);
         }
 
+        var prevSortColName = _previewGrid.SortedColumn?.Name;
+        var prevSortOrder = _previewGrid.SortOrder;
+
         _isRefreshingPreview = true;
         try
         {
@@ -1296,6 +1299,14 @@ public class OfsForm : Form
         }
 
         if (_previewGrid.Columns["__rowIndex"] is { } hiddenColumn) hiddenColumn.Visible = false;
+
+        if (prevSortColName != null && prevSortOrder != SortOrder.None &&
+            _previewGrid.Columns[prevSortColName] is { } sortCol)
+        {
+            _previewGrid.Sort(sortCol, prevSortOrder == SortOrder.Ascending
+                ? System.ComponentModel.ListSortDirection.Ascending
+                : System.ComponentModel.ListSortDirection.Descending);
+        }
 
         // 채널별 고정값 오버라이드가 있는 칸은 직접 입력해도 실제 내보내기엔 반영되지 않으니,
         // 그 줄의 그 칸만 셀 단위로 읽기전용으로 막는다(컬럼 전체를 막으면 다른 채널 줄까지 같이

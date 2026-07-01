@@ -50,9 +50,8 @@ public class ChannelConfig
     [Browsable(false)]
     public Dictionary<AdStdField, FieldMapping> AdFieldMappings { get; set; } = new();
 
-    [Category("필드 매핑")]
-    [DisplayName("보조 소스 설정 (쿠팡 그로스 등)")]
-    [Description("메인 시트 외에 추가 비용(배송비, 입출고비 등)이 있는 보조 시트를 연결하는 설정입니다.")]
+    // 채널설정 창의 "보조 소스" 전용 탭에서 편집한다(PropertyGrid의 CollectionEditor는 쓰기 불편함).
+    [Browsable(false)]
     public List<GrowthAuxSource> GrowthAuxSources { get; set; } = new();
 
     // 채널설정 창의 "택배사 출력 고정값" 전용 탭에서 편집한다.

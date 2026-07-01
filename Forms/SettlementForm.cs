@@ -118,9 +118,9 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "매핑 SKU", Name = "Msku", DataPropertyName = "Msku", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 220 },
             new DataGridViewTextBoxColumn { HeaderText = "옵션명", Name = "OptionName", DataPropertyName = "OptionName", Width = 180 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60 },
-            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 100 },
-            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 }
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         _settlementGrid.RowPrePaint += OnSettlementGridRowPrePaint;
         _settlementGrid.EditingControlShowing += OnSettlementGridEditingControlShowing;
@@ -147,14 +147,15 @@ public class SettlementForm : Form
             AllowUserToAddRows = false,
             ReadOnly = true,
         };
+        var moneyStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight };
         _summaryGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 180 },
-            new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70 },
-            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 110 },
-            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110 }
+            new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 110, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110, DefaultCellStyle = moneyStyle }
         );
         _summaryGrid.RowPrePaint += OnSummaryGridRowPrePaint;
 
@@ -374,6 +375,16 @@ public class SettlementForm : Form
         };
 
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        if (_settlementRows.Count > 0)
+        {
+            var confirmReload = MessageBox.Show(
+                "이미 로드된 정산 데이터가 있습니다.\n새 파일을 불러오면 기존 내용이 초기화됩니다.\n\n계속하시겠습니까?",
+                "기존 데이터 초기화 확인",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirmReload != DialogResult.Yes) return;
+        }
 
         using var channelDialog = new SelectChannelDialog();
         if (channelDialog.ShowDialog(this) != DialogResult.OK || channelDialog.SelectedChannel == null)
@@ -1145,8 +1156,8 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "주문번호", Name = "OrderNo", DataPropertyName = "OrderNo", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "운송장번호", Name = "TrackingNo", DataPropertyName = "TrackingNo", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "SKU", Name = "MskuCode", DataPropertyName = "MskuCode", Width = 120 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60 },
-            new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "출고일시", Name = "CreatedAt", DataPropertyName = "CreatedAt", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "발주이력 상태", Name = "Status", DataPropertyName = "Status", Width = 100 },
             new DataGridViewTextBoxColumn { HeaderText = "확정일시", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130 }

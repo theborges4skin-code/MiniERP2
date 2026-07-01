@@ -35,6 +35,7 @@ public class ChannelConfigForm : Form
     private DataGridView _orderMappingGrid = new();
     private DataGridView _settlementMappingGrid = new();
     private DataGridView _courierOverrideGrid = new();
+    private DataGridView _auxSourceGrid = new();
 
     private static readonly StdField[] OrderMappingFields =
     [
@@ -141,6 +142,7 @@ public class ChannelConfigForm : Form
         rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
         rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
         rightTabControl.TabPages.Add(CreateCourierOverrideTab());
+        rightTabControl.TabPages.Add(CreateAuxSourceTab());
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightTabControl, 1, 0);
@@ -357,6 +359,7 @@ public class ChannelConfigForm : Form
         _orderMappingGrid.DataSource = BuildFieldMappingRows(OrderMappingFields, config.OrderFieldMappings);
         _settlementMappingGrid.DataSource = BuildFieldMappingRows(ResolveSettlementMappingFields(config), config.SettlementFieldMappings);
         LoadCourierOverrideGrid(config);
+        LoadAuxSourceGrid(config);
     }
 
     private void ClearFieldMappingGrids()
@@ -365,6 +368,7 @@ public class ChannelConfigForm : Form
         _orderMappingGrid.DataSource = null;
         _settlementMappingGrid.DataSource = null;
         _courierOverrideGrid.DataSource = null;
+        _auxSourceGrid.DataSource = null;
     }
 
     private TabPage CreateCourierOverrideTab()
@@ -482,6 +486,108 @@ public class ChannelConfigForm : Form
         public string CourierName { get; set; } = string.Empty;
         public string Header { get; set; } = string.Empty;
         public string FixedValue { get; set; } = string.Empty;
+    }
+
+    // ─── 보조 소스(GrowthAuxSource) 탭 ───────────────────────────────────────
+
+    private TabPage CreateAuxSourceTab()
+    {
+        var tabPage = new TabPage("보조 소스");
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        toolbar.Controls.Add(new Label
+        {
+            Text = "쿠팡그로스 등 정산파일에서 배송비/입출고비가 별도 시트에 있을 때 연결 설정입니다.\n" +
+                   "키 컬럼 헤더: 메인 시트와 보조 시트에 공통으로 있는 식별 열(예: 옵션ID). " +
+                   "값 컬럼 헤더: 보조 시트에서 가져올 금액이 있는 열.",
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+        });
+
+        _auxSourceGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = true,
+            AllowUserToDeleteRows = true,
+        };
+
+        var targetFieldValues = Enum.GetValues<StdField>().Cast<object>().ToArray();
+
+        _auxSourceGrid.Columns.AddRange(
+            new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "활성화", DataPropertyName = "Enabled", Width = 55 },
+            new DataGridViewComboBoxColumn
+            {
+                Name = "TargetStdField", HeaderText = "대상 표준 필드", DataPropertyName = "TargetStdField",
+                Width = 140, FlatStyle = FlatStyle.Flat,
+                Items = { StdField.ShippingFee, StdField.HandlingFee, StdField.SettlementAmount },
+            },
+            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 60 },
+            new DataGridViewTextBoxColumn { Name = "KeyHeader", HeaderText = "키 컬럼 헤더", DataPropertyName = "KeyHeader", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "ValueHeader", HeaderText = "값 컬럼 헤더", DataPropertyName = "ValueHeader", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+
+        _auxSourceGrid.EditingControlShowing += (s, e) =>
+        {
+            if (_auxSourceGrid.CurrentCell?.OwningColumn is DataGridViewComboBoxColumn && e.Control is ComboBox cb)
+                cb.DropDownStyle = ComboBoxStyle.DropDown;
+        };
+        _auxSourceGrid.CellValueChanged += (s, e) => SyncAuxSources();
+        _auxSourceGrid.RowsAdded += (s, e) => SyncAuxSources();
+        _auxSourceGrid.RowsRemoved += (s, e) => SyncAuxSources();
+
+        layout.Controls.Add(toolbar, 0, 0);
+        layout.Controls.Add(_auxSourceGrid, 0, 1);
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private void LoadAuxSourceGrid(ChannelConfig config)
+    {
+        var rows = config.GrowthAuxSources
+            .Select(a => new AuxSourceRow
+            {
+                Enabled = a.Enabled,
+                TargetStdField = a.TargetStdField,
+                SheetName = a.SheetName ?? string.Empty,
+                HeaderRow = a.HeaderRow,
+                KeyHeader = a.KeyHeader ?? string.Empty,
+                ValueHeader = a.ValueHeader ?? string.Empty,
+            })
+            .ToList();
+        _auxSourceGrid.DataSource = new BindingList<AuxSourceRow>(rows);
+    }
+
+    private void SyncAuxSources()
+    {
+        if (_currentConfig == null) return;
+        _currentConfig.GrowthAuxSources = (_auxSourceGrid.DataSource as BindingList<AuxSourceRow>)?
+            .Where(r => !string.IsNullOrWhiteSpace(r.KeyHeader) && !string.IsNullOrWhiteSpace(r.ValueHeader))
+            .Select(r => new GrowthAuxSource
+            {
+                Enabled = r.Enabled,
+                TargetStdField = r.TargetStdField,
+                SheetName = r.SheetName,
+                HeaderRow = r.HeaderRow <= 0 ? 1 : r.HeaderRow,
+                KeyHeader = r.KeyHeader,
+                ValueHeader = r.ValueHeader,
+            })
+            .ToList() ?? [];
+    }
+
+    private class AuxSourceRow
+    {
+        public bool Enabled { get; set; }
+        public StdField TargetStdField { get; set; } = StdField.ShippingFee;
+        public string SheetName { get; set; } = string.Empty;
+        public int HeaderRow { get; set; } = 1;
+        public string KeyHeader { get; set; } = string.Empty;
+        public string ValueHeader { get; set; } = string.Empty;
     }
 
     private static BindingList<FieldMappingRow> BuildFieldMappingRows(StdField[] fields, Dictionary<StdField, FieldMapping> dict)
