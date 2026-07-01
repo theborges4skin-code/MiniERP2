@@ -59,7 +59,7 @@ public class ChannelConfigForm : Form
     private static readonly StdField[] SettlementMappingFieldsCoupangGrowth =
     [
         StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
+        StdField.Revenue, StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
     ];
 
     private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) =>

@@ -26,11 +26,29 @@ public static class ProfitCalculator
             ChannelType.CoupangGrowth =>
                 settlement - (costPrice * qty) - (shipping * vatRate) - (fee * vatRate),
 
+            ChannelType.CoupangRocket =>
+                settlement - (costPrice * qty) - (shipping * vatRate),
+
             ChannelType.AmazonUs or ChannelType.AmazonJp =>
                 (settlement - (costPrice / vatRate * qty)) * exchangeRate,
 
             _ => settlement - (costPrice * qty),
         };
+    }
+
+    /// <summary>
+    /// 쿠팡 로켓 채널의 특수 규칙: 입고상세내역 파일의 소계 행을 제거합니다.
+    /// <para>
+    /// 쿠팡 로켓 입고상세내역은 세금계산서번호 그룹마다 '소계' 행이 삽입되어 있고,
+    /// 해당 행의 상품명이 비어있지 않아 매출액이 2배로 집계되는 문제가 있습니다.
+    /// </para>
+    /// 채널 유형이 쿠팡 로켓이 아니면 아무 동작도 하지 않습니다.
+    /// </summary>
+    public static void ApplyCoupangRocketFilter(ChannelType channelType, List<SettlementData> rows)
+    {
+        if (channelType != ChannelType.CoupangRocket || rows.Count == 0) return;
+
+        rows.RemoveAll(r => string.Equals(r.ProductName?.Trim(), "소계", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

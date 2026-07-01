@@ -22,6 +22,7 @@ public class DataManagementForm : Form
     private readonly SalesChannelLegacyMigrationService _channelLegacyMigrationService = new();
     private readonly AdLegacyMigrationService _adLegacyMigrationService = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly MappingRepository _mappingRepository = new();
 
     private readonly List<TableTabContext> _tableTabs = [];
     private DataGridView _backupGrid = new();
@@ -41,6 +42,7 @@ public class DataManagementForm : Form
         public DataTable Table { get; set; } = adapter.LoadCurrent();
         public DataGridView Grid { get; } = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = true, AllowUserToDeleteRows = true };
         public Label StatusLabel { get; } = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
+        public TextBox SearchBox { get; } = new() { Width = 160, Margin = new Padding(8, 5, 0, 0), PlaceholderText = "검색..." };
     }
 
     private void InitializeComponent()
@@ -56,7 +58,7 @@ public class DataManagementForm : Form
         var tabControl = new TabControl { Dock = DockStyle.Fill };
 
         tabControl.TabPages.Add(CreateTableTab(new MasterSkuManagedTable()));
-        tabControl.TabPages.Add(CreateTableTab(new CskuManagedTable()));
+        tabControl.TabPages.Add(CreateCskuTabWithRules());
         tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exact, "1:1 매핑")));
         tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Temp, "임시 매핑")));
         tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exception, "예외 매핑")));
@@ -112,13 +114,20 @@ public class DataManagementForm : Form
         btnDiscard.Click += (s, e) => OnDiscardChangesClick(context);
         btnReload.Click += (s, e) => OnDiscardChangesClick(context);
 
+        context.SearchBox.TextChanged += (s, e) =>
+        {
+            context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
+        };
+
         toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnImport);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnDiscard);
         toolStrip.Controls.Add(btnReload);
+        toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Margin = new Padding(10, 8, 2, 0) });
+        toolStrip.Controls.Add(context.SearchBox);
 
-        context.Grid.DataSource = context.Table;
+        context.Grid.DataSource = context.Table.DefaultView;
         context.Grid.DataError += (s, e) => { e.ThrowException = false; };
 
         layout.Controls.Add(toolStrip, 0, 0);
@@ -148,7 +157,8 @@ public class DataManagementForm : Form
         }
 
         context.Table = context.Adapter.LoadCurrent();
-        context.Grid.DataSource = context.Table;
+        context.Grid.DataSource = context.Table.DefaultView;
+        context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
         UpdateTabStatus(context);
         _statusLabel.Text = $"'{context.Adapter.DisplayName}' 다시 불러왔습니다.";
     }
@@ -173,7 +183,8 @@ public class DataManagementForm : Form
             var applyResult = ManagedTableChangeApplier.Apply(context.Adapter, context.Table);
 
             context.Table = context.Adapter.LoadCurrent();
-            context.Grid.DataSource = context.Table;
+            context.Grid.DataSource = context.Table.DefaultView;
+            context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
             UpdateTabStatus(context);
 
             _statusLabel.Text = $"'{context.Adapter.DisplayName}' 저장 완료 — 신규 {applyResult.Inserted}건, 수정 {applyResult.Updated}건, 삭제 {applyResult.Deleted}건.";
@@ -310,6 +321,192 @@ public class DataManagementForm : Form
     }
 
     private static string SanitizeForFileName(string text) => string.Join("_", text.Split(Path.GetInvalidFileNameChars()));
+
+    private static string BuildRowFilter(DataTable table, string searchText)
+    {
+        if (string.IsNullOrEmpty(searchText)) return string.Empty;
+        var escaped = searchText.Replace("'", "''");
+        var conditions = table.Columns.Cast<DataColumn>()
+            .Where(c => c.DataType == typeof(string))
+            .Select(c => $"[{c.ColumnName}] LIKE '%{escaped}%'");
+        return string.Join(" OR ", conditions);
+    }
+
+    // ===================== CSKU 탭 (매핑 규칙 패널 포함) =====================
+
+    private TabPage CreateCskuTabWithRules()
+    {
+        var adapter = new CskuManagedTable();
+        var context = new TableTabContext(adapter);
+        _tableTabs.Add(context);
+
+        var tabPage = new TabPage(adapter.DisplayName);
+
+        var splitContainer = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterDistance = 350,
+        };
+
+        // ── 상단: CSKU 그리드 (CreateTableTab과 동일) ──
+        var topLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+
+        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnExport = new Button { Text = "엑셀 내보내기", Size = new Size(110, 30) };
+        var btnImport = new Button { Text = "엑셀 불러오기", Size = new Size(110, 30) };
+        var btnSave = new Button { Text = "변경내역 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
+        var btnDiscard = new Button { Text = "변경내역 취소", Size = new Size(110, 30) };
+        var btnReload = new Button { Text = "새로고침", Size = new Size(90, 30) };
+
+        btnExport.Click += (s, e) => OnExportClick(context);
+        btnImport.Click += (s, e) => OnImportClick(context);
+        btnSave.Click += (s, e) => OnSaveChangesClick(context);
+        btnDiscard.Click += (s, e) => OnDiscardChangesClick(context);
+        btnReload.Click += (s, e) => OnDiscardChangesClick(context);
+
+        context.SearchBox.TextChanged += (s, e) =>
+        {
+            context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
+        };
+
+        toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnImport);
+        toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(btnDiscard);
+        toolStrip.Controls.Add(btnReload);
+        toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Margin = new Padding(10, 8, 2, 0) });
+        toolStrip.Controls.Add(context.SearchBox);
+
+        context.Grid.DataSource = context.Table.DefaultView;
+        context.Grid.DataError += (s, e) => { e.ThrowException = false; };
+
+        topLayout.Controls.Add(toolStrip, 0, 0);
+        topLayout.Controls.Add(context.Grid, 0, 1);
+        topLayout.Controls.Add(context.StatusLabel, 0, 2);
+        splitContainer.Panel1.Controls.Add(topLayout);
+
+        // ── 하단: 선택한 CSKU를 참조하는 매핑 규칙 패널 ──
+        var rulesGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            AutoGenerateColumns = false,
+            RowHeadersVisible = false,
+        };
+        rulesGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "채널", DataPropertyName = "ChannelCode", Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "규칙 유형", DataPropertyName = "RuleTypeLabel", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "매핑 키(상품명+옵션명)", DataPropertyName = "Key", Width = 250 },
+            new DataGridViewTextBoxColumn { HeaderText = "상세 조건", DataPropertyName = "ConditionSummary", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var rulesHeader = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 0, 0) };
+        var rulesHeaderLabel = new Label { Text = "이 CSKU를 참조하는 매핑 규칙 (CSKU 행을 선택하면 표시)", AutoSize = true, ForeColor = Color.DimGray };
+        var btnDeleteRule = new Button { Text = "선택한 규칙 삭제", Size = new Size(120, 22), Margin = new Padding(15, 1, 0, 0) };
+        rulesHeader.Controls.Add(rulesHeaderLabel);
+        rulesHeader.Controls.Add(btnDeleteRule);
+
+        bottomLayout.Controls.Add(rulesHeader, 0, 0);
+        bottomLayout.Controls.Add(rulesGrid, 0, 1);
+        splitContainer.Panel2.Controls.Add(bottomLayout);
+
+        // CSKU 선택 → 규칙 목록 갱신
+        var ruleItems = new List<CskuRuleItem>();
+        context.Grid.SelectionChanged += (s, e) =>
+        {
+            ruleItems.Clear();
+            if (context.Grid.CurrentRow?.DataBoundItem is not DataRowView rowView) { rulesGrid.DataSource = null; return; }
+            var cskuCode = rowView.Row["CskuCode"]?.ToString();
+            if (string.IsNullOrEmpty(cskuCode)) { rulesGrid.DataSource = null; return; }
+
+            foreach (var ruleType in new[] { MappingRuleType.Exact, MappingRuleType.Temp, MappingRuleType.Exception })
+            {
+                var allRules = _mappingRepository.GetAllRules(ruleType);
+                foreach (var rule in allRules.Where(r => string.Equals(r.TargetSku, cskuCode, StringComparison.OrdinalIgnoreCase)))
+                {
+                    ruleItems.Add(new CskuRuleItem(rule.Id, rule.RuleType, rule.ChannelCode, rule.Key, string.Empty));
+                }
+            }
+            foreach (var (rule, details) in _mappingRepository.GetAllConditionRulesWithDetails()
+                .Where(x => string.Equals(x.Rule.TargetSku, cskuCode, StringComparison.OrdinalIgnoreCase)))
+            {
+                ruleItems.Add(new CskuRuleItem(rule.Id, rule.RuleType, rule.ChannelCode, rule.Key, FormatConditionDetails(details)));
+            }
+
+            rulesGrid.DataSource = null;
+            rulesGrid.DataSource = ruleItems;
+        };
+
+        btnDeleteRule.Click += (s, e) =>
+        {
+            if (rulesGrid.CurrentRow?.DataBoundItem is not CskuRuleItem item) return;
+            var confirm = MessageBox.Show(
+                $"[{item.RuleTypeLabel}] 채널 '{item.ChannelCode}' / 키 '{item.Key}' 규칙을 삭제하시겠습니까?",
+                "규칙 삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+
+            if (item.RuleType == MappingRuleType.Condition)
+                _mappingRepository.DeleteConditionRule(item.Id);
+            else
+                _mappingRepository.DeleteRule(item.RuleType, item.Id);
+
+            ruleItems.Remove(item);
+            rulesGrid.DataSource = null;
+            rulesGrid.DataSource = ruleItems;
+            _statusLabel.Text = "규칙을 삭제했습니다.";
+        };
+
+        tabPage.Controls.Add(splitContainer);
+        UpdateTabStatus(context);
+        return tabPage;
+    }
+
+    private record CskuRuleItem(long Id, MappingRuleType RuleType, string ChannelCode, string Key, string ConditionSummary)
+    {
+        public string RuleTypeLabel => RuleType switch
+        {
+            MappingRuleType.Exact => "1:1 매핑",
+            MappingRuleType.Temp => "임시 매핑",
+            MappingRuleType.Exception => "예외 매핑",
+            MappingRuleType.Condition => "조건부 매핑",
+            _ => RuleType.ToString(),
+        };
+    }
+
+    private static string FormatConditionDetails(List<MappingConditionDetail> details)
+    {
+        if (details.Count == 0) return string.Empty;
+        return string.Join(", ", details.Select((d, i) =>
+        {
+            var opStr = d.Operator switch
+            {
+                ConditionOperator.Contains => "포함",
+                ConditionOperator.NotContains => "제외",
+                ConditionOperator.Equals => "=",
+                _ => d.Operator.ToString(),
+            };
+            var fieldStr = d.HeaderField switch
+            {
+                StdField.ProductName => "상품명",
+                StdField.OptionName => "옵션명",
+                StdField.Quantity => "수량",
+                _ => d.HeaderField.ToString(),
+            };
+            var logicStr = i > 0 ? (d.Logic == ConditionLogic.And ? " AND " : " OR ") : "";
+            return $"{logicStr}{fieldStr} {opStr} '{d.TargetValue}'";
+        }));
+    }
 
     // ===================== 백업/롤백 탭 =====================
 
@@ -559,7 +756,8 @@ public class DataManagementForm : Form
             foreach (var context in _tableTabs)
             {
                 context.Table = context.Adapter.LoadCurrent();
-                context.Grid.DataSource = context.Table;
+                context.Grid.DataSource = context.Table.DefaultView;
+                context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
                 UpdateTabStatus(context);
             }
 

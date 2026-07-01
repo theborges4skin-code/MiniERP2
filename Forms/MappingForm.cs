@@ -696,15 +696,16 @@ public class MappingForm : Form
 
     private void ApplyMappingToItem(OfsOrderItem item, string cskuCode, string masterSku, string status, bool saveAsExactRule)
     {
-        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
+        var channelCode = !string.IsNullOrEmpty(item.ChannelCode) ? item.ChannelCode : _unmappedChannelCode;
+        if (string.IsNullOrEmpty(channelCode)) return;
 
-        SaveChannelSkuInfoFromUnmappedPanel(cskuCode, masterSku);
+        SaveChannelSkuInfoFromUnmappedPanel(cskuCode, masterSku, channelCode);
 
         var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
 
         if (saveAsExactRule && !string.IsNullOrWhiteSpace(key))
         {
-            _mappingRepository.UpsertExactRule(_unmappedChannelCode, key, cskuCode);
+            _mappingRepository.UpsertExactRule(channelCode, key, cskuCode);
         }
 
         item.MappedSku = cskuCode;
@@ -795,16 +796,14 @@ public class MappingForm : Form
     /// 존재하지 않으면 입력된 납품단가/송장표시명으로 새로 만든다. 납품단가는 VAT별도로 선택했으면
     /// 1.1을 곱해 VAT포함 기준으로 변환한다.
     /// </summary>
-    private void SaveChannelSkuInfoFromUnmappedPanel(string cskuCode, string masterSku)
+    private void SaveChannelSkuInfoFromUnmappedPanel(string cskuCode, string masterSku, string channelCode)
     {
-        if (string.IsNullOrEmpty(_unmappedChannelCode)) return;
-
         decimal.TryParse(_unmappedSupplyPriceTextBox.Text, out var enteredPrice);
         var supplyPrice = enteredPrice > 0
             ? (_unmappedVatExcludedRadio.Checked ? Math.Round(enteredPrice * 1.1m, 0) : enteredPrice)
             : 0m;
 
-        if (!_channelSkuRepository.CreateIfNew(_unmappedChannelCode, cskuCode, masterSku, supplyPrice, _unmappedInvoiceNameTextBox.Text))
+        if (!_channelSkuRepository.CreateIfNew(channelCode, cskuCode, masterSku, supplyPrice, _unmappedInvoiceNameTextBox.Text))
         {
             MessageBox.Show(
                 $"기존 CSKU '{cskuCode}'가 이미 존재합니다. 이 상품명/옵션명 조합을 그 CSKU에 매핑하는 조건을 추가합니다.",

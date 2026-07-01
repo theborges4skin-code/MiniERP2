@@ -199,7 +199,8 @@ public class SettlementLoader
 
             DiagnosticsLogger.Log($"[SettlementLoader] 행 순회 완료 — {rows.Count}건 적재 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
-            // 기획서 5.6절 특수 규칙: 채널별 배송비 후처리
+            // 기획서 5.6절 특수 규칙: 채널별 행 필터 및 배송비 후처리
+            ProfitCalculator.ApplyCoupangRocketFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyElevenStreetFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyCoupangGeneralShippingAggregation(channelConfig.ChannelType, rows);
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 전체 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
