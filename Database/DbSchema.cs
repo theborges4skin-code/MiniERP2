@@ -84,6 +84,7 @@ public static class DbSchema
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ChannelCode TEXT NOT NULL DEFAULT '',
                 OrderNo TEXT NOT NULL,
+                ShipmentGroupKey TEXT NOT NULL DEFAULT '',
                 TrackingNo TEXT NOT NULL,
                 MskuCode TEXT NOT NULL,
                 Qty INTEGER NOT NULL,
@@ -185,17 +186,27 @@ public static class DbSchema
             """;
         command.ExecuteNonQuery();
 
-        // 이중 출고 방지(Upsert)를 위한 유니크 인덱스. 기존 DB에 이미 중복 데이터가 있으면
-        // 인덱스 생성이 실패할 수 있으므로(과거 버그로 쌓인 중복 데이터), 앱 시작을 막지 않도록 무시한다.
+        // 이중 출고 방지(Upsert) 유니크 인덱스.
+        // 분리배송(ShipmentGroupId가 다른 동일 OrderNo) 지원을 위해 ShipmentGroupKey 기준으로 교체한다.
+        // 기존 DB는 ShipmentGroupKey=''이므로, 먼저 OrderNo로 채운 뒤 인덱스를 전환한다.
+        EnsureColumn(connection, "OutboundDetailTable", "ShipmentGroupKey", "TEXT NOT NULL DEFAULT ''");
         try
         {
-            using var indexCommand = connection.CreateCommand();
-            indexCommand.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_OutboundDetailTable_OrderNo_MskuCode ON OutboundDetailTable (OrderNo, MskuCode)";
-            indexCommand.ExecuteNonQuery();
+            using var fillCmd = connection.CreateCommand();
+            fillCmd.CommandText = "UPDATE OutboundDetailTable SET ShipmentGroupKey = OrderNo WHERE ShipmentGroupKey = ''";
+            fillCmd.ExecuteNonQuery();
+
+            using var dropCmd = connection.CreateCommand();
+            dropCmd.CommandText = "DROP INDEX IF EXISTS IX_OutboundDetailTable_OrderNo_MskuCode";
+            dropCmd.ExecuteNonQuery();
+
+            using var createCmd = connection.CreateCommand();
+            createCmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_OutboundDetailTable_ShipmentGroupKey_MskuCode ON OutboundDetailTable (ShipmentGroupKey, MskuCode)";
+            createCmd.ExecuteNonQuery();
         }
         catch (SqliteException)
         {
-            // 기존 중복 데이터로 인덱스 생성이 실패해도 무시하고 계속 진행한다.
+            // 기존 중복 데이터로 인덱스 전환이 실패해도 무시하고 계속 진행한다.
         }
 
         // CREATE TABLE IF NOT EXISTS는 이미 존재하는 테이블에 새 컬럼을 추가해주지 않으므로,

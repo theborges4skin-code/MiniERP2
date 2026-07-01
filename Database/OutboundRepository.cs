@@ -22,10 +22,11 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName)
-            VALUES ($channelCode, $orderNo, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName)
-            ON CONFLICT(OrderNo, MskuCode) DO UPDATE SET
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName)
+            ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
+                OrderNo = excluded.OrderNo,
                 TrackingNo = excluded.TrackingNo,
                 Qty = excluded.Qty,
                 SupplyPrice = excluded.SupplyPrice,
@@ -44,6 +45,7 @@ public class OutboundRepository
             command.Parameters.Clear();
             command.Parameters.AddWithValue("$channelCode", detail.ChannelCode);
             command.Parameters.AddWithValue("$orderNo", detail.OrderNo);
+            command.Parameters.AddWithValue("$shipmentGroupKey", string.IsNullOrEmpty(detail.ShipmentGroupKey) ? detail.OrderNo : detail.ShipmentGroupKey);
             command.Parameters.AddWithValue("$trackingNo", (object?)detail.TrackingNo ?? DBNull.Value);
             command.Parameters.AddWithValue("$mskuCode", detail.MskuCode);
             command.Parameters.AddWithValue("$qty", detail.Qty);

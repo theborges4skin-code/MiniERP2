@@ -34,6 +34,7 @@ public class OfsForm : Form
     private ToolStripStatusLabel _statusLabel = new();
     private BindingList<OfsOrderItem> _orders = new();
     private string? _lastChannelCode;
+    private MappingForm? _subscribedMappingForm;
 
     // 택배사 출력 미리보기 — 실제 택배사 양식의 헤더 그대로 보여달라는 요청으로, 고정된 컬럼이
     // 아니라 선택된 택배사(_previewCourierCombo)의 HeaderMappingJson을 기준으로 매번 다시 그린다.
@@ -128,6 +129,10 @@ public class OfsForm : Form
 
         // 셀 값 변경 시 연관 데이터 자동 업데이트를 위한 이벤트 핸들러 등록
         _ordersGrid.CellValueChanged += OnOrdersGridCellValueChanged;
+
+        // "매핑된 SKU" 셀 자동완성 + 유효성 검사
+        _ordersGrid.EditingControlShowing += OnOrdersGridEditingControlShowing;
+        _ordersGrid.CellValidating += OnOrdersGridCellValidating;
 
         // "묶음" 열 표시 + 분리배송/합포장 컨텍스트 메뉴
         _ordersGrid.CellFormatting += OnOrdersGridCellFormatting;
@@ -507,27 +512,26 @@ public class OfsForm : Form
                     if (string.IsNullOrEmpty(order.ChannelCode) || string.IsNullOrEmpty(order.MappedSku)) continue;
 
                     var csku = _channelSkuRepository.GetByChannelAndCskuCode(order.ChannelCode, order.MappedSku);
-                    if (csku != null)
+
+                    // CSKU 미등록이어도 발주이력에는 기록한다(납품가=0, 나중에 등록 후 수정 가능).
+                    // 이력에서 제외하면 마감 대조 시 실제 발송 건이 누락돼 대조가 불가능하다.
+                    outboundDetails.Add(new OutboundDetail
                     {
-                        outboundDetails.Add(new OutboundDetail
-                        {
-                            ChannelCode = order.ChannelCode ?? string.Empty,
-                            OrderNo = order.OrderNo ?? string.Empty,
-                            TrackingNo = order.TrackingNo ?? string.Empty,
-                            MskuCode = order.MappedSku,
-                            Qty = order.Quantity,
-                            SupplyPrice = csku.SupplyPrice,
-                            // 운송장 결과를 나중에 수령인 기준으로 매칭하려면 이 시점의 수령인/주소/
-                            // 품목명을 함께 남겨둬야 한다(발주/출고 이력 관리창에서 사용).
-                            Recipient = order.Recipient ?? string.Empty,
-                            Address = order.Address ?? string.Empty,
-                            ProductName = order.ProductName ?? string.Empty,
-                        });
-                    }
-                    else
-                    {
-                        failedOrders.Add(order);
-                    }
+                        ChannelCode = order.ChannelCode ?? string.Empty,
+                        OrderNo = order.OrderNo ?? string.Empty,
+                        ShipmentGroupKey = ShipmentGrouping.GetEffectiveGroupId(order),
+                        TrackingNo = order.TrackingNo ?? string.Empty,
+                        MskuCode = order.MappedSku,
+                        Qty = order.Quantity,
+                        SupplyPrice = csku?.SupplyPrice ?? 0m,
+                        // 운송장 결과를 나중에 수령인 기준으로 매칭하려면 이 시점의 수령인/주소/
+                        // 품목명을 함께 남겨둬야 한다(발주/출고 이력 관리창에서 사용).
+                        Recipient = order.Recipient ?? string.Empty,
+                        Address = order.Address ?? string.Empty,
+                        ProductName = order.ProductName ?? string.Empty,
+                    });
+
+                    if (csku == null) failedOrders.Add(order); // 납품가 없음 표시는 그리드에 유지
                 }
 
                 if (outboundDetails.Any())
@@ -576,6 +580,42 @@ public class OfsForm : Form
         var successCount = savedDetails.Count;
         var failCount = failedOrders.Count;
         _statusLabel.Text = $"저장 완료: {successCount}건 성공, {failCount}건 실패 (납품가 없음)";
+    }
+
+    private void OnOrdersGridEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
+    {
+        if (_ordersGrid.CurrentCell?.OwningColumn?.Name != "MappedSku" || e.Control is not TextBox textBox) return;
+
+        var channelCode = (_ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem)?.ChannelCode ?? _lastChannelCode;
+        if (string.IsNullOrEmpty(channelCode)) return;
+
+        var cskuCodes = _channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode).ToArray();
+        var source = new AutoCompleteStringCollection();
+        source.AddRange(cskuCodes);
+
+        textBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+        textBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
+        textBox.AutoCompleteCustomSource = source;
+    }
+
+    private void OnOrdersGridCellValidating(object? sender, DataGridViewCellValidatingEventArgs e)
+    {
+        if (_ordersGrid.Columns[e.ColumnIndex].Name != "MappedSku") return;
+
+        var text = e.FormattedValue?.ToString();
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        var channelCode = (_ordersGrid.Rows[e.RowIndex].DataBoundItem as OfsOrderItem)?.ChannelCode ?? _lastChannelCode;
+        if (string.IsNullOrEmpty(channelCode)) return;
+
+        var validCodes = _channelSkuRepository.GetAllByChannel(channelCode)
+            .Select(c => c.CskuCode)
+            .ToList();
+        if (!validCodes.Contains(text.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            _statusLabel.Text = $"'{text}'는 등록된 CSKU 코드가 아닙니다 — 자동완성 목록에서 선택하거나 먼저 데이터 관리에서 CSKU를 등록하세요.";
+            e.Cancel = true;
+        }
     }
 
     private void OnOrdersGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
@@ -652,18 +692,24 @@ public class OfsForm : Form
         // '매핑된 SKU' 열이 수정되었을 때
         if (changedColumnName == "MappedSku")
         {
-            // SKU가 수동으로 입력되었는지, 아니면 지워졌는지 확인
             if (!string.IsNullOrWhiteSpace(item.MappedSku))
             {
                 item.Status = "수동 매핑";
+
+                // 그리드에서 직접 입력한 CSKU 코드를 1:1 매핑 규칙으로 영구 저장한다.
+                // 마감/이익분석 창의 "Msku" 셀 동작(OnSettlementGridCellEndEdit)과 동일한 원칙.
+                var channelCode = item.ChannelCode ?? _lastChannelCode;
+                var key = (item.ProductName ?? string.Empty) + (item.OptionName ?? string.Empty);
+                if (!string.IsNullOrEmpty(channelCode) && !string.IsNullOrWhiteSpace(key))
+                {
+                    _mappingRepository.UpsertExactRule(channelCode, key, item.MappedSku.Trim());
+                    _statusLabel.Text = $"'{item.ProductName} {item.OptionName}' → '{item.MappedSku}' 1:1 매핑 규칙을 저장했습니다.";
+                }
             }
             else
             {
-                // SKU가 비워졌다면, 원래의 매핑 로직을 다시 적용해볼 수 있습니다.
-                // 여기서는 간단하게 '매핑 실패'로 처리합니다.
                 item.Status = "매핑 실패";
             }
-            // 변경된 상태를 그리드에 즉시 반영하기 위해 해당 행을 무효화합니다.
             _ordersGrid.InvalidateRow(e.RowIndex);
         }
         // '운송장번호' 열이 수정되면 같은 묶음(송장)의 다른 줄에도 같은 운송장번호를 복사한다
@@ -708,9 +754,67 @@ public class OfsForm : Form
     {
         var menu = _ordersGrid.ContextMenuStrip!;
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromOrderRowClick);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("합포장으로 묶기", null, OnMergeIntoOneShipmentClick);
         menu.Items.Add("분리배송으로 분리", null, OnSplitIntoNewShipmentClick);
         menu.Items.Add("묶음 해제", null, OnResetShipmentGroupClick);
+    }
+
+    /// <summary>
+    /// 선택한 발주 행의 상품명/옵션명을 초기 조건으로 채운 새 조건부 매핑 규칙을 매핑관리창에서 만든다.
+    /// 규칙이 저장되면 발주 목록 전체를 자동 재매핑한다.
+    /// </summary>
+    private void OnAddConditionRuleFromOrderRowClick(object? sender, EventArgs e)
+    {
+        var order = GetSelectedOrderItems().FirstOrDefault();
+        if (order == null) return;
+
+        var channelCode = order.ChannelCode ?? _lastChannelCode;
+        if (string.IsNullOrEmpty(channelCode)) return;
+
+        BeginInvoke(() =>
+        {
+            var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
+            if (!mappingForm.Visible) mappingForm.Show();
+            mappingForm.BringToFront();
+
+            if (!ReferenceEquals(_subscribedMappingForm, mappingForm))
+            {
+                if (_subscribedMappingForm != null)
+                    _subscribedMappingForm.MappingRulesChanged -= ReapplyMappingForAllOrders;
+                mappingForm.MappingRulesChanged += ReapplyMappingForAllOrders;
+                mappingForm.FormClosed += (_, _) =>
+                {
+                    if (ReferenceEquals(_subscribedMappingForm, mappingForm))
+                        _subscribedMappingForm = null;
+                };
+                _subscribedMappingForm = mappingForm;
+            }
+
+            var conditions = new List<(StdField Field, string Value)>();
+            if (!string.IsNullOrWhiteSpace(order.ProductName))
+                conditions.Add((StdField.ProductName, order.ProductName));
+            if (!string.IsNullOrWhiteSpace(order.OptionName))
+                conditions.Add((StdField.OptionName, order.OptionName));
+
+            mappingForm.StartNewConditionRuleFor(channelCode, conditions);
+            _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 조건/대상 SKU를 완성하고 저장하면 이 목록에 자동으로 반영됩니다.";
+        });
+    }
+
+    /// <summary>
+    /// 매핑관리창에서 규칙이 저장되면 현재 발주 목록 전체를 다시 매핑한다.
+    /// 수동 매핑(UpsertExactRule로 저장된 1:1 규칙)은 재매핑 시에도 동일 결과가 나오므로 건드린다.
+    /// </summary>
+    private void ReapplyMappingForAllOrders()
+    {
+        if (_orders.Count == 0 || string.IsNullOrEmpty(_lastChannelCode)) return;
+        var mapper = new SkuMapper(_mappingRepository, _lastChannelCode, _channelSkuRepository);
+        foreach (var order in _orders)
+            mapper.ApplyMapping(order);
+        _ordersGrid.Refresh();
+        _statusLabel.Text = "매핑규칙 변경을 반영해 발주목록을 다시 매핑했습니다.";
     }
 
     private List<OfsOrderItem> GetSelectedOrderItems()

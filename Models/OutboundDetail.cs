@@ -5,6 +5,13 @@ public class OutboundDetail
     public long Id { get; set; }
     public string ChannelCode { get; set; } = string.Empty;
     public string OrderNo { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 이중 출고 방지(Upsert) 키. 분리배송이면 ShipmentGrouping.GetEffectiveGroupId 값,
+    /// 일반 주문이면 OrderNo와 동일하다.
+    /// </summary>
+    public string ShipmentGroupKey { get; set; } = string.Empty;
+
     public string TrackingNo { get; set; } = string.Empty;
     public string MskuCode { get; set; } = string.Empty;
     public int Qty { get; set; }

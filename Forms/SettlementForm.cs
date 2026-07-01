@@ -45,6 +45,7 @@ public class SettlementForm : Form
     private DateTimePicker _fromDatePicker = new();
     private DateTimePicker _toDatePicker = new();
     private ComboBox _reconcileChannelComboBox = new();
+    private Label _outboundSummaryLabel = new();
 
     public SettlementForm()
     {
@@ -1123,8 +1124,24 @@ public class SettlementForm : Form
 
         _statementGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = true, AllowUserToAddRows = false, ReadOnly = true };
 
+        _outboundSummaryLabel = new Label
+        {
+            Dock = DockStyle.Bottom,
+            AutoSize = false,
+            Height = 24,
+            Text = "",
+            Padding = new Padding(4, 4, 0, 0),
+            ForeColor = Color.DarkSlateGray,
+        };
+
+        var outboundInner = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        outboundInner.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        outboundInner.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        outboundInner.Controls.Add(WithGroupLabel("출고내역(시스템)", _outboundGrid), 0, 0);
+        outboundInner.Controls.Add(_outboundSummaryLabel, 0, 1);
+
         var outboundPanel = new Panel { Dock = DockStyle.Fill };
-        outboundPanel.Controls.Add(WithGroupLabel("출고내역(시스템)", _outboundGrid));
+        outboundPanel.Controls.Add(outboundInner);
         var statementPanel = new Panel { Dock = DockStyle.Fill };
         statementPanel.Controls.Add(WithGroupLabel("거래처 마감내역(외부 파일)", _statementGrid));
 
@@ -1160,6 +1177,11 @@ public class SettlementForm : Form
 
         var details = _outboundRepository.GetByChannel(channelCode, _fromDatePicker.Value.Date, _toDatePicker.Value.Date.AddDays(1).AddTicks(-1));
         _outboundGrid.DataSource = new BindingList<OutboundDetail>(details);
+
+        var totalQty = details.Sum(d => d.Qty);
+        var totalSupply = details.Sum(d => d.SupplyPrice * d.Qty);
+        _outboundSummaryLabel.Text = $"합계 — 수량: {totalQty:N0}개  /  납품가: {totalSupply:N0}원";
+
         _statusLabel.Text = $"출고내역 {details.Count}건 조회됨.";
     }
 
