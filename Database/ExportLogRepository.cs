@@ -16,7 +16,7 @@ public class ExportLogRepository
             INSERT INTO ExportLogTable (ExportedAt, TableName, FilePath, RowCount, Headers)
             VALUES ($exportedAt, $tableName, $filePath, $rowCount, $headers)
             """;
-        command.Parameters.AddWithValue("$exportedAt", DateTime.UtcNow);
+        command.Parameters.AddWithValue("$exportedAt", DateTime.Now);
         command.Parameters.AddWithValue("$tableName", entry.TableName);
         command.Parameters.AddWithValue("$filePath", entry.FilePath);
         command.Parameters.AddWithValue("$rowCount", entry.RowCount);

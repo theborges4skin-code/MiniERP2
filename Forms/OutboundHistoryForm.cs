@@ -72,6 +72,35 @@ public class OutboundHistoryForm : Form
         _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), Width = 100 };
         _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
 
+        var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
+        var quickDateMenu = new ContextMenuStrip();
+        quickDateMenu.Items.Add("이번달", null, (_, _) =>
+        {
+            _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            _toDatePicker.Value = DateTime.Today;
+        });
+        quickDateMenu.Items.Add("저번달", null, (_, _) =>
+        {
+            var prev = DateTime.Today.AddMonths(-1);
+            _fromDatePicker.Value = new DateTime(prev.Year, prev.Month, 1);
+            _toDatePicker.Value = new DateTime(prev.Year, prev.Month, DateTime.DaysInMonth(prev.Year, prev.Month));
+        });
+        quickDateMenu.Items.Add("이번 분기", null, (_, _) =>
+        {
+            var t = DateTime.Today;
+            _fromDatePicker.Value = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
+            _toDatePicker.Value = t;
+        });
+        quickDateMenu.Items.Add("지난 분기", null, (_, _) =>
+        {
+            var t = DateTime.Today;
+            var qStart = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
+            _fromDatePicker.Value = qStart.AddMonths(-3);
+            _toDatePicker.Value = qStart.AddDays(-1);
+        });
+        btnQuickDate.ContextMenuStrip = quickDateMenu;
+        btnQuickDate.Click += (s, e) => quickDateMenu.Show(btnQuickDate, new Point(0, btnQuickDate.Height));
+
         var btnLoad = new Button { Text = "조회", Size = new Size(80, 30) };
         var btnImportTracking = new Button { Text = "운송장번호 불러오기", Size = new Size(150, 30) };
         var btnExport = new Button { Text = "선택 건 택배사 양식 출력", Size = new Size(170, 30) };
@@ -90,6 +119,7 @@ public class OutboundHistoryForm : Form
         toolStrip.Controls.Add(_fromDatePicker);
         toolStrip.Controls.Add(new Label { Text = "~", AutoSize = true, Padding = new Padding(2, 5, 2, 0) });
         toolStrip.Controls.Add(_toDatePicker);
+        toolStrip.Controls.Add(btnQuickDate);
         toolStrip.Controls.Add(btnLoad);
         toolStrip.Controls.Add(btnImportTracking);
         toolStrip.Controls.Add(btnExport);
@@ -204,7 +234,7 @@ public class OutboundHistoryForm : Form
 
         if (detail.Status == "출고확정" && detail.ConfirmedAt is null)
         {
-            detail.ConfirmedAt = DateTime.UtcNow;
+            detail.ConfirmedAt = DateTime.Now;
         }
         else if (detail.Status == "발주확정")
         {
@@ -469,7 +499,7 @@ public class OutboundHistoryForm : Form
                 _outboundRepository.ApplyTrackingNo(target.Id, trackingNo);
                 target.TrackingNo = trackingNo;
                 target.Status = "출고확정";
-                target.ConfirmedAt = DateTime.UtcNow;
+                target.ConfirmedAt = DateTime.Now;
                 candidates.Remove(target); // 같은 수령인의 다른 건에 같은 운송장번호가 재적용되지 않게 한다.
                 appliedCount++;
             }

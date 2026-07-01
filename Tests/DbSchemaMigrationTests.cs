@@ -132,7 +132,7 @@ public class DbSchemaMigrationTests
         }
 
         var repository = new OutboundRepository();
-        var results = repository.GetHistory(null, new DateTime(2023, 1, 1), DateTime.UtcNow);
+        var results = repository.GetHistory(null, new DateTime(2023, 1, 1), DateTime.Now);
 
         Assert.AreEqual("발주확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-1").Status);
         Assert.AreEqual("출고확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-2").Status);

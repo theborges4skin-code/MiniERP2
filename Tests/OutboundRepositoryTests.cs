@@ -30,7 +30,7 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
@@ -43,7 +43,7 @@ public class OutboundRepositoryTests
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-1", TrackingNo = "T002", MskuCode = "SKU-1", Qty = 2, SupplyPrice = 1500m },
         });
 
-        var to = DateTime.UtcNow.AddMinutes(5);
+        var to = DateTime.Now.AddMinutes(5);
         var results = repository.GetByChannel(channelCode, from, to);
 
         Assert.HasCount(1, results);
@@ -57,7 +57,7 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
@@ -65,7 +65,7 @@ public class OutboundRepositoryTests
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-2", TrackingNo = "T010", MskuCode = "SKU-B", Qty = 1, SupplyPrice = 2000m },
         });
 
-        var to = DateTime.UtcNow.AddMinutes(5);
+        var to = DateTime.Now.AddMinutes(5);
         var results = repository.GetByChannel(channelCode, from, to);
 
         Assert.HasCount(2, results);
@@ -76,14 +76,14 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-3", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
 
-        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+        var results = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5));
 
         Assert.AreEqual("발주확정", results[0].Status);
         Assert.IsNull(results[0].ConfirmedAt);
@@ -94,14 +94,14 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-4", TrackingNo = "T100", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
 
-        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+        var results = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5));
 
         Assert.AreEqual("출고확정", results[0].Status);
         Assert.IsNotNull(results[0].ConfirmedAt);
@@ -112,7 +112,7 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
@@ -125,7 +125,7 @@ public class OutboundRepositoryTests
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-5", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
 
-        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+        var results = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5));
 
         Assert.AreEqual("출고확정", results[0].Status);
         Assert.IsNotNull(results[0].ConfirmedAt);
@@ -136,17 +136,17 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-6", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
-        var saved = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
 
         repository.MarkAsShipped([saved.Id]);
 
-        var updated = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
         Assert.AreEqual("출고확정", updated.Status);
         Assert.IsNotNull(updated.ConfirmedAt);
     }
@@ -156,7 +156,7 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
@@ -167,7 +167,7 @@ public class OutboundRepositoryTests
             },
         });
 
-        var result = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var result = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
 
         Assert.AreEqual("홍길동", result.Recipient);
         Assert.AreEqual("서울시 강남구", result.Address);
@@ -179,17 +179,17 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-8", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m, Recipient = "김철수" },
         });
-        var saved = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
 
         repository.ApplyTrackingNo(saved.Id, "T400");
 
-        var updated = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
         Assert.AreEqual("T400", updated.TrackingNo);
         Assert.AreEqual("출고확정", updated.Status);
         Assert.IsNotNull(updated.ConfirmedAt);
@@ -200,22 +200,22 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-9", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
-        var saved = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
 
         saved.Qty = 5;
         saved.SupplyPrice = 9999m;
         saved.TrackingNo = "T500";
         saved.Status = "출고확정";
-        saved.ConfirmedAt = DateTime.UtcNow;
+        saved.ConfirmedAt = DateTime.Now;
         repository.UpdateDetail(saved);
 
-        var updated = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5)).Single();
+        var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
         Assert.AreEqual(5, updated.Qty);
         Assert.AreEqual(9999m, updated.SupplyPrice);
         Assert.AreEqual("T500", updated.TrackingNo);
@@ -227,19 +227,19 @@ public class OutboundRepositoryTests
     {
         var repository = new OutboundRepository();
         var channelCode = "TESTCH";
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-10", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-11", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
-        var saved = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5));
         var toDelete = saved.First(d => d.OrderNo == "ORDER-10").Id;
 
         repository.DeleteByIds([toDelete]);
 
-        var results = repository.GetByChannel(channelCode, from, DateTime.UtcNow.AddMinutes(5));
+        var results = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5));
         Assert.HasCount(1, results);
         Assert.AreEqual("ORDER-11", results[0].OrderNo);
     }
@@ -248,7 +248,7 @@ public class OutboundRepositoryTests
     public void GetHistory_NullChannelCode_ReturnsAllChannels()
     {
         var repository = new OutboundRepository();
-        var from = DateTime.UtcNow.AddMinutes(-5);
+        var from = DateTime.Now.AddMinutes(-5);
 
         repository.SaveOutbound(new[]
         {
@@ -256,7 +256,7 @@ public class OutboundRepositoryTests
             new OutboundDetail { ChannelCode = "CH-B", OrderNo = "ORDER-13", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
         });
 
-        var results = repository.GetHistory(null, from, DateTime.UtcNow.AddMinutes(5));
+        var results = repository.GetHistory(null, from, DateTime.Now.AddMinutes(5));
 
         Assert.HasCount(2, results);
     }

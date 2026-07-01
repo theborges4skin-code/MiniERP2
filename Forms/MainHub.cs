@@ -80,6 +80,10 @@ public class MainHub : Form
         settlementButton.Enabled = true;
         sidebarPanel.Controls.Add(settlementButton);
 
+        var outboundHistoryButton = CreateMenuButton("발주/출고 이력", (s, e) => { FormManager.Show<OutboundHistoryForm>(); });
+        outboundHistoryButton.Enabled = true;
+        sidebarPanel.Controls.Add(outboundHistoryButton);
+
         sidebarPanel.Controls.Add(CreateMenuButton("기타/문서관리", (s, e) => { /* FormManager.Show<DocsForm>(); */ }));
 
         var legacyImportButton = CreateMenuButton("레거시 데이터 가져오기", OnLegacyImportClick);

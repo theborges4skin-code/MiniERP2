@@ -45,10 +45,10 @@ public class ChannelSkuRepositoryTests
     public void Upsert_WithChangedPrice_RecordsPriceHistory()
     {
         var repository = new ChannelSkuRepository();
-        var beforeChange = DateTime.UtcNow;
+        var beforeChange = DateTime.Now;
         repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-002", Msku = "MSKU-002", SupplyPrice = 5000m });
         repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-002", Msku = "MSKU-002", SupplyPrice = 5500m });
-        var afterChange = DateTime.UtcNow;
+        var afterChange = DateTime.Now;
 
         var history = repository.GetPriceHistory("COUPANG", "CSKU-002");
         var saved = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-002");

@@ -28,7 +28,7 @@ public class ChannelSkuRepository
                 historyCommand.Parameters.AddWithValue("$cskuCode", csku.CskuCode);
                 historyCommand.Parameters.AddWithValue("$oldPrice", existing.SupplyPrice);
                 historyCommand.Parameters.AddWithValue("$newPrice", csku.SupplyPrice);
-                historyCommand.Parameters.AddWithValue("$changedAt", DateTime.UtcNow);
+                historyCommand.Parameters.AddWithValue("$changedAt", DateTime.Now);
                 historyCommand.ExecuteNonQuery();
             }
 

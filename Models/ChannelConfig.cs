@@ -28,9 +28,15 @@ public class ChannelConfig
     [Category("기본 정보")]
     [DisplayName("누적발주서")]
     [Description("이 채널의 발주서 파일이 과거 이력까지 누적해서 담겨 있으면 체크하세요. 체크하면 발주 " +
-        "파일을 불러올 때 발주일(발주서 매핑 탭에서 지정) 기준 최근 5일 이내 항목만 골라 선택창에서 " +
-        "처리할 건을 고르게 됩니다. 발주일을 매핑하지 않으면 이 옵션은 동작하지 않습니다.")]
+        "파일을 불러올 때 발주일(발주서 매핑 탭에서 지정) 기준 최근 N일 이내 항목만 골라 선택창에서 " +
+        "처리할 건을 고르게 됩니다. 발주일을 매핑하지 않으면 이 옵션은 동작하지 않습니다. " +
+        "조회 기간은 '누적발주서 — 조회 기간(일)' 항목에서 변경할 수 있습니다.")]
     public bool IsCumulativeOrderFile { get; set; }
+
+    [Category("기본 정보")]
+    [DisplayName("누적발주서 — 조회 기간(일)")]
+    [Description("누적발주서 채널에서 발주서 로드 시 발주일 기준 최근 N일 이내 항목만 표시합니다. 기본값 5일.")]
+    public int CumulativeOrderWindowDays { get; set; } = 5;
 
     // 채널설정 창의 "발주서 매핑"/"정산서 매핑" 전용 탭에서 편집한다(PropertyGrid는 Dictionary를 지원하지 않음).
     [Browsable(false)]

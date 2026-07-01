@@ -235,7 +235,7 @@ public class OfsForm : Form
             // 동작하지 않고 평소처럼 전체를 그대로 추가한다.
             if (channelConfig.IsCumulativeOrderFile && channelConfig.OrderFieldMappings.ContainsKey(StdField.OrderDate))
             {
-                const int windowDays = 5;
+                int windowDays = channelConfig.CumulativeOrderWindowDays;
                 var cutoff = DateTime.Today.AddDays(-windowDays);
                 var recentItems = allLoadedItems
                     .Where(o => o.OrderDate is null || (o.OrderDate.Value.Date >= cutoff && o.OrderDate.Value.Date <= DateTime.Today))

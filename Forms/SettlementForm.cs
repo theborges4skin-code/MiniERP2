@@ -1078,6 +1078,35 @@ public class SettlementForm : Form
         _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), Width = 100 };
         _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
 
+        var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
+        var quickDateMenu = new ContextMenuStrip();
+        quickDateMenu.Items.Add("이번달", null, (_, _) =>
+        {
+            _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            _toDatePicker.Value = DateTime.Today;
+        });
+        quickDateMenu.Items.Add("저번달", null, (_, _) =>
+        {
+            var prev = DateTime.Today.AddMonths(-1);
+            _fromDatePicker.Value = new DateTime(prev.Year, prev.Month, 1);
+            _toDatePicker.Value = new DateTime(prev.Year, prev.Month, DateTime.DaysInMonth(prev.Year, prev.Month));
+        });
+        quickDateMenu.Items.Add("이번 분기", null, (_, _) =>
+        {
+            var t = DateTime.Today;
+            _fromDatePicker.Value = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
+            _toDatePicker.Value = t;
+        });
+        quickDateMenu.Items.Add("지난 분기", null, (_, _) =>
+        {
+            var t = DateTime.Today;
+            var qStart = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
+            _fromDatePicker.Value = qStart.AddMonths(-3);
+            _toDatePicker.Value = qStart.AddDays(-1);
+        });
+        btnQuickDate.ContextMenuStrip = quickDateMenu;
+        btnQuickDate.Click += (s, e) => quickDateMenu.Show(btnQuickDate, new Point(0, btnQuickDate.Height));
+
         var btnLoadOutbound = new Button { Text = "출고내역 조회", Size = new Size(110, 30) };
         var btnLoadStatement = new Button { Text = "거래처 마감내역 불러오기", Size = new Size(170, 30) };
         var btnExportOutbound = new Button { Text = "출고내역 엑셀로 내보내기", Size = new Size(170, 30) };
@@ -1092,6 +1121,7 @@ public class SettlementForm : Form
         toolStrip.Controls.Add(_fromDatePicker);
         toolStrip.Controls.Add(new Label { Text = "~", AutoSize = true, Padding = new Padding(2, 5, 2, 0) });
         toolStrip.Controls.Add(_toDatePicker);
+        toolStrip.Controls.Add(btnQuickDate);
         toolStrip.Controls.Add(btnLoadOutbound);
         toolStrip.Controls.Add(btnExportOutbound);
         toolStrip.Controls.Add(btnLoadStatement);

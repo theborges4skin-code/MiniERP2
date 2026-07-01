@@ -40,7 +40,7 @@ public class OutboundRepository
         foreach (var detail in details)
         {
             var hasTracking = !string.IsNullOrWhiteSpace(detail.TrackingNo);
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
 
             command.Parameters.Clear();
             command.Parameters.AddWithValue("$channelCode", detail.ChannelCode);
@@ -77,7 +77,7 @@ public class OutboundRepository
         foreach (var id in ids)
         {
             command.Parameters.Clear();
-            command.Parameters.AddWithValue("$confirmedAt", DateTime.UtcNow);
+            command.Parameters.AddWithValue("$confirmedAt", DateTime.Now);
             command.Parameters.AddWithValue("$id", id);
             command.ExecuteNonQuery();
         }
@@ -95,7 +95,7 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = "UPDATE OutboundDetailTable SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt WHERE Id = $id";
         command.Parameters.AddWithValue("$trackingNo", trackingNo);
-        command.Parameters.AddWithValue("$confirmedAt", DateTime.UtcNow);
+        command.Parameters.AddWithValue("$confirmedAt", DateTime.Now);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }

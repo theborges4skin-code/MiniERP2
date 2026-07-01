@@ -42,10 +42,10 @@ public class ItemRepositoryTests
     public void Upsert_WithChangedCost_RecordsCostHistory()
     {
         var repository = new ItemRepository();
-        var beforeChange = DateTime.UtcNow;
+        var beforeChange = DateTime.Now;
         repository.Upsert(new ItemModel { Sku = "SKU-002", ItemName = "원가변경상품", CostPrice = 1000m });
         repository.Upsert(new ItemModel { Sku = "SKU-002", ItemName = "원가변경상품", CostPrice = 1200m });
-        var afterChange = DateTime.UtcNow;
+        var afterChange = DateTime.Now;
 
         var history = repository.GetCostHistory("SKU-002");
         var saved = repository.GetBySku("SKU-002");

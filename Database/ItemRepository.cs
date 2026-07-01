@@ -23,7 +23,7 @@ public class ItemRepository
                 historyCommand.Parameters.AddWithValue("$sku", item.Sku);
                 historyCommand.Parameters.AddWithValue("$oldCost", existing.CostPrice);
                 historyCommand.Parameters.AddWithValue("$newCost", item.CostPrice);
-                historyCommand.Parameters.AddWithValue("$changedAt", DateTime.UtcNow);
+                historyCommand.Parameters.AddWithValue("$changedAt", DateTime.Now);
                 historyCommand.ExecuteNonQuery();
             }
 
