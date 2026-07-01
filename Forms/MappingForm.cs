@@ -70,6 +70,14 @@ public class MappingForm : Form
     private Button _btnUndoLastMapping = new();
     private long _lastSavedConditionRuleId = -1;
 
+    // 조건부 매핑(상세) 탭 — 인라인 CSKU 편집
+    private DataGridView _conditionCskuGrid = new();
+    private TextBox _conditionCskuCodeBox = new();
+    private TextBox _conditionCskuInvoiceBox = new();
+    private TextBox _conditionCskuPriceBox = new();
+    private RadioButton _conditionVatIncludedRadio = new();
+    private RadioButton _conditionVatExcludedRadio = new();
+
     // "미매핑 처리" 탭 — OFS에서 로드한 발주서를 보면서 바로 매핑할 수 있게 하는 화면.
     // 상단(미매핑 목록)/하단(마스터DB 검색+CSKU 입력)으로 분리되어 있다.
     private TabPage _unmappedTabPage = new();
@@ -503,6 +511,115 @@ public class MappingForm : Form
 
         var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == _unmappedChannelCode)?.ChannelName ?? _unmappedChannelCode;
         return CskuCodeGenerator.BuildDefault(channelName, masterSku);
+    }
+
+    private string BuildConditionTabDefaultCskuCode(string masterSku)
+    {
+        var channelCode = _channelComboBox.SelectedValue as string;
+        if (string.IsNullOrEmpty(channelCode)) return masterSku;
+        var channelName = _salesChannelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == channelCode)?.ChannelName ?? channelCode;
+        return CskuCodeGenerator.BuildDefault(channelName, masterSku);
+    }
+
+    /// <summary>
+    /// 조건부 매핑(상세) 탭의 대상 SKU가 바뀔 때 그 MSKU에 이미 부여된 이 채널의 CSKU 목록을 갱신한다.
+    /// 텍스트가 MSKU이면 그것을 Msku로 가진 CSKU를, CSKU 코드 자체이면 그 단일 CSKU를 표시한다.
+    /// CSKU가 아직 없으면 기본 코드를 입력란에 자동 제안한다.
+    /// </summary>
+    private void RefreshConditionCskuGrid()
+    {
+        var channelCode = _channelComboBox.SelectedValue as string;
+        var targetText = _conditionTargetSkuTextBox.Text.Trim();
+        if (string.IsNullOrEmpty(channelCode) || string.IsNullOrEmpty(targetText))
+        {
+            _conditionCskuGrid.DataSource = null;
+            return;
+        }
+
+        var cskus = _channelSkuRepository.GetAllByMsku(targetText)
+            .Where(c => string.Equals(c.ChannelCode, channelCode, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (cskus.Count == 0)
+        {
+            var byCode = _channelSkuRepository.GetByChannelAndCskuCode(channelCode, targetText);
+            if (byCode != null) cskus = [byCode];
+        }
+
+        _conditionCskuGrid.DataSource = new BindingList<ChannelSkuModel>(cskus);
+
+        if (cskus.Count == 0 && string.IsNullOrEmpty(_conditionCskuCodeBox.Text))
+            _conditionCskuCodeBox.Text = BuildConditionTabDefaultCskuCode(targetText);
+    }
+
+    /// <summary>
+    /// CSKU 목록에서 행을 선택하면 코드/송장표시명/납품가를 입력란에 채우고
+    /// 대상 SKU 텍스트박스를 그 CSKU 코드로 업데이트한다.
+    /// </summary>
+    private void OnConditionCskuGridSelectionChanged()
+    {
+        if (_conditionCskuGrid.CurrentRow?.DataBoundItem is not ChannelSkuModel csku) return;
+        _conditionCskuCodeBox.Text = csku.CskuCode;
+        _conditionCskuInvoiceBox.Text = csku.InvoiceDisplayName ?? string.Empty;
+        _conditionCskuPriceBox.Text = csku.SupplyPrice > 0 ? csku.SupplyPrice.ToString() : string.Empty;
+        _conditionVatIncludedRadio.Checked = true;
+        if (_conditionTargetSkuTextBox.Enabled)
+            _conditionTargetSkuTextBox.Text = csku.CskuCode;
+    }
+
+    /// <summary>
+    /// "CSKU 저장" — 대상 SKU(MSKU 또는 기존 CSKU 코드)를 기준으로 새 CSKU를 만들거나 기존을 갱신한다.
+    /// 저장 후 대상 SKU 입력란을 CSKU 코드로 교체해 매핑 규칙이 정확히 CSKU를 가리키게 한다.
+    /// </summary>
+    private void OnSaveConditionCskuClick(object? sender, EventArgs e)
+    {
+        var channelCode = _channelComboBox.SelectedValue as string;
+        if (string.IsNullOrEmpty(channelCode))
+        {
+            MessageBox.Show("채널을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var targetText = _conditionTargetSkuTextBox.Text.Trim();
+        if (string.IsNullOrEmpty(targetText))
+        {
+            MessageBox.Show("대상 SKU(마스터SKU)를 먼저 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var cskuCode = _conditionCskuCodeBox.Text.Trim();
+        if (string.IsNullOrEmpty(cskuCode))
+        {
+            MessageBox.Show("CSKU 코드를 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // 대상 텍스트가 이미 CSKU 코드라면 그 Msku를 사용, 아니면 텍스트 자체가 Msku
+        var existingAsCsku = _channelSkuRepository.GetByChannelAndCskuCode(channelCode, targetText);
+        var msku = existingAsCsku?.Msku ?? targetText;
+
+        decimal.TryParse(_conditionCskuPriceBox.Text, out var price);
+        if (_conditionVatExcludedRadio.Checked && price > 0)
+            price = Math.Round(price * 1.1m, 0);
+
+        _channelSkuRepository.Upsert(new ChannelSkuModel
+        {
+            ChannelCode = channelCode,
+            CskuCode = cskuCode,
+            Msku = msku,
+            SupplyPrice = price,
+            InvoiceDisplayName = string.IsNullOrWhiteSpace(_conditionCskuInvoiceBox.Text) ? null : _conditionCskuInvoiceBox.Text.Trim()
+        });
+
+        // 대상 SKU를 CSKU 코드로 교체 (규칙이 정확히 CSKU를 가리키게)
+        if (_conditionTargetSkuTextBox.Enabled && _conditionTargetSkuTextBox.Text != cskuCode)
+            _conditionTargetSkuTextBox.Text = cskuCode;
+
+        // SKU 검색 목록에 새 CSKU 코드 반영
+        LoadConditionRules(channelCode);
+        RefreshConditionCskuGrid();
+
+        _conditionSaveFeedbackLabel.Text = $"CSKU '{cskuCode}' 저장됨. 이제 규칙 정보와 상세조건도 저장하세요.";
     }
 
     /// <summary>
@@ -1148,12 +1265,13 @@ public class MappingForm : Form
         );
         _conditionRuleGrid.SelectionChanged += OnConditionRuleSelectionChanged;
 
-        // 우측(이제 전체 폭): 선택한 규칙의 요약 정보 + SKU 검색 목록 + 상세조건 목록
-        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        // 우측(이제 전체 폭): 선택한 규칙의 요약 정보 + SKU 검색 목록 + CSKU 목록/편집 + 상세조건 목록
+        var rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));   // 규칙 요약(키/대상SKU)
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));  // SKU 검색 리스트(좌) + CSKU 목록(우)
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));   // CSKU 입력 폼
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // 상세 조건 그리드
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));   // 조건 버튼
 
         var summaryPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         _conditionKeyTextBox = new TextBox { Width = 220 };
@@ -1168,7 +1286,7 @@ public class MappingForm : Form
         summaryPanel.Controls.Add(_conditionTargetSkuTextBox);
         summaryPanel.Controls.Add(btnSaveSummary);
         summaryPanel.Controls.Add(_btnUndoLastMapping);
-        _conditionTargetSkuTextBox.TextChanged += (s, e) => FilterSkuSearchList();
+        _conditionTargetSkuTextBox.TextChanged += (s, e) => { FilterSkuSearchList(); RefreshConditionCskuGrid(); };
         _conditionPreviewLabel = new Label
         {
             Text = "예상 매칭 건수: -",
@@ -1261,10 +1379,59 @@ public class MappingForm : Form
         skuSearchPanel.Controls.Add(_skuSearchListBox);
         skuSearchPanel.Controls.Add(skuSearchLabel);
 
+        _conditionCskuGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+        };
+        _conditionCskuGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", Width = 150 },
+            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+        _conditionCskuGrid.SelectionChanged += (s, e) => OnConditionCskuGridSelectionChanged();
+        var cskuGridLabel = new Label { Text = "이 채널의 CSKU 목록 (대상 SKU 기준 — 클릭 시 대상으로 지정)", Dock = DockStyle.Top, Height = 18, ForeColor = Color.DimGray };
+        var cskuGridPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 3) };
+        cskuGridPanel.Controls.Add(_conditionCskuGrid);
+        cskuGridPanel.Controls.Add(cskuGridLabel);
+
+        var skuCskuSplit = new PersistentSplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            SplitterDistance = 320,
+            PersistenceKey = "MappingForm.ConditionSkuCskuSplit"
+        };
+        skuCskuSplit.Panel1.Controls.Add(skuSearchPanel);
+        skuCskuSplit.Panel2.Controls.Add(cskuGridPanel);
+
+        var cskuInputPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 5, 0) };
+        cskuInputPanel.Controls.Add(new Label { Text = "CSKU 코드:", AutoSize = true, Padding = new Padding(0, 5, 3, 0) });
+        _conditionCskuCodeBox = new TextBox { Width = 140 };
+        cskuInputPanel.Controls.Add(_conditionCskuCodeBox);
+        cskuInputPanel.Controls.Add(new Label { Text = "송장표시명:", AutoSize = true, Padding = new Padding(10, 5, 3, 0) });
+        _conditionCskuInvoiceBox = new TextBox { Width = 200 };
+        cskuInputPanel.Controls.Add(_conditionCskuInvoiceBox);
+        cskuInputPanel.Controls.Add(new Label { Text = "납품가:", AutoSize = true, Padding = new Padding(10, 5, 3, 0) });
+        _conditionCskuPriceBox = new TextBox { Width = 85 };
+        cskuInputPanel.Controls.Add(_conditionCskuPriceBox);
+        _conditionVatIncludedRadio = new RadioButton { Text = "VAT포함", AutoSize = true, Checked = true, Padding = new Padding(8, 3, 0, 0) };
+        _conditionVatExcludedRadio = new RadioButton { Text = "VAT별도", AutoSize = true, Padding = new Padding(4, 3, 0, 0) };
+        cskuInputPanel.Controls.Add(_conditionVatIncludedRadio);
+        cskuInputPanel.Controls.Add(_conditionVatExcludedRadio);
+        var btnSaveCsku = new Button { Text = "CSKU 저장", Size = new Size(90, 26) };
+        btnSaveCsku.Click += OnSaveConditionCskuClick;
+        cskuInputPanel.Controls.Add(btnSaveCsku);
+
         rightPanel.Controls.Add(summaryPanel, 0, 0);
-        rightPanel.Controls.Add(skuSearchPanel, 0, 1);
-        rightPanel.Controls.Add(_conditionDetailGrid, 0, 2);
-        rightPanel.Controls.Add(detailButtonPanel, 0, 3);
+        rightPanel.Controls.Add(skuCskuSplit, 0, 1);
+        rightPanel.Controls.Add(cskuInputPanel, 0, 2);
+        rightPanel.Controls.Add(_conditionDetailGrid, 0, 3);
+        rightPanel.Controls.Add(detailButtonPanel, 0, 4);
 
         mainLayout.Controls.Add(topToolbar, 0, 0);
         mainLayout.Controls.Add(rightPanel, 0, 1);
@@ -1304,6 +1471,10 @@ public class MappingForm : Form
             _conditionTargetSkuTextBox.Text = string.Empty;
             _conditionDetailGrid.DataSource = null;
             _skuSearchListBox.Items.Clear();
+            _conditionCskuGrid.DataSource = null;
+            _conditionCskuCodeBox.Text = string.Empty;
+            _conditionCskuInvoiceBox.Text = string.Empty;
+            _conditionCskuPriceBox.Text = string.Empty;
         }
         UpdateConditionPreview();
     }
