@@ -361,10 +361,6 @@ public class QuickMappingPanel : Panel
 
         outer.Controls.Add(mainSplit, 0, 1);
 
-        // Set splitter after controls are added
-        mainSplit.Panel1MinSize = 250;
-        mainSplit.Panel2MinSize = 200;
-
         // Row 2: footer
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(4, 4, 0, 0) };
         _saveCskuBtn = new Button { Text = "저장 — CSKU 매핑", Size = new Size(145, 26), Enabled = false };

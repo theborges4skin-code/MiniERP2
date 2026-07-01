@@ -532,11 +532,7 @@ public class ChannelConfigForm : Form
             new DataGridViewTextBoxColumn { Name = "ValueHeader", HeaderText = "값 컬럼 헤더", DataPropertyName = "ValueHeader", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
 
-        _auxSourceGrid.EditingControlShowing += (s, e) =>
-        {
-            if (_auxSourceGrid.CurrentCell?.OwningColumn is DataGridViewComboBoxColumn && e.Control is ComboBox cb)
-                cb.DropDownStyle = ComboBoxStyle.DropDown;
-        };
+        _auxSourceGrid.DataError += (s, e) => e.ThrowException = false;
         _auxSourceGrid.CellValueChanged += (s, e) => SyncAuxSources();
         _auxSourceGrid.RowsAdded += (s, e) => SyncAuxSources();
         _auxSourceGrid.RowsRemoved += (s, e) => SyncAuxSources();
