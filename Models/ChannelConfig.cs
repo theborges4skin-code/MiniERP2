@@ -52,4 +52,20 @@ public class ChannelConfig
     // 채널설정 창의 "택배사 출력 고정값" 전용 탭에서 편집한다.
     [Browsable(false)]
     public List<CourierHeaderOverride> CourierHeaderOverrides { get; set; } = new();
+
+    [Category("쿠팡로켓 전용")]
+    [DisplayName("계산서발행내역 — 세금계산서번호 헤더")]
+    [Description("계산서발행내역 파일에서 '세금계산서번호' 역할을 하는 열의 헤더명. " +
+        "입고상세내역의 동일 헤더명을 JOIN 키로 사용합니다. 비워두면 발행일 매칭을 건너뜁니다.")]
+    public string RocketInvoiceKeyHeader { get; set; } = string.Empty;
+
+    [Category("쿠팡로켓 전용")]
+    [DisplayName("계산서발행내역 — 계산서발행일 헤더")]
+    [Description("계산서발행내역 파일에서 발행일 값이 있는 열의 헤더명.")]
+    public string RocketInvoiceDateHeader { get; set; } = string.Empty;
+
+    [Category("쿠팡로켓 전용")]
+    [DisplayName("계산서발행내역 — 헤더 행 번호")]
+    [Description("계산서발행내역 파일의 헤더가 있는 행 번호 (기본값 1).")]
+    public int RocketInvoiceHeaderRow { get; set; } = 1;
 }

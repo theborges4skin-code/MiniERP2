@@ -23,6 +23,9 @@ public class SettlementData
     /// <summary>정산파일에 매핑된 원본 송장번호(미매핑 채널은 비어있음). "실제발송송장수" 채널 요약 집계에만 쓰이고 행 단위로 그리드에는 표시하지 않는다.</summary>
     public string? TrackingNo { get; set; }
 
+    /// <summary>정산파일의 주문번호. 쿠팡일반 등 주문단위 배송비 분배가 필요한 채널에서만 채워진다.</summary>
+    public string? OrderNo { get; set; }
+
     /// <summary>매핑된 마스터SKU의 상품그룹(채널의 CSKU 코드 해석 결과). 그리드에 바로 표시하기 위해 매핑 시점에 캐싱한다.</summary>
     public string? ProductGroup { get; set; }
 

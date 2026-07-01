@@ -23,4 +23,9 @@ public enum StdField
     /// 분석 시 중복을 제거한 개수를 채널 요약에만 표시한다(그리드에는 열로 노출하지 않음).
     /// </summary>
     TrackingNo,
+
+    /// <summary>
+    /// 주문번호 열. 쿠팡일반 등 주문단위 배송비 분배가 필요한 채널에서 채널설정 > 정산서 매핑에 지정한다.
+    /// </summary>
+    OrderNo,
 }

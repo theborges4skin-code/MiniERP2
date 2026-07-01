@@ -34,6 +34,7 @@ public class SettlementForm : Form
     private MappingForm? _subscribedMappingForm;
     private string? _settlementGridClickedColumnName;
     private ToolStripStatusLabel _statusLabel = new();
+    private bool _isReapplying;
 
     private ExcelLikeDataGridView _summaryGrid = new();
     private CheckBox _unmappedOnlyCheckBox = new();
@@ -183,9 +184,9 @@ public class SettlementForm : Form
     /// <summary>진단용: RefreshProfitAnalysisView 내부 단계별 소요 시간(가장 최근 호출 기준).</summary>
     public string LastRefreshDiagnostics { get; private set; } = string.Empty;
 
-    private void RefreshProfitAnalysisView()
+    private void RefreshProfitAnalysisView(bool liteRefresh = false)
     {
-        DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 시작 (_settlementRows={_settlementRows.Count}건)");
+        DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 시작 (_settlementRows={_settlementRows.Count}건, liteRefresh={liteRefresh})");
         var totalStopwatch = Stopwatch.StartNew();
 
         var filterStopwatch = Stopwatch.StartNew();
@@ -195,17 +196,23 @@ public class SettlementForm : Form
         filterStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 필터링 완료 — 표시대상 {view.Count}건 ({filterStopwatch.Elapsed.TotalSeconds:F2}s)");
 
-        // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
-        // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
-        // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
         var unbindStopwatch = Stopwatch.StartNew();
         _settlementGrid.SuspendLayout();
-        _settlementGrid.DataSource = null;
+        if (!liteRefresh)
+        {
+            // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
+            // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
+            // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
+            _settlementGrid.DataSource = null;
+        }
         unbindStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 그리드 분리 완료 ({unbindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         var rebuildColumnsStopwatch = Stopwatch.StartNew();
-        RebuildRawTailColumns(view);
+        if (!liteRefresh)
+        {
+            RebuildRawTailColumns(view);
+        }
         rebuildColumnsStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 원본열 구성 완료 — 그리드 전체 열수={_settlementGrid.Columns.Count} ({rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s)");
 
@@ -399,6 +406,7 @@ public class SettlementForm : Form
             DiagnosticsLogger.Log($"[SettlementForm] 정산파일 로드 시작 — 채널={channelConfig.ChannelCode}, 파일 {ofd.FileNames.Length}개: {string.Join(", ", ofd.FileNames.Select(Path.GetFileName))}");
 
             var loadStopwatch = Stopwatch.StartNew();
+            var fileRowCounts = new List<(string FilePath, int RowCount)>();
             for (int i = 0; i < ofd.FileNames.Length; i++)
             {
                 var file = ofd.FileNames[i];
@@ -416,8 +424,39 @@ public class SettlementForm : Form
                 var loadedRows = await LoadSettlementFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
                 if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
+                fileRowCounts.Add((file, loadedRows.Count));
                 DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{ofd.FileNames.Length}) '{fileName}' 완료 — {loadedRows.Count}건 (총 누적 {_settlementRows.Count}건, {loadStopwatch.Elapsed.TotalSeconds:F2}s)");
             }
+
+            // 쿠팡로켓: 0행 파일을 계산서발행내역으로 간주하여 세금계산서번호 기준으로 발행일 JOIN
+            if (channelConfig.ChannelType == ChannelType.CoupangRocket &&
+                !string.IsNullOrEmpty(channelConfig.RocketInvoiceKeyHeader) &&
+                !string.IsNullOrEmpty(channelConfig.RocketInvoiceDateHeader))
+            {
+                var invoiceFile = fileRowCounts.FirstOrDefault(r => r.RowCount == 0).FilePath;
+                if (invoiceFile != null)
+                {
+                    progressDialog.SetIndeterminate("계산서발행내역 파일 매칭 중...");
+                    var dateMap = await _settlementLoader.BuildRocketInvoiceDateMapAsync(
+                        invoiceFile, channelConfig.RocketInvoiceKeyHeader,
+                        channelConfig.RocketInvoiceDateHeader, channelConfig.RocketInvoiceHeaderRow);
+
+                    if (dateMap.Count > 0)
+                    {
+                        foreach (var row in _settlementRows)
+                        {
+                            if (row.RawValues == null) continue;
+                            if (row.RawValues.TryGetValue(channelConfig.RocketInvoiceKeyHeader, out var invoiceNo) &&
+                                dateMap.TryGetValue(invoiceNo, out var date))
+                            {
+                                row.RawValues[channelConfig.RocketInvoiceDateHeader] = date;
+                            }
+                        }
+                        DiagnosticsLogger.Log($"[SettlementForm] 쿠팡로켓 계산서발행일 매칭 완료 — 발행일맵 {dateMap.Count}건, 적용대상 {_settlementRows.Count}건");
+                    }
+                }
+            }
+
             loadStopwatch.Stop();
             DiagnosticsLogger.Log($"[SettlementForm] 전체 파일 처리 완료 ({loadStopwatch.Elapsed.TotalSeconds:F2}s) — RefreshProfitAnalysisView 호출 시작");
 
@@ -813,6 +852,8 @@ public class SettlementForm : Form
     private async void ReapplyMappingForAllRows()
     {
         if (_settlementRows.Count == 0) return;
+        if (_isReapplying) return;
+        _isReapplying = true;
 
         _statusLabel.ForeColor = SystemColors.ControlText;
         _statusLabel.Text = "매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신하는 중...";
@@ -858,7 +899,9 @@ public class SettlementForm : Form
                 }
             });
 
-            RefreshProfitAnalysisView();
+            // 매핑 재적용 후에는 원본 열 구성이 바뀌지 않으므로(파일을 새로 읽은 게 아님)
+            // DataSource = null 단계와 RebuildRawTailColumns 를 건너뛰는 lite 경로를 사용한다.
+            RefreshProfitAnalysisView(liteRefresh: true);
             _statusLabel.Text = $"매핑관리창에서 변경된 규칙을 반영해 미매핑 목록을 갱신했습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
@@ -868,6 +911,7 @@ public class SettlementForm : Form
         }
         finally
         {
+            _isReapplying = false;
             Cursor = Cursors.Default;
         }
     }

@@ -165,6 +165,7 @@ public class SettlementLoader
                 var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
                 var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
                 var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
+                var orderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderNo);
 
                 var settlementData = new SettlementData
                 {
@@ -177,6 +178,7 @@ public class SettlementLoader
                     Fee = fee,
                     Revenue = revenue,
                     TrackingNo = trackingNo,
+                    OrderNo = orderNo,
                     RawValues = headerToIndexMap.ToDictionary(
                         kv => kv.Key,
                         kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
@@ -197,7 +199,8 @@ public class SettlementLoader
 
             DiagnosticsLogger.Log($"[SettlementLoader] 행 순회 완료 — {rows.Count}건 적재 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
-            // 기획서 5.6절 특수 규칙: 쿠팡일반은 배송비를 전체 합산하여 첫 행에만 표기
+            // 기획서 5.6절 특수 규칙: 채널별 배송비 후처리
+            ProfitCalculator.ApplyElevenStreetFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyCoupangGeneralShippingAggregation(channelConfig.ChannelType, rows);
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 전체 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
         });
@@ -267,6 +270,44 @@ public class SettlementLoader
         }
 
         data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, channelConfig.ExchangeRate);
+    }
+
+    /// <summary>
+    /// 쿠팡로켓 계산서발행내역 파일에서 세금계산서번호 → 계산서발행일 맵을 읽습니다.
+    /// 입고상세내역 파일과 함께 로드할 때 JOIN 키 기반으로 각 행에 발행일을 붙이는 데 사용합니다.
+    /// </summary>
+    /// <param name="filePath">계산서발행내역 엑셀 파일 경로</param>
+    /// <param name="keyHeader">세금계산서번호 열의 헤더명</param>
+    /// <param name="dateHeader">계산서발행일 열의 헤더명</param>
+    /// <param name="headerRow">헤더 행 번호 (기본값 1)</param>
+    public async Task<Dictionary<string, string>> BuildRocketInvoiceDateMapAsync(
+        string filePath, string keyHeader, string dateHeader, int headerRow = 1)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await Task.Run(() =>
+        {
+            using var package = ExcelFileOpener.Open(filePath);
+            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+            if (worksheet?.Dimension == null) return;
+
+            int? keyCol = null, dateCol = null;
+            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[headerRow, col].Value?.ToString();
+                if (string.Equals(header, keyHeader, StringComparison.OrdinalIgnoreCase)) keyCol = col;
+                if (string.Equals(header, dateHeader, StringComparison.OrdinalIgnoreCase)) dateCol = col;
+            }
+            if (keyCol == null || dateCol == null) return;
+
+            for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
+            {
+                var key = worksheet.Cells[row, keyCol.Value].Value?.ToString();
+                var date = worksheet.Cells[row, dateCol.Value].Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(date) && !map.ContainsKey(key))
+                    map[key] = date;
+            }
+        });
+        return map;
     }
 
     private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
