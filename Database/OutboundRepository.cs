@@ -221,6 +221,32 @@ public class OutboundRepository
         return results;
     }
 
+    /// <summary>
+    /// 지정된 채널에서 출고 이력이 많은 상위 N개 CSKU를 반환합니다(수동 주문 빠른 추가용).
+    /// </summary>
+    public List<(string MskuCode, string ProductName, int OrderCount)> GetTopCskusByChannel(
+        string channelCode, int topN = 5)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MskuCode, ProductName, COUNT(*) AS Cnt
+            FROM OutboundDetailTable
+            WHERE ChannelCode = $channelCode
+            GROUP BY MskuCode
+            ORDER BY Cnt DESC
+            LIMIT $topN
+            """;
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.Parameters.AddWithValue("$topN", topN);
+
+        var results = new List<(string, string, int)>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            results.Add((reader.GetString(0), reader.GetString(1), reader.GetInt32(2)));
+        return results;
+    }
+
     private static OutboundDetail ReadOutboundDetail(SqliteDataReader reader) => new()
     {
         Id = reader.GetInt64(0),

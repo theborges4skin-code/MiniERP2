@@ -54,6 +54,10 @@ public class OfsForm : Form
     private readonly List<List<OfsOrderItem>> _previewUndoStack = new();
     private const int MaxPreviewUndoSteps = 5;
 
+    // 툴바 채널 콤보 — 수동 주문 추가의 기준 채널. 파일 로드 시에도 자동 동기화된다.
+    private ComboBox _channelCombo = new();
+    private ManualOrderDialog? _manualOrderDialog;
+
     public OfsForm()
     {
         InitializeComponent();
@@ -74,6 +78,26 @@ public class OfsForm : Form
 
         // 1. Toolbar
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+
+        // 채널 콤보 — 수동 주문 추가의 기준 채널. 파일 로드 시 자동 동기화.
+        var lblChannel = new Label
+        {
+            Text = "채널:",
+            AutoSize = true,
+            Margin = new Padding(2, 9, 2, 0)
+        };
+        _channelCombo = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 160,
+            Margin = new Padding(0, 6, 12, 0)
+        };
+        var channels = new Database.SalesChannelRepository().GetAll();
+        _channelCombo.DisplayMember = "ChannelName";
+        _channelCombo.DataSource = channels;
+        _channelCombo.SelectedIndex = -1;
+        _channelCombo.SelectedIndexChanged += OnChannelComboChanged;
+
         var btnLoadOrders = new Button { Text = "발주 파일 로드", Size = new Size(120, 30) };
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
         var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
@@ -90,6 +114,8 @@ public class OfsForm : Form
         btnUnmappedBatch.Click += OnUnmappedBatchClick;
         btnOutboundHistory.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
 
+        toolStrip.Controls.Add(lblChannel);
+        toolStrip.Controls.Add(_channelCombo);
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
         toolStrip.Controls.Add(btnMappingAssistant);
@@ -205,6 +231,7 @@ public class OfsForm : Form
         // 선택된 채널의 매핑 규칙으로 SkuMapper를 생성합니다.
         var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode, _channelSkuRepository);
         _lastChannelCode = channelConfig.ChannelCode;
+        SyncChannelCombo(channelConfig.ChannelCode);
 
         // UI를 대기 상태로 변경
         Cursor = Cursors.WaitCursor;
@@ -674,29 +701,66 @@ public class OfsForm : Form
 
     private void OnAddManualOrderClick(object? sender, EventArgs e)
     {
-        // 새 주문 항목을 생성하고 그리드에 추가합니다.
-        var newItem = new OfsOrderItem { Status = "수동 추가" };
-        _orders.Add(newItem);
-
-        // 새로 추가된 행으로 스크롤하고 선택합니다.
-        _ordersGrid.ClearSelection();
-        int newRowIndex = _ordersGrid.Rows.GetLastRow(DataGridViewElementStates.None);
-        if (newRowIndex >= 0)
+        if (_channelCombo.SelectedItem is not Models.SalesChannel selectedChannel)
         {
-            _ordersGrid.Rows[newRowIndex].Selected = true;
-            _ordersGrid.FirstDisplayedScrollingRowIndex = newRowIndex;
-
-            // 편집을 시작할 첫 번째 보이는 셀을 찾습니다.
-            var firstVisibleCell = _ordersGrid.Rows[newRowIndex].Cells
-                .Cast<DataGridViewCell>()
-                .FirstOrDefault(c => c.Visible && !c.ReadOnly);
-
-            if (firstVisibleCell != null)
-            {
-                _ordersGrid.CurrentCell = firstVisibleCell;
-                _ordersGrid.BeginEdit(true);
-            }
+            MessageBox.Show(
+                "먼저 채널을 선택하세요.\n(툴바의 채널 콤보에서 선택하거나, 발주 파일을 먼저 로드하세요.)",
+                "채널 미선택",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
         }
+
+        // 이미 열린 다이얼로그가 있으면 채널만 갱신하고 앞으로 가져온다.
+        if (_manualOrderDialog == null || _manualOrderDialog.IsDisposed)
+        {
+            _manualOrderDialog = new ManualOrderDialog(
+                AddManualOrderItem,
+                selectedChannel.ChannelCode,
+                selectedChannel.ChannelName,
+                _outboundRepository,
+                _channelSkuRepository);
+            // OFS 창 오른쪽 옆에 붙여서 열기 (겹치지 않도록)
+            _manualOrderDialog.StartPosition = FormStartPosition.Manual;
+            _manualOrderDialog.Location = new Point(Right + 4, Top);
+        }
+        else
+        {
+            _manualOrderDialog.SetChannel(selectedChannel.ChannelCode, selectedChannel.ChannelName);
+        }
+
+        if (!_manualOrderDialog.Visible)
+            _manualOrderDialog.Show(this);
+        _manualOrderDialog.BringToFront();
+    }
+
+    private void AddManualOrderItem(OfsOrderItem item)
+    {
+        _orders.Add(item);
+
+        // 새로 추가된 행으로 스크롤
+        int lastIdx = _ordersGrid.Rows.Count - 1;
+        while (lastIdx >= 0 && _ordersGrid.Rows[lastIdx].IsNewRow) lastIdx--;
+        if (lastIdx >= 0)
+            _ordersGrid.FirstDisplayedScrollingRowIndex = lastIdx;
+
+        RefreshExportPreview();
+        _statusLabel.Text = $"수동 주문 추가 — {item.MappedSku ?? "(빈 행)"}  (총 {_orders.Count}건)";
+    }
+
+    private void OnChannelComboChanged(object? sender, EventArgs e)
+    {
+        if (_channelCombo.SelectedItem is not Models.SalesChannel ch) return;
+        _lastChannelCode = ch.ChannelCode;
+        _manualOrderDialog?.SetChannel(ch.ChannelCode, ch.ChannelName);
+    }
+
+    private void SyncChannelCombo(string channelCode)
+    {
+        var items = _channelCombo.DataSource as List<Models.SalesChannel>;
+        var match = items?.FirstOrDefault(c => c.ChannelCode == channelCode);
+        if (match != null)
+            _channelCombo.SelectedItem = match;
     }
 
     private void OnOrdersGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
