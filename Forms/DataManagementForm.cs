@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.DataManagement;
@@ -672,11 +672,7 @@ public class DataManagementForm : Form
             "병합되지만 조건부 매핑 규칙은 재실행 시 중복 추가될 수 있으니 같은 DB로 두 번 가져오지 마세요.",
             "파일 선택...", OnLegacySqliteImportClick), 0, 0);
 
-        layout.Controls.Add(CreateLegacyImportSection(
-            "SalesManagerV2 채널 설정 가져오기",
-            "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요. 채널별 정산서 매핑/환율/" +
-            "채널유형/쿠팡그로스 보조소스를 채널설정에 반영합니다(이름이 일치하는 채널은 갱신, 없으면 새로 만듦).",
-            "폴더 선택...", OnLegacyChannelConfigImportClick), 0, 1);
+        layout.Controls.Add(CreateChannelConfigImportSection(), 0, 1);
 
         layout.Controls.Add(CreateAdLegacyImportSection(), 0, 2);
 
@@ -700,7 +696,34 @@ public class DataManagementForm : Form
         return group;
     }
 
-    private Control CreateAdLegacyImportSection()
+    private Control CreateChannelConfigImportSection()
+    {
+        var group = new GroupBox { Text = "SalesManagerV2 채널 설정 가져오기", Dock = DockStyle.Fill };
+        var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(8) };
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+
+        inner.Controls.Add(new Label
+        {
+            Text = "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요. " +
+                   "채널별 정산서 매핑/환율/채널유형/쿠팡그로스 보조소스를 반영합니다. " +
+                   "'전체'는 모든 채널을 갱신/신규 등록하고, '선택'은 골라서 가져옵니다.",
+            Dock = DockStyle.Fill, AutoSize = false,
+        }, 0, 0);
+
+        var btnAll = new Button { Text = "전체 가져오기", Dock = DockStyle.Top, Height = 30 };
+        btnAll.Click += OnLegacyChannelConfigImportClick;
+        inner.Controls.Add(btnAll, 1, 0);
+
+        var btnSelect = new Button { Text = "선택 가져오기", Dock = DockStyle.Top, Height = 30 };
+        btnSelect.Click += OnLegacyChannelConfigSelectiveImportClick;
+        inner.Controls.Add(btnSelect, 2, 0);
+
+        group.Controls.Add(inner);
+        return group;
+    }
+        private Control CreateAdLegacyImportSection()
     {
         var group = new GroupBox { Text = "SalesManagerV2 광고매핑 가져오기", Dock = DockStyle.Fill };
         var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(8) };
@@ -778,7 +801,78 @@ public class DataManagementForm : Form
         }
     }
 
-    private void OnLegacyChannelConfigImportClick(object? sender, EventArgs e)
+    private void OnLegacyChannelConfigSelectiveImportClick(object? sender, EventArgs e)
+    {
+        using var folderDialog = new FolderBrowserDialog { Description = "SalesManagerV2의 config 폴더를 선택하세요" };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var names = _channelLegacyMigrationService.ReadChannelNames(folderDialog.SelectedPath);
+        if (names.Count == 0)
+        {
+            MessageBox.Show("channels_config.json에서 채널을 읽을 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var selected = ShowChannelSelectDialog(names);
+        if (selected == null || selected.Count == 0) return;
+
+        try
+        {
+            var result = _channelLegacyMigrationService.MigrateSelected(folderDialog.SelectedPath, selected);
+
+            var message = $"신규 채널 {result.CreatedChannels.Count}개, 기존 채널 갱신 {result.UpdatedChannels.Count}개를 이관했습니다.";
+            if (result.CreatedChannels.Count > 0) message += $"\n\n신규: {string.Join(", ", result.CreatedChannels)}";
+            if (result.UpdatedChannels.Count > 0) message += $"\n갱신: {string.Join(", ", result.UpdatedChannels)}";
+            if (result.UnsupportedConditionalFields.Count > 0)
+                message += $"\n\n다음 항목은 자동 이관하지 못했습니다(직접 확인 필요):\n{string.Join(", ", result.UnsupportedConditionalFields)}";
+            if (result.Warnings.Count > 0) message += $"\n\n{string.Join("\n", result.Warnings)}";
+
+            MessageBox.Show(message, "이관 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _statusLabel.Text = "SalesManagerV2 채널 설정(선택)을 가져왔습니다.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"이관 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private HashSet<string>? ShowChannelSelectDialog(IReadOnlyList<string> channelNames)
+    {
+        using var dlg = new Form
+        {
+            Text = "가져올 채널 선택",
+            Size = new Size(340, 460),
+            StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+        };
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, Padding = new Padding(10) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+
+        layout.Controls.Add(new Label { Text = "가져올 채널을 선택하세요:", Dock = DockStyle.Fill }, 0, 0);
+
+        var list = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true };
+        foreach (var name in channelNames) list.Items.Add(name, false);
+        layout.Controls.Add(list, 0, 1);
+
+        var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        var btnOk = new Button { Text = "가져오기", DialogResult = DialogResult.OK, Width = 90, Height = 30 };
+        var btnCancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Width = 70, Height = 30 };
+        btnPanel.Controls.Add(btnCancel);
+        btnPanel.Controls.Add(btnOk);
+        layout.Controls.Add(btnPanel, 0, 2);
+
+        dlg.Controls.Add(layout);
+        dlg.AcceptButton = btnOk;
+        dlg.CancelButton = btnCancel;
+
+        if (dlg.ShowDialog(this) != DialogResult.OK) return null;
+        return list.CheckedItems.Cast<string>().ToHashSet();
+    }
+        private void OnLegacyChannelConfigImportClick(object? sender, EventArgs e)
     {
         using var folderDialog = new FolderBrowserDialog { Description = "SalesManagerV2의 config 폴더(channels_config.json이 있는 폴더)를 선택하세요" };
         if (folderDialog.ShowDialog(this) != DialogResult.OK) return;

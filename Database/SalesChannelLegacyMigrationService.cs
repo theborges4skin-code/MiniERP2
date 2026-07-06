@@ -25,11 +25,34 @@ public class SalesChannelLegacyMigrationService
         _channelConfigService = channelConfigService ?? new ChannelConfigService();
     }
 
+    /// <summary>channels_config.json에서 채널명 목록만 읽어 반환합니다. 선택 다이얼로그 표시용.</summary>
+    public IReadOnlyList<string> ReadChannelNames(string configFolderPath)
+    {
+        var path = Path.Combine(configFolderPath, "channels_config.json");
+        if (!File.Exists(path)) return [];
+        try
+        {
+            var channels = JsonSerializer.Deserialize<List<LegacyChannel>>(File.ReadAllText(path)) ?? [];
+            return channels.Where(c => !string.IsNullOrWhiteSpace(c.ChannelName)).Select(c => c.ChannelName!).ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     /// <summary>
     /// configFolderPath의 channels_config.json을 읽어 채널명이 일치하는 기존 채널은 설정을
     /// 갱신하고, 없는 채널명은 새 채널을 만들어(ChannelCodeGenerator로 "CH숫자" 코드 부여) 이식합니다.
     /// </summary>
     public SalesChannelLegacyMigrationResult Migrate(string configFolderPath)
+        => MigrateCore(configFolderPath, null);
+
+    /// <summary>channelNames에 포함된 채널명만 선택적으로 이관합니다.</summary>
+    public SalesChannelLegacyMigrationResult MigrateSelected(string configFolderPath, IReadOnlySet<string> channelNames)
+        => MigrateCore(configFolderPath, channelNames);
+
+    private SalesChannelLegacyMigrationResult MigrateCore(string configFolderPath, IReadOnlySet<string>? filter)
     {
         var result = new SalesChannelLegacyMigrationResult();
         var path = Path.Combine(configFolderPath, "channels_config.json");
@@ -56,6 +79,7 @@ public class SalesChannelLegacyMigrationService
         foreach (var legacy in legacyChannels)
         {
             if (string.IsNullOrWhiteSpace(legacy.ChannelName)) continue;
+            if (filter != null && !filter.Contains(legacy.ChannelName)) continue;
 
             var matched = existingChannels.FirstOrDefault(c => string.Equals(c.ChannelName, legacy.ChannelName, StringComparison.OrdinalIgnoreCase));
             string channelCode;
@@ -69,7 +93,7 @@ public class SalesChannelLegacyMigrationService
                 channelCode = ChannelCodeGenerator.GenerateNext(existingChannels.Select(c => c.ChannelCode));
                 var newChannel = new SalesChannel { ChannelCode = channelCode, ChannelName = legacy.ChannelName };
                 _salesChannelRepository.Upsert(newChannel);
-                existingChannels.Add(newChannel); // 같은 실행 안에서 다음 코드 생성 시 중복되지 않도록 즉시 반영.
+                existingChannels.Add(newChannel);
                 result.CreatedChannels.Add(legacy.ChannelName);
             }
 

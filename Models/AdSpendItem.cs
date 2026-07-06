@@ -13,6 +13,9 @@ public class AdSpendItem
     public decimal Cost { get; set; }
     public string? Extra1 { get; set; }
     public string? Extra2 { get; set; }
+    public string? Note1 { get; set; }
+    public string? Note2 { get; set; }
+    public string? Note3 { get; set; }
 
     // 매핑/변환 데이터
     public string? MappedGroup { get; set; }

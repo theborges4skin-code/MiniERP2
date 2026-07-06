@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
@@ -31,6 +31,7 @@ public class AdMappingForm : Form
 
     // "광고비 데이터" 탭
     private ExcelLikeDataGridView _adDataGrid = new();
+    private DataGridView _adGroupGrid = new();
     private Label _adSummaryLabel = new();
     private List<AdSpendItem> _loadedAdItems = [];
 
@@ -50,8 +51,7 @@ public class AdMappingForm : Form
     // "예외 처리" 탭(행 필터)
     private DataGridView _exceptionGrid = new();
 
-    // "필드 매핑" 탭
-    private DataGridView _fieldMappingGrid = new();
+    private CheckBox _unmappedOnlyCheckBox = new();
 
     private static readonly (AdStdField Field, string Label)[] AdFields =
     [
@@ -61,6 +61,9 @@ public class AdMappingForm : Form
         (AdStdField.Cost, "광고비"),
         (AdStdField.Extra1, "추가항목1"),
         (AdStdField.Extra2, "추가항목2"),
+        (AdStdField.Note1, "비고1"),
+        (AdStdField.Note2, "비고2"),
+        (AdStdField.Note3, "비고3"),
     ];
 
     public AdMappingForm()
@@ -95,8 +98,6 @@ public class AdMappingForm : Form
         _conditionDetailTabPage = CreateConditionDetailTabPage();
         _tabControl.TabPages.Add(_conditionDetailTabPage);
         _tabControl.TabPages.Add(CreateExceptionTabPage());
-        _tabControl.TabPages.Add(CreateFieldMappingTabPage());
-
         mainLayout.Controls.Add(topPanel, 0, 0);
         mainLayout.Controls.Add(_tabControl, 0, 1);
         Controls.Add(mainLayout);
@@ -125,7 +126,6 @@ public class AdMappingForm : Form
         LoadTempRules(channelCode);
         LoadConditionRules(channelCode);
         LoadExceptionRules(channelCode);
-        LoadFieldMappingGrid();
     }
 
     /// <summary>
@@ -161,8 +161,6 @@ public class AdMappingForm : Form
 
             LoadConditionRules(channelCode);
             LoadExceptionRules(channelCode);
-            LoadFieldMappingGrid();
-
             var message = $"조건부 매핑 {result.ConditionRulesImported}건, 예외처리 {result.ExceptionRulesImported}건, " +
                            $"채널 필드 매핑 {result.ChannelFieldMappingsImported}건을 가져왔습니다.";
             if (result.UnmatchedChannelNames.Count > 0)
@@ -201,6 +199,15 @@ public class AdMappingForm : Form
         btnExport.Click += OnExportAdResultClick;
         toolStrip.Controls.Add(btnExport);
 
+        _unmappedOnlyCheckBox = new CheckBox
+        {
+            Text = "ubbf8ub9e4ud551ub9cc ubcf4uae30",
+            AutoSize = true,
+            Padding = new Padding(8, 6, 0, 0),
+        };
+        _unmappedOnlyCheckBox.CheckedChanged += (s, e) => ApplyUnmappedFilter();
+        toolStrip.Controls.Add(_unmappedOnlyCheckBox);
+
         _adDataGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -220,7 +227,10 @@ public class AdMappingForm : Form
             new DataGridViewTextBoxColumn { Name = "MatchType", HeaderText = "매핑타입", DataPropertyName = "MatchType", Width = 80 },
             new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "상태", DataPropertyName = "Status", Width = 100 },
             new DataGridViewTextBoxColumn { Name = "Extra1", HeaderText = "추가항목1", DataPropertyName = "Extra1", Width = 120 },
-            new DataGridViewTextBoxColumn { Name = "Extra2", HeaderText = "추가항목2", DataPropertyName = "Extra2", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+            new DataGridViewTextBoxColumn { Name = "Extra2", HeaderText = "추가항목2", DataPropertyName = "Extra2", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "Note1", HeaderText = "비고1", DataPropertyName = "Note1", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "Note2", HeaderText = "비고2", DataPropertyName = "Note2", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "Note3", HeaderText = "비고3", DataPropertyName = "Note3", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
         );
 
         var menu = new ContextMenuStrip();
@@ -232,7 +242,48 @@ public class AdMappingForm : Form
         _adSummaryLabel = new Label { Dock = DockStyle.Fill, Text = "광고비 파일을 불러오세요.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
         layout.Controls.Add(toolStrip, 0, 0);
-        layout.Controls.Add(_adDataGrid, 0, 1);
+        // 우측: 상품그룹별 광고비 집계 패널
+        _adGroupGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+            ColumnHeadersHeight = 24,
+            RowHeadersVisible = false,
+        };
+        _adGroupGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Width = 120, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            new DataGridViewTextBoxColumn { HeaderText = "광고비", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+        );
+
+        var groupLabel = new Label
+        {
+            Text = "상품그룹별 광고비",
+            Dock = DockStyle.Top,
+            Height = 22,
+            Font = new Font(Font.FontFamily, Font.Size, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(4, 0, 0, 0),
+        };
+        var groupPanel = new Panel { Dock = DockStyle.Fill };
+        groupPanel.Controls.Add(_adGroupGrid);
+        groupPanel.Controls.Add(groupLabel);
+
+        var splitLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+        };
+        splitLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        splitLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
+        splitLayout.Controls.Add(_adDataGrid, 0, 0);
+        splitLayout.Controls.Add(groupPanel, 1, 0);
+
+        layout.Controls.Add(splitLayout, 0, 1);
         layout.Controls.Add(_adSummaryLabel, 0, 2);
         tabPage.Controls.Add(layout);
         return tabPage;
@@ -248,8 +299,9 @@ public class AdMappingForm : Form
 
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
-            Title = "광고비 파일을 선택하세요",
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "광고비 파일을 선택하세요 (여러 파일 선택 가능)",
+            Multiselect = true,
             InitialDirectory = _settingsService.GetLastFolder("AdMappingLoad") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
@@ -257,40 +309,52 @@ public class AdMappingForm : Form
         var channelCode = (string)_channelComboBox.SelectedValue;
         var engine = new AdMappingEngine(_adMappingRepository, channelCode);
 
-        try
-        {
-            _settingsService.SetLastFolder("AdMappingLoad", Path.GetDirectoryName(ofd.FileName)!);
+        _settingsService.SetLastFolder("AdMappingLoad", Path.GetDirectoryName(ofd.FileNames[0])!);
 
-            List<AdSpendItem> items;
+        var allItems = new List<AdSpendItem>();
+        foreach (var fileName in ofd.FileNames)
+        {
             try
             {
-                items = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, ofd.FileName);
+                List<AdSpendItem> fileItems;
+                try
+                {
+                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, fileName);
+                }
+                catch (EncryptedExcelFileException)
+                {
+                    using var dialog = new PasswordPromptDialog(Path.GetFileName(fileName));
+                    if (dialog.ShowDialog(this) != DialogResult.OK) continue;
+                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, fileName, dialog.Password);
+                }
+                allItems.AddRange(fileItems);
             }
-            catch (EncryptedExcelFileException)
+            catch (Exception ex)
             {
-                using var dialog = new PasswordPromptDialog(Path.GetFileName(ofd.FileName));
-                if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                items = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, ofd.FileName, dialog.Password);
+                MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다 ({Path.GetFileName(fileName)}).\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
-            if (_adSpendLoader.LastLoadHeaderRowLooksEmpty)
-            {
-                MessageBox.Show(
-                    "채널설정(필드 매핑 탭)에 지정된 헤더 행에서 헤더를 하나도 찾지 못했습니다.\n시트 이름/헤더 행/열 이름을 확인해주세요.",
-                    "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-
-            _loadedAdItems = items;
-            _adDataGrid.DataSource = new BindingList<AdSpendItem>(items);
-            UpdateAdSummary();
-            UpdateConditionPreview();
         }
-        catch (Exception ex)
+
+        if (_adSpendLoader.LastLoadHeaderRowLooksEmpty)
         {
-            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(
+                "채널설정(광고비 헤더 설정 탭)에 지정된 헤더 행에서 헤더를 하나도 찾지 못했습니다.\n시트 이름/헤더 행/열 이름을 확인해주세요.",
+                "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+
+        _loadedAdItems = allItems;
+        ApplyUnmappedFilter();
+        UpdateAdSummary();
+        UpdateConditionPreview();
     }
 
+    private void ApplyUnmappedFilter()
+    {
+        var source = _unmappedOnlyCheckBox.Checked
+            ? _loadedAdItems.Where(i => string.IsNullOrEmpty(i.MappedGroup) && i.MatchType != "예외처리").ToList()
+            : _loadedAdItems;
+        _adDataGrid.DataSource = new BindingList<AdSpendItem>(source);
+    }
     private void UpdateAdSummary()
     {
         if (_loadedAdItems.Count == 0)
@@ -303,14 +367,49 @@ public class AdMappingForm : Form
         var excluded = _loadedAdItems.Count(i => i.MatchType == "예외처리");
         var totalCost = _loadedAdItems.Where(i => i.MatchType != "예외처리").Sum(i => i.Cost);
         _adSummaryLabel.Text = $"총 {_loadedAdItems.Count}건 | 매핑 {mapped}건 | 예외 {excluded}건 | 합계 광고비 {totalCost:N0}원";
+        UpdateAdGroupGrid();
     }
+
+    private void UpdateAdGroupGrid()
+    {
+        _adGroupGrid.Rows.Clear();
+        if (_loadedAdItems.Count == 0) return;
+
+        var groups = _loadedAdItems
+            .Where(i => !string.IsNullOrEmpty(i.MappedGroup) && i.MatchType != "예외처리")
+            .GroupBy(i => i.MappedGroup!)
+            .Select(g => (Group: g.Key, Cost: g.Sum(i => i.Cost)))
+            .OrderByDescending(g => g.Cost)
+            .ToList();
+
+        foreach (var (group, cost) in groups)
+            _adGroupGrid.Rows.Add(group, cost);
+
+        if (groups.Count > 0)
+        {
+            int totalIdx = _adGroupGrid.Rows.Add("합계", groups.Sum(g => g.Cost));
+            var boldStyle = new DataGridViewCellStyle
+            {
+                Font = new Font(_adGroupGrid.Font, FontStyle.Bold),
+                BackColor = SystemColors.ControlLight,
+                Format = "N0",
+                Alignment = DataGridViewContentAlignment.MiddleRight,
+            };
+            _adGroupGrid.Rows[totalIdx].DefaultCellStyle = boldStyle;
+            _adGroupGrid.Rows[totalIdx].Cells[0].Style = new DataGridViewCellStyle(boldStyle)
+            {
+                Alignment = DataGridViewContentAlignment.MiddleLeft,
+            };
+        }
+    }
+
 
     /// <summary>
     /// SalesManagerV2(ad_engine.py의 save_results)가 만들던 광고분석 결과 엑셀을 그대로 이식한다.
     /// 시트 구성/열 이름/순서를 동일하게 맞춤: "광고매핑상세"(원본 열 전체 + 판매채널 + 표준화된
     /// AD_* 열 + 매핑결과) / "그룹별_광고비"(판매채널/MAPPED_GROUP/AD_COST, 매핑된 행만 합산).
     /// </summary>
-    private void OnExportAdResultClick(object? sender, EventArgs e)
+    private async void OnExportAdResultClick(object? sender, EventArgs e)
     {
         if (_loadedAdItems.Count == 0)
         {
@@ -322,7 +421,7 @@ public class AdMappingForm : Form
         using var sfd = new SaveFileDialog
         {
             Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{channelName}_광고분석_{DateTime.Now:yyMM}.xlsx",
+            FileName = $"{channelName}_광고분析_{DateTime.Now:yyMM}.xlsx",
             InitialDirectory = _settingsService.GetLastFolder("AdMappingExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
         if (sfd.ShowDialog(this) != DialogResult.OK) return;
@@ -330,26 +429,33 @@ public class AdMappingForm : Form
         var filePath = sfd.FileName;
         _settingsService.SetLastFolder("AdMappingExport", Path.GetDirectoryName(filePath)!);
 
+        var itemsSnapshot = _loadedAdItems.ToList();
+
+        Cursor = Cursors.WaitCursor;
         try
         {
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage();
-
-            WriteAdDetailSheet(package.Workbook.Worksheets.Add("광고매핑상세"), channelName);
-            WriteAdGroupSummarySheet(package.Workbook.Worksheets.Add("그룹별_광고비"), channelName);
-
-            package.SaveAs(new FileInfo(filePath));
+            await Task.Run(() =>
+            {
+                ExcelLicense.Ensure();
+                using var package = new ExcelPackage();
+                WriteAdDetailSheetStatic(package.Workbook.Worksheets.Add("광고매핑상세"), channelName, itemsSnapshot);
+                WriteAdGroupSummarySheetStatic(package.Workbook.Worksheets.Add("그룹별_광고비"), channelName, itemsSnapshot);
+                package.SaveAs(new FileInfo(filePath));
+            });
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
     }
-
-    private void WriteAdDetailSheet(ExcelWorksheet sheet, string channelName)
+    private static void WriteAdDetailSheetStatic(ExcelWorksheet sheet, string channelName, List<AdSpendItem> items)
     {
-        var rawHeaders = _loadedAdItems.Where(i => i.RawValues is { Count: > 0 }).SelectMany(i => i.RawValues!.Keys).Distinct().ToList();
+        var rawHeaders = items.Where(i => i.RawValues is { Count: > 0 }).SelectMany(i => i.RawValues!.Keys).Distinct().ToList();
         string[] stdHeaders = ["AD_PRODUCT_NAME", "AD_PRODUCT_ID", "AD_OPTION", "AD_COST", "AD_EXTRA1", "AD_EXTRA2", "MAPPED_GROUP", "MATCH_TYPE", "MAPPING_STATUS"];
         var headers = new List<string> { "판매채널" };
         headers.AddRange(rawHeaders);
@@ -358,7 +464,7 @@ public class AdMappingForm : Form
         for (int i = 0; i < headers.Count; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         int row = 2;
-        foreach (var item in _loadedAdItems)
+        foreach (var item in items)
         {
             int col = 1;
             sheet.Cells[row, col++].Value = channelName;
@@ -377,13 +483,13 @@ public class AdMappingForm : Form
         sheet.Cells.AutoFitColumns();
     }
 
-    private void WriteAdGroupSummarySheet(ExcelWorksheet sheet, string channelName)
+    private static void WriteAdGroupSummarySheetStatic(ExcelWorksheet sheet, string channelName, List<AdSpendItem> items)
     {
         string[] headers = ["판매채널", "MAPPED_GROUP", "AD_COST"];
         for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         // 레거시와 동일하게, 매핑된(MAPPING_STATUS == 'O') 행만 그룹별로 합산한다.
-        var groups = _loadedAdItems
+        var groups = items
             .Where(i => !string.IsNullOrEmpty(i.MappedGroup))
             .GroupBy(i => i.MappedGroup!)
             .Select(g => new { Group = g.Key, Cost = g.Sum(i => i.Cost) })
@@ -459,7 +565,7 @@ public class AdMappingForm : Form
 
         var engine = new AdMappingEngine(_adMappingRepository, channelCode);
         foreach (var item in _loadedAdItems) engine.ApplyMapping(item);
-        _adDataGrid.Refresh();
+        ApplyUnmappedFilter();
         UpdateAdSummary();
         UpdateConditionPreview();
     }
@@ -815,103 +921,4 @@ public class AdMappingForm : Form
         if (!string.IsNullOrEmpty(channelCode)) ReapplyMapping(channelCode);
     }
 
-    // ===================== 필드 매핑 탭 =====================
-
-    private TabPage CreateFieldMappingTabPage()
-    {
-        var tabPage = new TabPage("필드 매핑");
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
-        toolStrip.Controls.Add(new Label
-        {
-            Text = "이 채널의 광고비 파일에서 각 표준 항목이 어느 시트/헤더행/열에 있는지 지정하세요(채널마다 헤더 구성이 다양해 실제 파일로 테스트하며 맞춰가야 합니다).",
-            AutoSize = true,
-            Padding = new Padding(0, 6, 0, 0),
-        });
-
-        _fieldMappingGrid = new ExcelLikeDataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false, AllowUserToDeleteRows = false };
-        _fieldMappingGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 130, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 110 },
-            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 60 },
-            new DataGridViewTextBoxColumn { Name = "Column", HeaderText = "열(헤더 텍스트)", DataPropertyName = "Column", Width = 160 },
-            new DataGridViewTextBoxColumn { Name = "FixedValue", HeaderText = "고정값(선택)", DataPropertyName = "FixedValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
-        );
-        _fieldMappingGrid.CellValueChanged += OnFieldMappingGridCellChanged;
-
-        layout.Controls.Add(toolStrip, 0, 0);
-        layout.Controls.Add(_fieldMappingGrid, 0, 1);
-        tabPage.Controls.Add(layout);
-        return tabPage;
-    }
-
-    private void LoadFieldMappingGrid()
-    {
-        if (_currentChannelConfig == null) return;
-
-        var rows = AdFields.Select(f =>
-        {
-            _currentChannelConfig.AdFieldMappings.TryGetValue(f.Field, out var mapping);
-            return new AdFieldMappingRow
-            {
-                Field = f.Field,
-                Label = f.Label,
-                SheetName = mapping?.SheetName,
-                HeaderRow = mapping?.HeaderRow ?? 1,
-                Column = mapping?.Column,
-                FixedValue = mapping?.FixedValue,
-            };
-        }).ToList();
-
-        _fieldMappingGrid.DataSource = new BindingList<AdFieldMappingRow>(rows);
-    }
-
-    private void OnFieldMappingGridCellChanged(object? sender, DataGridViewCellEventArgs e)
-    {
-        if (_currentChannelConfig == null || e.RowIndex < 0 || e.RowIndex >= _fieldMappingGrid.Rows.Count) return;
-        if (_fieldMappingGrid.Rows[e.RowIndex].DataBoundItem is not AdFieldMappingRow row) return;
-
-        var inUse = !string.IsNullOrWhiteSpace(row.Column) || !string.IsNullOrWhiteSpace(row.FixedValue);
-        if (!inUse)
-        {
-            _currentChannelConfig.AdFieldMappings.Remove(row.Field);
-        }
-        else
-        {
-            _currentChannelConfig.AdFieldMappings[row.Field] = new FieldMapping
-            {
-                SheetName = row.SheetName,
-                HeaderRow = row.HeaderRow <= 0 ? 1 : row.HeaderRow,
-                Column = row.Column,
-                FixedValue = row.FixedValue,
-            };
-        }
-
-        SaveCurrentChannelConfig();
-    }
-
-    private void SaveCurrentChannelConfig()
-    {
-        if (_currentChannelConfig == null) return;
-
-        var allConfigs = _channelConfigService.Load();
-        var index = allConfigs.FindIndex(c => c.ChannelCode == _currentChannelConfig.ChannelCode);
-        if (index >= 0) allConfigs[index] = _currentChannelConfig;
-        else allConfigs.Add(_currentChannelConfig);
-
-        _channelConfigService.Save(allConfigs);
-    }
-
-    private class AdFieldMappingRow
-    {
-        public AdStdField Field { get; set; }
-        public string Label { get; set; } = string.Empty;
-        public string? SheetName { get; set; }
-        public int HeaderRow { get; set; } = 1;
-        public string? Column { get; set; }
-        public string? FixedValue { get; set; }
-    }
 }

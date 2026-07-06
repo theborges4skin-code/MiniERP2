@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Text.Json;
 using MiniERP2.Config;
 using MiniERP2.Controls;
@@ -36,6 +36,7 @@ public class ChannelConfigForm : Form
     private DataGridView _settlementMappingGrid = new();
     private DataGridView _courierOverrideGrid = new();
     private DataGridView _auxSourceGrid = new();
+    private DataGridView _adFieldMappingGrid = new();
 
     private static readonly StdField[] OrderMappingFields =
     [
@@ -63,8 +64,35 @@ public class ChannelConfigForm : Form
         StdField.Revenue, StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
     ];
 
-    private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) =>
-        config.ChannelType == ChannelType.CoupangGrowth ? SettlementMappingFieldsCoupangGrowth : SettlementMappingFieldsDefault;
+    /// <summary>
+    /// 쿠팡로켓 전용 필드: TaxNo(계산서번호)를 추가로 매핑한다.
+    /// TaxDate(작성일자)는 계산서발행내역 JOIN으로 자동 채워지므로 여기서는 지정하지 않는다.
+    /// </summary>
+    private static readonly StdField[] SettlementMappingFieldsCoupangRocket =
+    [
+        StdField.ProductName, StdField.OptionName, StdField.Quantity,
+        StdField.Revenue, StdField.SettlementAmount, StdField.TrackingNo, StdField.TaxNo,
+    ];
+
+    private static readonly (AdStdField Field, string Label)[] AdMappingFields =
+    [
+        (AdStdField.ProductName, "상품명"),
+        (AdStdField.ProductId, "상품번호/캠페인"),
+        (AdStdField.OptionName, "옵션명"),
+        (AdStdField.Cost, "광고비"),
+        (AdStdField.Extra1, "추가항목1"),
+        (AdStdField.Extra2, "추가항목2"),
+        (AdStdField.Note1, "비고1"),
+        (AdStdField.Note2, "비고2"),
+        (AdStdField.Note3, "비고3"),
+    ];
+
+    private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) => config.ChannelType switch
+    {
+        ChannelType.CoupangGrowth => SettlementMappingFieldsCoupangGrowth,
+        ChannelType.CoupangRocket => SettlementMappingFieldsCoupangRocket,
+        _ => SettlementMappingFieldsDefault,
+    };
 
     public ChannelConfigForm()
     {
@@ -143,6 +171,7 @@ public class ChannelConfigForm : Form
         rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
         rightTabControl.TabPages.Add(CreateCourierOverrideTab());
         rightTabControl.TabPages.Add(CreateAuxSourceTab());
+        rightTabControl.TabPages.Add(CreateAdFieldMappingTab());
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightTabControl, 1, 0);
@@ -360,6 +389,7 @@ public class ChannelConfigForm : Form
         _settlementMappingGrid.DataSource = BuildFieldMappingRows(ResolveSettlementMappingFields(config), config.SettlementFieldMappings);
         LoadCourierOverrideGrid(config);
         LoadAuxSourceGrid(config);
+        LoadAdFieldMappingGrid(config);
     }
 
     private void ClearFieldMappingGrids()
@@ -369,6 +399,7 @@ public class ChannelConfigForm : Form
         _settlementMappingGrid.DataSource = null;
         _courierOverrideGrid.DataSource = null;
         _auxSourceGrid.DataSource = null;
+        _adFieldMappingGrid.DataSource = null;
     }
 
     private TabPage CreateCourierOverrideTab()
@@ -623,6 +654,91 @@ public class ChannelConfigForm : Form
         StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
         _ => field.ToString(),
     };
+
+    private TabPage CreateAdFieldMappingTab()
+    {
+        var tabPage = new TabPage("광고비 헤더 설정");
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnLoadSample = new Button { Text = "샘플 파일 불러오기", AutoSize = true };
+        toolbar.Controls.Add(btnLoadSample);
+
+        _adFieldMappingGrid.AutoGenerateColumns = false;
+        _adFieldMappingGrid.AllowUserToAddRows = false;
+        _adFieldMappingGrid.AllowUserToDeleteRows = false;
+        _adFieldMappingGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 110 },
+            new DataGridViewTextBoxColumn { Name = "HeaderRow", HeaderText = "헤더 행", DataPropertyName = "HeaderRow", Width = 60 },
+            new DataGridViewTextBoxColumn { Name = "Column", HeaderText = "열(헤더 텍스트)", DataPropertyName = "Column", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "FixedValue", HeaderText = "고정값(선택)", DataPropertyName = "FixedValue", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+        _adFieldMappingGrid.CellValueChanged += (s, e) => OnAdFieldMappingGridCellChanged(e);
+
+        var splitContainer = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 620 };
+        _adFieldMappingGrid.Dock = DockStyle.Fill;
+        splitContainer.Panel1.Controls.Add(_adFieldMappingGrid);
+        splitContainer.Panel2.Controls.Add(CreateSamplePreviewPanel(_adFieldMappingGrid, btnLoadSample));
+
+        layout.Controls.Add(toolbar, 0, 0);
+        layout.Controls.Add(splitContainer, 0, 1);
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private void LoadAdFieldMappingGrid(ChannelConfig config)
+    {
+        var rows = AdMappingFields.Select(f =>
+        {
+            config.AdFieldMappings.TryGetValue(f.Field, out var mapping);
+            return new AdFieldMappingRow
+            {
+                Field = f.Field,
+                Label = f.Label,
+                SheetName = mapping?.SheetName,
+                HeaderRow = mapping?.HeaderRow ?? 1,
+                Column = mapping?.Column,
+                FixedValue = mapping?.FixedValue,
+            };
+        }).ToList();
+        _adFieldMappingGrid.DataSource = new BindingList<AdFieldMappingRow>(rows);
+    }
+
+    private void OnAdFieldMappingGridCellChanged(DataGridViewCellEventArgs e)
+    {
+        if (_currentConfig == null || e.RowIndex < 0 || e.RowIndex >= _adFieldMappingGrid.Rows.Count) return;
+        if (_adFieldMappingGrid.Rows[e.RowIndex].DataBoundItem is not AdFieldMappingRow row) return;
+
+        var inUse = !string.IsNullOrWhiteSpace(row.Column) || !string.IsNullOrWhiteSpace(row.FixedValue);
+        if (!inUse)
+        {
+            _currentConfig.AdFieldMappings.Remove(row.Field);
+        }
+        else
+        {
+            _currentConfig.AdFieldMappings[row.Field] = new FieldMapping
+            {
+                SheetName = row.SheetName,
+                HeaderRow = row.HeaderRow <= 0 ? 1 : row.HeaderRow,
+                Column = row.Column,
+                FixedValue = row.FixedValue,
+            };
+        }
+    }
+
+    private class AdFieldMappingRow
+    {
+        public AdStdField Field { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public string? SheetName { get; set; }
+        public int HeaderRow { get; set; } = 1;
+        public string? Column { get; set; }
+        public string? FixedValue { get; set; }
+    }
 
     private class FieldMappingRow
     {

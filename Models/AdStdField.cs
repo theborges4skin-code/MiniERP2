@@ -13,4 +13,7 @@ public enum AdStdField
     Cost,
     Extra1,
     Extra2,
+    Note1,
+    Note2,
+    Note3,
 }
