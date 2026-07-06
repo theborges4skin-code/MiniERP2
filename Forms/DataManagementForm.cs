@@ -234,7 +234,7 @@ public class DataManagementForm : Form
 
     private void OnImportClick(TableTabContext context)
     {
-        using var ofd = new OpenFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*", Title = "불러올 엑셀 파일을 선택하세요" };
+        using var ofd = new OpenFileDialog { Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*", Title = "불러올 엑셀/CSV 파일을 선택하세요" };
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
 
         try

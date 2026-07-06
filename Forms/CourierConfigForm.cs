@@ -177,7 +177,7 @@ public class CourierConfigForm : Form
         _numTrackingHeaderRow = new NumericUpDown { Minimum = 1, Maximum = 100, Value = 1, Width = 50 };
         trackingImportPanel.Controls.Add(_numTrackingHeaderRow);
 
-        trackingImportPanel.Controls.Add(new Label { Text = "수령인 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        trackingImportPanel.Controls.Add(new Label { Text = "수령인 헤더 (|로 여러 개):", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
         _cmbTrackingRecipientHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
         trackingImportPanel.Controls.Add(_cmbTrackingRecipientHeader);
 

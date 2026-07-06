@@ -42,7 +42,9 @@ public class SettlementLoader
         {
             var stopwatch = Stopwatch.StartNew();
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 열기 시작 (채널={channelConfig.ChannelCode})");
-            using var package = ExcelFileOpener.Open(filePath, password);
+            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(filePath)
+                : ExcelFileOpener.Open(filePath, password);
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 엑셀 패키지 열기 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
             var firstValidMapping = channelConfig.SettlementFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
@@ -61,6 +63,28 @@ public class SettlementLoader
             if (worksheet == null)
             {
                 throw new FileNotFoundException($"엑셀 파일에서 '{sheetName ?? "첫 번째"}' 시트를 찾을 수 없습니다.");
+            }
+
+            // HeaderRowDetectionColumn이 설정된 경우 지정 컬럼명이 있는 행을 헤더로 자동 탐지한다.
+            // 아마존처럼 파일마다 메타 행 수가 달라 헤더 행 위치가 고정되지 않는 채널에 사용한다.
+            if (!string.IsNullOrWhiteSpace(channelConfig.HeaderRowDetectionColumn) && worksheet?.Dimension != null)
+            {
+                var target = channelConfig.HeaderRowDetectionColumn;
+                bool detected = false;
+                for (int r = 1; r <= Math.Min(worksheet.Dimension.End.Row, 50) && !detected; r++)
+                {
+                    for (int c = 1; c <= worksheet.Dimension.End.Column && !detected; c++)
+                    {
+                        if (string.Equals(worksheet.Cells[r, c].Value?.ToString(), target, StringComparison.OrdinalIgnoreCase))
+                        {
+                            headerRow = r;
+                            DiagnosticsLogger.Log($"[SettlementLoader] 헤더 행 자동 탐지 성공 — '{target}' 발견 → {r}행");
+                            detected = true;
+                        }
+                    }
+                }
+                if (!detected)
+                    DiagnosticsLogger.Log($"[SettlementLoader] 헤더 행 자동 탐지 실패 — '{target}'을(를) 50행 이내에서 찾지 못함, 설정값({headerRow}행) 사용");
             }
 
             DiagnosticsLogger.Log($"[SettlementLoader] 시트='{worksheet.Name}' 헤더행={headerRow} 전체범위={worksheet.Dimension?.Address} " +
@@ -104,14 +128,30 @@ public class SettlementLoader
             var cfsFeeActive = channelConfig.GrowthCfsFee != null
                 && channelConfig.ChannelType == ChannelType.CoupangGrowth;
 
+            if (cfsFeeActive)
+                DiagnosticsLogger.Log($"[SettlementLoader] CFS 모드 활성화 — ShippingFee·HandlingFee 보조소스를 건너뜁니다 (배송비·입출고비는 0으로 표시됨, 수익은 CFS 공식으로 계산).");
+
             foreach (var auxSource in channelConfig.GrowthAuxSources.Where(a => a.Enabled
                 && !(cfsFeeActive && a.TargetStdField is StdField.HandlingFee or StdField.ShippingFee)))
             {
-                if (string.IsNullOrEmpty(auxSource.SheetName) || string.IsNullOrEmpty(auxSource.KeyHeader) || string.IsNullOrEmpty(auxSource.ValueHeader)) continue;
-                if (!headerToIndexMap.TryGetValue(auxSource.KeyHeader, out var mainKeyCol)) continue; // 메인 시트에 동일 키 컬럼이 없으면 JOIN 불가
+                if (string.IsNullOrEmpty(auxSource.SheetName) || string.IsNullOrEmpty(auxSource.KeyHeader) || string.IsNullOrEmpty(auxSource.ValueHeader))
+                {
+                    DiagnosticsLogger.Log($"[SettlementLoader] 보조소스({auxSource.TargetStdField}) 건너뜀 — SheetName·KeyHeader·ValueHeader 중 하나 이상이 비어 있음.");
+                    continue;
+                }
+                if (!headerToIndexMap.TryGetValue(auxSource.KeyHeader, out var mainKeyCol))
+                {
+                    DiagnosticsLogger.Log($"[SettlementLoader] 보조소스({auxSource.TargetStdField}) 건너뜀 — 키 헤더 '{auxSource.KeyHeader}'을(를) 메인 시트에서 찾을 수 없음. 실제 헤더 목록: [{string.Join(", ", headerToIndexMap.Keys.Take(20))}]");
+                    continue;
+                }
 
                 var auxSheet = package.Workbook.Worksheets[auxSource.SheetName];
-                if (auxSheet?.Dimension == null) continue;
+                if (auxSheet?.Dimension == null)
+                {
+                    var sheetNames = string.Join(", ", package.Workbook.Worksheets.Select(s => s.Name));
+                    DiagnosticsLogger.Log($"[SettlementLoader] 보조소스({auxSource.TargetStdField}) 건너뜀 — 시트명 '{auxSource.SheetName}'을(를) 파일에서 찾을 수 없음. 실제 시트 목록: [{sheetNames}]");
+                    continue;
+                }
 
                 var auxHeaderToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 for (int col = 1; col <= auxSheet.Dimension.End.Column; col++)
@@ -123,7 +163,11 @@ public class SettlementLoader
                     }
                 }
 
-                if (!auxHeaderToIndex.TryGetValue(auxSource.KeyHeader, out var auxKeyCol) || !auxHeaderToIndex.TryGetValue(auxSource.ValueHeader, out var auxValueCol)) continue;
+                if (!auxHeaderToIndex.TryGetValue(auxSource.KeyHeader, out var auxKeyCol) || !auxHeaderToIndex.TryGetValue(auxSource.ValueHeader, out var auxValueCol))
+                {
+                    DiagnosticsLogger.Log($"[SettlementLoader] 보조소스({auxSource.TargetStdField}) 건너뜀 — 시트 '{auxSource.SheetName}' 헤더 행({auxSource.HeaderRow})에서 키 '{auxSource.KeyHeader}' 또는 값 '{auxSource.ValueHeader}'을(를) 찾을 수 없음. 실제 헤더 목록: [{string.Join(", ", auxHeaderToIndex.Keys.Take(20))}]");
+                    continue;
+                }
 
                 var pairs = new List<(string Key, decimal Value)>();
                 for (int auxRow = auxSource.HeaderRow + 1; auxRow <= auxSheet.Dimension.End.Row; auxRow++)
@@ -136,6 +180,7 @@ public class SettlementLoader
 
                 auxValueMaps[auxSource.TargetStdField] = GrowthAuxJoinEngine.BuildValueMap(pairs);
                 auxMainKeyColumns[auxSource.TargetStdField] = mainKeyCol;
+                DiagnosticsLogger.Log($"[SettlementLoader] 보조소스({auxSource.TargetStdField}) 준비 완료 — 시트='{auxSource.SheetName}', 키={pairs.Count}건 로드됨.");
             }
 
             // 엑셀 파일에 실제 데이터보다 훨씬 뒤까지 서식(테두리/배경색 등)이 적용되어 있으면,
@@ -173,6 +218,7 @@ public class SettlementLoader
                 var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
                 var orderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderNo);
                 var taxNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TaxNo);
+                var eventType = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.EventType);
 
                 var settlementData = new SettlementData
                 {
@@ -187,6 +233,7 @@ public class SettlementLoader
                     TrackingNo = trackingNo,
                     OrderNo = orderNo,
                     TaxNo = taxNo,
+                    EventType = eventType,
                     RawValues = headerToIndexMap.ToDictionary(
                         kv => kv.Key,
                         kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
@@ -211,6 +258,7 @@ public class SettlementLoader
             ProfitCalculator.ApplyCoupangRocketFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyElevenStreetFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyCoupangGeneralShippingAggregation(channelConfig.ChannelType, rows);
+            ProfitCalculator.ApplyAmazonTransferFilter(channelConfig.ChannelType, rows, channelConfig.AmazonTransferTypeValue);
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 전체 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
         });
 

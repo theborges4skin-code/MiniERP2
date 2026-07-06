@@ -84,6 +84,21 @@ public static class ProfitCalculator
     }
 
     /// <summary>
+    /// 아마존 채널의 특수 규칙: EventType 값이 지정된 문자열인 행(Transfer·입금 행)을 제거합니다.
+    /// <para>
+    /// 아마존 Unified Transaction Report에는 실제 입금 이벤트(Transfer)가 행으로 포함되어 있습니다.
+    /// 이 행은 판매/수수료가 아닌 단순 입금 기록이므로 이익분석 대상에서 제거합니다.
+    /// </para>
+    /// 채널 유형이 아마존이 아니거나 transferTypeValue가 비어 있으면 아무 동작도 하지 않습니다.
+    /// </summary>
+    public static void ApplyAmazonTransferFilter(ChannelType channelType, List<SettlementData> rows, string? transferTypeValue)
+    {
+        if (channelType is not (ChannelType.AmazonUs or ChannelType.AmazonJp)) return;
+        if (string.IsNullOrWhiteSpace(transferTypeValue)) return;
+        rows.RemoveAll(r => string.Equals(r.EventType, transferTypeValue, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// 쿠팡 로켓 채널의 특수 규칙: 입고상세내역 파일의 소계 행을 제거합니다.
     /// <para>
     /// 쿠팡 로켓 입고상세내역은 세금계산서번호 그룹마다 '소계' 행이 삽입되어 있고,

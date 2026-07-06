@@ -84,9 +84,23 @@ public class OrderLoader
             // 이후 모든 값이 공란으로 나오게 되므로, 호출 측이 경고할 수 있도록 표시해둔다.
             LastLoadHeaderRowLooksEmpty = stdFieldToIndexMap.Count == 0 && fixedValues.Count == 0;
 
+            // 빈 행 판단에 쓸 열 인덱스 목록: 수량은 공란이어도 0으로 기본값이 채워지므로 제외한다.
+            // 고정값(FixedValue) 필드는 셀이 비어도 항상 채워지므로 여기서 제외해야
+            // 고정 수취인/주소를 쓰는 채널에서도 꼬리 빈 행을 올바르게 걸러낼 수 있다.
+            var blankCheckColIndices = stdFieldToIndexMap
+                .Where(kv => kv.Key != StdField.Quantity)
+                .Select(kv => kv.Value)
+                .ToList();
+
             // 데이터 행을 순회하며 OfsOrderItem 객체를 생성합니다.
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
+                // 셀 기준 빈 행 체크: 고정값·수량을 제외한 모든 매핑 컬럼이 공란이면 건너뛴다.
+                if (blankCheckColIndices.Count > 0 &&
+                    blankCheckColIndices.All(ci =>
+                        string.IsNullOrWhiteSpace(worksheet.Cells[row, ci].Value?.ToString())))
+                    continue;
+
                 var orderItem = new OfsOrderItem
                 {
                     // 각 속성에 대해 매핑된 열 인덱스를 사용하여 값을 가져옵니다.
@@ -102,9 +116,6 @@ public class OrderLoader
                     OrderDate = GetDateValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderDate),
                     Status = "로드 완료"
                 };
-
-                // 매핑된 필드 값이 전부 공란인 행(엑셀의 빈 줄, 서식만 있는 꼬리 행 등)은 건너뛴다.
-                if (IsBlankRow(orderItem)) continue;
 
                 // SKU 자동 매핑 적용
                 skuMapper.ApplyMapping(orderItem);

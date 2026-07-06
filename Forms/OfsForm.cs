@@ -454,11 +454,16 @@ public class OfsForm : Form
 
         var courier = courierDialog.SelectedCourier;
 
+        var exportChannelCode = _lastChannelCode ?? _orders.FirstOrDefault(o => !string.IsNullOrEmpty(o.ChannelCode))?.ChannelCode;
+        var exportChannelName = string.IsNullOrEmpty(exportChannelCode) ? "" :
+            (_channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == exportChannelCode)?.ChannelName ?? exportChannelCode);
+        var exportChannelPrefix = exportChannelName.Length > 0 ? exportChannelName[..Math.Min(5, exportChannelName.Length)] + "_" : "";
+
         // 2. 사용자에게 저장 위치 요청
         using var sfd = new SaveFileDialog
         {
             Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
+            FileName = $"{exportChannelPrefix}{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
             InitialDirectory = _settingsService.GetLastFolder("OfsExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
 

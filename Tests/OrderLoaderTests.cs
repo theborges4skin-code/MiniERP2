@@ -156,6 +156,45 @@ public class OrderLoaderTests
         Assert.AreEqual("ORDER-2", items[1].OrderNo);
     }
 
+    /// <summary>
+    /// 고정값(FixedValue) 채널에서 꼬리 빈 행을 올바르게 건너뛰어야 한다.
+    /// 구버전 IsBlankRow(item)는 item.Recipient = 고정값으로 항상 채워져 빈 행 판단 실패했음.
+    /// </summary>
+    [TestMethod]
+    public async Task LoadFromFileAsync_TrailingBlankRow_FixedValueChannel_IsSkipped()
+    {
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "상품명";
+            sheet.Cells[2, 1].Value = "상품A";          // 실제 데이터 행
+            sheet.Cells[3, 1].Style.Font.Bold = true;   // 빈 행(서식만 있고 값 없음)
+            sheet.Cells[4, 1].Value = "상품B";          // 실제 데이터 행
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var channelConfig = new ChannelConfig
+        {
+            ChannelCode = "CH-FIX",
+            ChannelName = "고정수취인채널",
+            OrderFieldMappings = new Dictionary<StdField, FieldMapping>
+            {
+                [StdField.ProductName] = new FieldMapping { HeaderRow = 1, Column = "상품명" },
+                [StdField.Recipient]   = new FieldMapping { HeaderRow = 1, FixedValue = "물류창고" },
+                [StdField.Address]     = new FieldMapping { HeaderRow = 1, FixedValue = "서울시 강남구" },
+            },
+        };
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-FIX");
+        var items = await new OrderLoader().LoadFromFileAsync(skuMapper, channelConfig, _excelFilePath);
+
+        Assert.HasCount(2, items);
+        Assert.AreEqual("상품A", items[0].ProductName);
+        Assert.AreEqual("물류창고", items[0].Recipient);
+        Assert.AreEqual("상품B", items[1].ProductName);
+    }
+
     [TestMethod]
     public void IsBlankRow_AllMappedFieldsBlank_ReturnsTrue()
     {

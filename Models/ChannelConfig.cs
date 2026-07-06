@@ -64,6 +64,18 @@ public class ChannelConfig
     [Browsable(false)]
     public List<CourierHeaderOverride> CourierHeaderOverrides { get; set; } = new();
 
+    [Category("아마존 전용")]
+    [DisplayName("헤더 행 자동 탐지 — 기준 컬럼명")]
+    [Description("헤더 행이 파일마다 달라질 때 이 컬럼명이 포함된 행을 헤더로 자동 탐지합니다. " +
+        "비워두면 정산서 매핑 탭의 헤더 행 번호를 그대로 사용합니다. (예: date/time)")]
+    public string HeaderRowDetectionColumn { get; set; } = string.Empty;
+
+    [Category("아마존 전용")]
+    [DisplayName("이익 제외 이벤트 유형값")]
+    [Description("EventType(type 컬럼) 값이 이 문자열과 일치하는 행을 이익분석에서 제거합니다. " +
+        "아마존 Transfer(입금) 행 제거에 사용합니다. 비워두면 아무 행도 제거하지 않습니다. (예: Transfer)")]
+    public string AmazonTransferTypeValue { get; set; } = string.Empty;
+
     [Category("쿠팡로켓 전용")]
     [DisplayName("계산서발행내역 — 세금계산서번호 헤더")]
     [Description("계산서발행내역 파일에서 '세금계산서번호' 역할을 하는 열의 헤더명. " +

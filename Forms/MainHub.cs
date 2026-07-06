@@ -1,4 +1,4 @@
-using MiniERP2.Database;
+﻿using MiniERP2.Database;
 using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
@@ -80,6 +80,10 @@ public class MainHub : Form
         settlementButton.Enabled = true;
         sidebarPanel.Controls.Add(settlementButton);
 
+        var adAnalysisButton = CreateMenuButton("광고비 분석", (s, e) => { FormManager.Show<AdMappingForm>(); });
+        adAnalysisButton.Enabled = true;
+        sidebarPanel.Controls.Add(adAnalysisButton);
+
         var outboundHistoryButton = CreateMenuButton("발주/출고 이력", (s, e) => { FormManager.Show<OutboundHistoryForm>(); });
         outboundHistoryButton.Enabled = true;
         sidebarPanel.Controls.Add(outboundHistoryButton);
@@ -93,10 +97,6 @@ public class MainHub : Form
         var dataManagementButton = CreateMenuButton("데이터 관리", (s, e) => { FormManager.Show<DataManagementForm>(); });
         dataManagementButton.Enabled = true;
         sidebarPanel.Controls.Add(dataManagementButton);
-
-        var adMappingButton = CreateMenuButton("광고 매핑", (s, e) => { FormManager.Show<AdMappingForm>(); });
-        adMappingButton.Enabled = true;
-        sidebarPanel.Controls.Add(adMappingButton);
 
         return sidebarPanel;
     }

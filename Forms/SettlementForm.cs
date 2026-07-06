@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using MiniERP2.Config;
@@ -31,6 +31,7 @@ public class SettlementForm : Form
 
     private ExcelLikeDataGridView _settlementGrid = new();
     private BindingList<SettlementData> _settlementRows = new();
+    private ChannelType? _activeChannelType;
     private MappingForm? _subscribedMappingForm;
 
     private TableLayoutPanel _profitMainLayout = new();
@@ -240,7 +241,7 @@ public class SettlementForm : Form
 
         var summaryStopwatch = Stopwatch.StartNew();
         var groups = _settlementRows
-            .GroupBy(ResolveProductGroupLabel)
+            .GroupBy(d => ResolveProductGroupLabel(d, _activeChannelType))
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,
@@ -377,18 +378,25 @@ public class SettlementForm : Form
     /// <summary>
     /// SettlementData.ProductGroup은 SettlementLoader가 매핑 시점에 채워둔다(마스터SKU의
     /// 상품그룹). 미매핑/그룹 미지정 행은 요약에서 구분할 수 있게 라벨을 보정한다.
+    /// 아마존 채널: 상품그룹 미지정 시 Msku(=asku)를 그룹 키로 써서 개별 행으로 표시.
+    /// 일반 채널: 상품그룹 미지정 시 "(미지정)"으로 한 데 묶음.
     /// </summary>
-    private static string ResolveProductGroupLabel(SettlementData data)
+    private static string ResolveProductGroupLabel(SettlementData data, ChannelType? channelType = null)
     {
         if (string.IsNullOrWhiteSpace(data.Msku)) return "(미매핑)";
-        return string.IsNullOrWhiteSpace(data.ProductGroup) ? "(미지정)" : data.ProductGroup!;
+        if (!string.IsNullOrWhiteSpace(data.ProductGroup)) return data.ProductGroup!;
+
+        if (channelType is ChannelType.AmazonUs or ChannelType.AmazonJp)
+            return data.Msku!;
+
+        return "(미지정)";
     }
 
     private async void OnLoadSettlementClick(object? sender, EventArgs e)
     {
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx, *.xls)|*.xlsx;*.xls|All files (*.*)|*.*",
+            Filter = "Excel/CSV (*.xlsx;*.xls;*.csv)|*.xlsx;*.xls;*.csv|Excel (*.xlsx;*.xls)|*.xlsx;*.xls|CSV (*.csv)|*.csv|All files (*.*)|*.*",
             Multiselect = true,
             Title = "정산 파일을 선택하세요",
             InitialDirectory = _settingsService.GetLastFolder("SettlementLoad") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
@@ -429,6 +437,7 @@ public class SettlementForm : Form
         _statusLabel.Text = $"'{channelDialog.SelectedChannel.ChannelName}' 채널의 설정으로 정산 파일을 읽는 중입니다...";
 
         _settlementRows.Clear();
+        _activeChannelType = channelConfig.ChannelType;
         _cfsSummaryText = string.Empty;
         RefreshProfitAnalysisView();
 
@@ -718,16 +727,16 @@ public class SettlementForm : Form
                 ExcelLicense.Ensure();
                 using var package = new ExcelPackage();
 
-                WriteDetailSheet(package, "분석결과상세", rowsSnapshot);
+                WriteDetailSheet(package, "분석결과상세", rowsSnapshot, exportChannelType);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 분석결과상세 시트 완료");
-                WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"), rowsSnapshot, shipmentCount, isEstimated);
+                WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"), rowsSnapshot, shipmentCount, isEstimated, exportChannelType);
                 DiagnosticsLogger.Log("[이익분析 내보내기] 분析요약 시트 완료");
                 if (exportChannelType == ChannelType.CoupangRocket)
                 {
-                    WriteRocketDetailSheet(package, "쿠팡명세", rowsSnapshot);
+                    WriteRocketDetailSheet(package, "쿠팡명세", rowsSnapshot, exportChannelType);
                     DiagnosticsLogger.Log("[이익분析 내보내기] 쿠팡명세 시트 완료");
                 }
-                WriteDetailSheet(package, "미매핑·예외건", rowsSnapshot.Where(d => SettlementRowStatus.IsUnresolved(d) || SettlementRowStatus.IsExcludedByExceptionRule(d)).ToList());
+                WriteDetailSheet(package, "미매핑·예외건", rowsSnapshot.Where(d => SettlementRowStatus.IsUnresolved(d) || SettlementRowStatus.IsExcludedByExceptionRule(d)).ToList(), exportChannelType);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 미매핑·예외건 시트 완료");
                 WriteRawDataSheet(package, "원본데이터", rowsSnapshot);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 원본데이터 시트 완료");
@@ -757,7 +766,7 @@ public class SettlementForm : Form
     /// SalesManagerV2의 다중 시트 결과 저장 양식(상세/요약/미매핑/원본)을 참고해, "분석결과상세"와
     /// "미매핑·예외건" 두 시트에 공통으로 쓰는 표 형식.
     /// </summary>
-    private static void WriteDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows)
+    private static void WriteDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows, ChannelType? channelType = null)
     {
         var sheet = package.Workbook.Worksheets.Add(sheetName);
         for (int i = 0; i < DetailHeaders.Length; i++) sheet.Cells[1, i + 1].Value = DetailHeaders[i];
@@ -766,7 +775,7 @@ public class SettlementForm : Form
         foreach (var data in rows)
         {
             sheet.Cells[row, 1].Value = data.ChannelCode;
-            sheet.Cells[row, 2].Value = ResolveProductGroupLabel(data);
+            sheet.Cells[row, 2].Value = ResolveProductGroupLabel(data, channelType);
             sheet.Cells[row, 3].Value = data.ProductName;
             sheet.Cells[row, 4].Value = data.OptionName;
             sheet.Cells[row, 5].Value = data.Msku;
@@ -790,7 +799,7 @@ public class SettlementForm : Form
     ];
 
     /// <summary>쿠팡로켓 전용 명세 시트: 14열 구성 (작성일자·계산서번호 포함).</summary>
-    private static void WriteRocketDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows)
+    private static void WriteRocketDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows, ChannelType? channelType = null)
     {
         var sheet = package.Workbook.Worksheets.Add(sheetName);
         for (int i = 0; i < RocketDetailHeaders.Length; i++) sheet.Cells[1, i + 1].Value = RocketDetailHeaders[i];
@@ -801,7 +810,7 @@ public class SettlementForm : Form
             sheet.Cells[row, 1].Value = data.ChannelCode;
             sheet.Cells[row, 2].Value = data.TaxDate;
             sheet.Cells[row, 3].Value = data.TaxNo;
-            sheet.Cells[row, 4].Value = ResolveProductGroupLabel(data);
+            sheet.Cells[row, 4].Value = ResolveProductGroupLabel(data, channelType);
             sheet.Cells[row, 5].Value = data.ProductName;
             sheet.Cells[row, 6].Value = data.OptionName;
             sheet.Cells[row, 7].Value = data.Msku;
@@ -817,13 +826,13 @@ public class SettlementForm : Form
         sheet.Cells[1, 1, 1, RocketDetailHeaders.Length].AutoFitColumns(8, 50);
     }
 
-    private static void WriteSummarySheet(ExcelWorksheet sheet, IReadOnlyList<SettlementData> rows, int shipmentCount, bool isEstimated)
+    private static void WriteSummarySheet(ExcelWorksheet sheet, IReadOnlyList<SettlementData> rows, int shipmentCount, bool isEstimated, ChannelType? channelType = null)
     {
         string[] headers = ["상품그룹", "건수", "수량", "매출액", "배송비", "입출고비", "순이익"];
         for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         var groups = rows
-            .GroupBy(ResolveProductGroupLabel)
+            .GroupBy(d => ResolveProductGroupLabel(d, channelType))
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,

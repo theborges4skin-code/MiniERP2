@@ -24,6 +24,11 @@ public class GrowthCfsFeeConfig
     public int HandlingHeaderRow { get; set; } = 8;
 
     [Category("입출고비 시트")]
+    [DisplayName("옵션ID 헤더 행 번호")]
+    [Description("CFS 시트에서 옵션ID 헤더가 있는 행 번호. 금액 헤더 행과 다를 때(2단 헤더) 설정 (기본 7).")]
+    public int CfsOptionIdHeaderRow { get; set; } = 7;
+
+    [Category("입출고비 시트")]
     [DisplayName("옵션ID 헤더")]
     [Description("CFS 입출고비 시트에서 옵션ID 역할을 하는 열의 헤더명.")]
     public string CfsOptionIdHeader { get; set; } = "옵션ID";

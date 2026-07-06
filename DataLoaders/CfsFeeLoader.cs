@@ -48,35 +48,39 @@ public static class CfsFeeLoader
 
     private static void AccumulatePackage(ExcelPackage pkg, GrowthCfsFeeConfig cfg, CfsFeeResult result)
     {
-        AccumulateSheet(pkg, cfg.HandlingSheetName, cfg.HandlingHeaderRow,
-            cfg.CfsOptionIdHeader, cfg.HandlingFeeHeader, result.HandlingByOptionId);
-        AccumulateSheet(pkg, cfg.ShippingSheetName, cfg.ShippingHeaderRow,
-            cfg.CfsOptionIdHeader, cfg.ShippingFeeHeader, result.ShippingByOptionId);
+        AccumulateSheet(pkg, cfg.HandlingSheetName, cfg.HandlingHeaderRow, cfg, cfg.HandlingFeeHeader, result.HandlingByOptionId);
+        AccumulateSheet(pkg, cfg.ShippingSheetName, cfg.ShippingHeaderRow, cfg, cfg.ShippingFeeHeader, result.ShippingByOptionId);
     }
 
     private static void AccumulateSheet(
-        ExcelPackage pkg, string sheetName, int headerRow,
-        string optionIdHeader, string feeHeader,
+        ExcelPackage pkg, string sheetName, int feeHeaderRow,
+        GrowthCfsFeeConfig cfg, string feeHeader,
         Dictionary<string, decimal> map)
     {
         var sheet = pkg.Workbook.Worksheets[sheetName];
         if (sheet?.Dimension == null) return;
 
-        var hdrMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // 옵션ID 헤더와 금액 헤더가 서로 다른 행에 있는 2단 헤더 구조를 지원한다.
+        // optionIdHeaderRow 행에서 키 컬럼을, feeHeaderRow 행에서 금액 컬럼을 각각 찾는다.
+        int? keyCol = null, valCol = null;
         for (int col = 1; col <= sheet.Dimension.End.Column; col++)
         {
-            var h = sheet.Cells[headerRow, col].Value?.ToString();
-            if (!string.IsNullOrEmpty(h) && !hdrMap.ContainsKey(h)) hdrMap[h] = col;
-        }
-        if (!hdrMap.TryGetValue(optionIdHeader, out var keyCol) ||
-            !hdrMap.TryGetValue(feeHeader, out var valCol)) return;
+            var keyH = sheet.Cells[cfg.CfsOptionIdHeaderRow, col].Value?.ToString();
+            if (keyCol == null && string.Equals(keyH, cfg.CfsOptionIdHeader, StringComparison.OrdinalIgnoreCase))
+                keyCol = col;
 
-        for (int row = headerRow + 1; row <= sheet.Dimension.End.Row; row++)
+            var valH = sheet.Cells[feeHeaderRow, col].Value?.ToString();
+            if (valCol == null && string.Equals(valH, feeHeader, StringComparison.OrdinalIgnoreCase))
+                valCol = col;
+        }
+        if (keyCol == null || valCol == null) return;
+
+        for (int row = feeHeaderRow + 1; row <= sheet.Dimension.End.Row; row++)
         {
-            var key = sheet.Cells[row, keyCol].Value?.ToString();
+            var key = sheet.Cells[row, keyCol.Value].Value?.ToString();
             if (string.IsNullOrWhiteSpace(key)) continue;
 
-            var rawText = sheet.Cells[row, valCol].Value?.ToString()?.Replace(",", "");
+            var rawText = sheet.Cells[row, valCol.Value].Value?.ToString()?.Replace(",", "");
             if (!decimal.TryParse(rawText, out var rawVal)) continue;
 
             var vatIncluded = rawVal * 1.1m;  // VAT 별도 → VAT포함

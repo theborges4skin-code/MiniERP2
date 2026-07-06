@@ -405,7 +405,7 @@ public class OutboundHistoryForm : Form
 
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
             Title = "운송장 결과 파일을 선택하세요",
             InitialDirectory = _settingsService.GetLastFolder("TrackingImport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
@@ -424,7 +424,9 @@ public class OutboundHistoryForm : Form
 
     private void ImportTrackingFile(string filePath, CourierMaster courier, BindingList<OutboundDetail> details)
     {
-        using var package = ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
+        using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+            ? CsvWorkbookReader.LoadAsPackage(filePath)
+            : ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
         if (package == null) return;
 
         var worksheet = package.Workbook.Worksheets.FirstOrDefault();
@@ -435,12 +437,16 @@ public class OutboundHistoryForm : Form
             return;
         }
 
+        // 수령인 헤더는 '|'로 여러 개 지정 가능 (예: "받는분|받는분명") — 먼저 일치하는 컬럼을 사용한다.
+        var recipientHeaderCandidates = courier.TrackingImportRecipientHeader
+            .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         int? recipientCol = null, trackingCol = null;
         for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
         {
             var header = worksheet.Cells[headerRow, col].Value?.ToString()?.Trim();
             if (header is null) continue;
-            if (string.Equals(header, courier.TrackingImportRecipientHeader, StringComparison.OrdinalIgnoreCase)) recipientCol = col;
+            if (recipientHeaderCandidates.Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase))) recipientCol = col;
             if (string.Equals(header, courier.TrackingImportTrackingNoHeader, StringComparison.OrdinalIgnoreCase)) trackingCol = col;
         }
 

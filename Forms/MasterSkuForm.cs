@@ -277,8 +277,8 @@ public class MasterSkuForm : Form
     {
         using var ofd = new OpenFileDialog
         {
-            Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
-            Title = "가져올 마스터SKU 엑셀 파일을 선택하세요",
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "가져올 마스터SKU 엑셀/CSV 파일을 선택하세요",
             InitialDirectory = _settingsService.GetLastFolder("MasterSkuImport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
@@ -295,7 +295,9 @@ public class MasterSkuForm : Form
     {
         try
         {
-            using var package = ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
+            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(filePath)
+                : ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
             if (package == null) return;
 
             using var mappingDialog = new MasterSkuImportMappingDialog(package);

@@ -54,7 +54,9 @@ public static class ManagedTableExcelIO
     /// </summary>
     public static (List<string> Headers, List<Dictionary<string, string?>> Rows) Read(string filePath)
     {
-        using var package = new ExcelPackage(new FileInfo(filePath));
+        using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+            ? CsvWorkbookReader.LoadAsPackage(filePath)
+            : new ExcelPackage(new FileInfo(filePath));
         var worksheet = package.Workbook.Worksheets.FirstOrDefault();
         if (worksheet?.Dimension == null) return ([], []);
 

@@ -320,12 +320,14 @@ public class ChannelConfigForm : Form
 
         btnLoadSample.Click += (s, e) =>
         {
-            using var ofd = new OpenFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx|All files (*.*)|*.*", Title = "샘플 파일을 선택하세요" };
+            using var ofd = new OpenFileDialog { Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*", Title = "샘플 파일을 선택하세요" };
             if (ofd.ShowDialog(this) != DialogResult.OK) return;
 
             try
             {
-                var opened = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+                var opened = Path.GetExtension(ofd.FileName).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                    ? CsvWorkbookReader.LoadAsPackage(ofd.FileName)
+                    : ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
                 if (opened == null) return;
 
                 samplePackage?.Dispose();
