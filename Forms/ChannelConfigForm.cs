@@ -37,6 +37,8 @@ public class ChannelConfigForm : Form
     private DataGridView _courierOverrideGrid = new();
     private DataGridView _auxSourceGrid = new();
     private DataGridView _adFieldMappingGrid = new();
+    private CheckBox _cfsFeeEnabledCheckBox = new();
+    private PropertyGrid _cfsFeePropertyGrid = new();
 
     private static readonly StdField[] OrderMappingFields =
     [
@@ -172,6 +174,7 @@ public class ChannelConfigForm : Form
         rightTabControl.TabPages.Add(CreateCourierOverrideTab());
         rightTabControl.TabPages.Add(CreateAuxSourceTab());
         rightTabControl.TabPages.Add(CreateAdFieldMappingTab());
+        rightTabControl.TabPages.Add(CreateCfsFeeTab());
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
         mainLayout.Controls.Add(rightTabControl, 1, 0);
@@ -390,6 +393,7 @@ public class ChannelConfigForm : Form
         LoadCourierOverrideGrid(config);
         LoadAuxSourceGrid(config);
         LoadAdFieldMappingGrid(config);
+        LoadCfsFeeTab(config);
     }
 
     private void ClearFieldMappingGrids()
@@ -400,6 +404,9 @@ public class ChannelConfigForm : Form
         _courierOverrideGrid.DataSource = null;
         _auxSourceGrid.DataSource = null;
         _adFieldMappingGrid.DataSource = null;
+        _cfsFeeEnabledCheckBox.Checked = false;
+        _cfsFeePropertyGrid.SelectedObject = null;
+        _cfsFeePropertyGrid.Enabled = false;
     }
 
     private TabPage CreateCourierOverrideTab()
@@ -654,6 +661,61 @@ public class ChannelConfigForm : Form
         StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
         _ => field.ToString(),
     };
+
+    private TabPage CreateCfsFeeTab()
+    {
+        var tabPage = new TabPage("CFS 설정");
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, Padding = new Padding(8) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var note = new Label
+        {
+            Text = "쿠팡그로스 CFS(쿠팡풀필먼트서비스) 입출고비·배송비 파일 연동 설정입니다. " +
+                   "활성화하면 마감/이익분석 파일 로드 시 CFS 파일을 자동으로 인식하여 입출고비·배송비에 배분합니다. " +
+                   "(활성화 시 GrowthAuxSource의 HandlingFee/ShippingFee는 무시됩니다.)",
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+        };
+
+        _cfsFeeEnabledCheckBox = new CheckBox { Text = "CFS 파일 연동 사용 (쿠팡그로스 전용)", AutoSize = true, Padding = new Padding(0, 8, 0, 0) };
+        _cfsFeeEnabledCheckBox.CheckedChanged += OnCfsFeeEnabledChanged;
+
+        _cfsFeePropertyGrid = new PropertyGrid { Dock = DockStyle.Fill, Enabled = false };
+
+        layout.Controls.Add(note, 0, 0);
+        layout.Controls.Add(_cfsFeeEnabledCheckBox, 0, 1);
+        layout.Controls.Add(_cfsFeePropertyGrid, 0, 2);
+        tabPage.Controls.Add(layout);
+        return tabPage;
+    }
+
+    private void LoadCfsFeeTab(ChannelConfig config)
+    {
+        _cfsFeeEnabledCheckBox.CheckedChanged -= OnCfsFeeEnabledChanged;
+        _cfsFeeEnabledCheckBox.Checked = config.GrowthCfsFee != null;
+        _cfsFeePropertyGrid.SelectedObject = config.GrowthCfsFee;
+        _cfsFeePropertyGrid.Enabled = config.GrowthCfsFee != null;
+        _cfsFeeEnabledCheckBox.CheckedChanged += OnCfsFeeEnabledChanged;
+    }
+
+    private void OnCfsFeeEnabledChanged(object? sender, EventArgs e)
+    {
+        if (_currentConfig == null) return;
+        if (_cfsFeeEnabledCheckBox.Checked)
+        {
+            _currentConfig.GrowthCfsFee ??= new GrowthCfsFeeConfig();
+        }
+        else
+        {
+            _currentConfig.GrowthCfsFee = null;
+        }
+        _cfsFeePropertyGrid.SelectedObject = _currentConfig.GrowthCfsFee;
+        _cfsFeePropertyGrid.Enabled = _cfsFeeEnabledCheckBox.Checked;
+        _channelConfigService.Save(_channelConfigs);
+    }
 
     private TabPage CreateAdFieldMappingTab()
     {

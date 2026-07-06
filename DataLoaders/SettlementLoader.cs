@@ -99,7 +99,13 @@ public class SettlementLoader
             var auxValueMaps = new Dictionary<StdField, Dictionary<string, decimal>>();
             var auxMainKeyColumns = new Dictionary<StdField, int>();
 
-            foreach (var auxSource in channelConfig.GrowthAuxSources.Where(a => a.Enabled))
+            // CFS 모드 활성화 시 GrowthAuxSource의 HandlingFee/ShippingFee를 건너뜁니다.
+            // CFS 로더가 VAT포함 금액으로 직접 할당하므로 중복 적용을 막기 위함입니다.
+            var cfsFeeActive = channelConfig.GrowthCfsFee != null
+                && channelConfig.ChannelType == ChannelType.CoupangGrowth;
+
+            foreach (var auxSource in channelConfig.GrowthAuxSources.Where(a => a.Enabled
+                && !(cfsFeeActive && a.TargetStdField is StdField.HandlingFee or StdField.ShippingFee)))
             {
                 if (string.IsNullOrEmpty(auxSource.SheetName) || string.IsNullOrEmpty(auxSource.KeyHeader) || string.IsNullOrEmpty(auxSource.ValueHeader)) continue;
                 if (!headerToIndexMap.TryGetValue(auxSource.KeyHeader, out var mainKeyCol)) continue; // 메인 시트에 동일 키 컬럼이 없으면 JOIN 불가
@@ -166,6 +172,7 @@ public class SettlementLoader
                 var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
                 var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
                 var orderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderNo);
+                var taxNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TaxNo);
 
                 var settlementData = new SettlementData
                 {
@@ -179,6 +186,7 @@ public class SettlementLoader
                     Revenue = revenue,
                     TrackingNo = trackingNo,
                     OrderNo = orderNo,
+                    TaxNo = taxNo,
                     RawValues = headerToIndexMap.ToDictionary(
                         kv => kv.Key,
                         kv => worksheet.Cells[row, kv.Value].Value?.ToString() ?? string.Empty),
@@ -270,7 +278,8 @@ public class SettlementLoader
             return;
         }
 
-        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, channelConfig.ExchangeRate);
+        var cfsMode = channelConfig.GrowthCfsFee != null && channelConfig.ChannelType == ChannelType.CoupangGrowth;
+        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, channelConfig.ExchangeRate, cfsMode);
     }
 
     /// <summary>
@@ -302,13 +311,26 @@ public class SettlementLoader
 
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
-                var key = worksheet.Cells[row, keyCol.Value].Value?.ToString();
+                var key = NormalizeInvoiceKey(worksheet.Cells[row, keyCol.Value].Value?.ToString());
                 var date = worksheet.Cells[row, dateCol.Value].Value?.ToString();
                 if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(date) && !map.ContainsKey(key))
                     map[key] = date;
             }
         });
         return map;
+    }
+
+    /// <summary>
+    /// 계산서번호 JOIN 키 정규화: 엑셀 숫자 셀이 "29855741.0"으로 읽힐 때 소수점 이하를 제거하고
+    /// 콤마/공백 등 숫자가 아닌 문자를 제거한다. 빌링 파일과 입고상세 파일 양쪽에 동일하게 적용해야 한다.
+    /// </summary>
+    public static string NormalizeInvoiceKey(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var s = raw.Trim();
+        var dotIdx = s.IndexOf('.');
+        if (dotIdx >= 0) s = s[..dotIdx];
+        return string.Concat(s.Where(char.IsDigit));
     }
 
     private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)

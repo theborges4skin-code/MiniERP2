@@ -17,12 +17,21 @@ public static class ProfitCalculator
     /// <param name="shipping">배송비(쿠팡그로스의 그로스배송비 등, VAT 별도금액)</param>
     /// <param name="fee">입출고비 등 부가 수수료(VAT 별도금액)</param>
     /// <param name="exchangeRate">환율(아마존 등 외화 채널에만 적용, 그 외 1)</param>
-    public static decimal Calculate(ChannelType channelType, decimal settlement, decimal costPrice, int qty, decimal shipping, decimal fee, decimal exchangeRate = 1m)
+    /// <param name="cfsMode">
+    /// true = 쿠팡그로스 CFS 모드. 배송비·입출고비가 이미 VAT포함 금액으로 저장되어 있으므로
+    /// 공식에서 vatRate를 추가로 곱하지 않는다. false(기본) = 기존 GrowthAuxSource 방식.
+    /// </param>
+    public static decimal Calculate(ChannelType channelType, decimal settlement, decimal costPrice, int qty, decimal shipping, decimal fee, decimal exchangeRate = 1m, bool cfsMode = false)
     {
         const decimal vatRate = 1.1m;
 
         return channelType switch
         {
+            // CFS 모드: 로더가 이미 × 1.1 처리했으므로 여기서는 그대로 차감
+            ChannelType.CoupangGrowth when cfsMode =>
+                settlement - (costPrice * qty) - shipping - fee,
+
+            // 기존 GrowthAuxSource 모드: VAT 별도 금액이므로 × 1.1
             ChannelType.CoupangGrowth =>
                 settlement - (costPrice * qty) - (shipping * vatRate) - (fee * vatRate),
 
@@ -34,6 +43,44 @@ public static class ProfitCalculator
 
             _ => settlement - (costPrice * qty),
         };
+    }
+
+    /// <summary>
+    /// 쿠팡그로스 CFS 집계 결과를 정산 행 목록에 배분합니다.
+    /// 옵션ID 기준으로 최초 등장 행에만 입출고비·배송비를 할당하여 중복 계상을 방지합니다.
+    /// (판매 기간과 정산 기간이 달라 1:1 매칭이 불가능한 현실적 제약을 반영한 설계.)
+    /// </summary>
+    /// <returns>Fee/Shipping이 실제로 변경된 행 목록 (Profit 재계산 대상).</returns>
+    public static List<SettlementData> ApplyCoupangGrowthCfsFees(
+        ChannelType channelType,
+        List<SettlementData> rows,
+        string settlementOptionIdHeader,
+        Dictionary<string, decimal> handlingFees,
+        Dictionary<string, decimal> shippingFees)
+    {
+        if (channelType != ChannelType.CoupangGrowth) return [];
+        if (handlingFees.Count == 0 && shippingFees.Count == 0) return [];
+
+        var seenOptionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var affected = new List<SettlementData>();
+
+        foreach (var row in rows)
+        {
+            var optionId = row.RawValues != null &&
+                row.RawValues.TryGetValue(settlementOptionIdHeader, out var rv)
+                ? rv : null;
+            if (string.IsNullOrWhiteSpace(optionId)) continue;
+            if (!seenOptionIds.Add(optionId)) continue;  // 최초 등장 이후는 무시
+
+            var hasH = handlingFees.TryGetValue(optionId, out var hFee);
+            var hasS = shippingFees.TryGetValue(optionId, out var sFee);
+            if (!hasH && !hasS) continue;
+
+            if (hasH) row.Fee = hFee;
+            if (hasS) row.Shipping = sFee;
+            affected.Add(row);
+        }
+        return affected;
     }
 
     /// <summary>

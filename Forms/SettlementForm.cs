@@ -39,6 +39,7 @@ public class SettlementForm : Form
     private string? _settlementGridClickedColumnName;
     private ToolStripStatusLabel _statusLabel = new();
     private bool _isReapplying;
+    private string _cfsSummaryText = string.Empty;
 
     private ExcelLikeDataGridView _summaryGrid = new();
     private CheckBox _unmappedOnlyCheckBox = new();
@@ -427,6 +428,10 @@ public class SettlementForm : Form
         _statusLabel.ForeColor = SystemColors.ControlText; // 이전 오류로 빨간 글씨가 남아있을 수 있어 매번 초기화한다.
         _statusLabel.Text = $"'{channelDialog.SelectedChannel.ChannelName}' 채널의 설정으로 정산 파일을 읽는 중입니다...";
 
+        _settlementRows.Clear();
+        _cfsSummaryText = string.Empty;
+        RefreshProfitAnalysisView();
+
         var mappingRepository = _mappingRepository;
         var channelCode = channelConfig.ChannelCode;
         var skuMapper = await Task.Run(() => new SkuMapper(mappingRepository, channelCode));
@@ -436,27 +441,49 @@ public class SettlementForm : Form
             _settingsService.SetLastFolder("SettlementLoad", Path.GetDirectoryName(ofd.FileNames[0])!);
             DiagnosticsLogger.Log($"[SettlementForm] 정산파일 로드 시작 — 채널={channelConfig.ChannelCode}, 파일 {ofd.FileNames.Length}개: {string.Join(", ", ofd.FileNames.Select(Path.GetFileName))}");
 
+            // 쿠팡그로스 CFS 모드: 선택된 파일을 정산 파일 vs CFS 파일(입출고비/배송비 시트 유무)로 분류
+            var allSelectedFiles = ofd.FileNames.ToList();
+            var cfsFilePaths = new List<string>();
+            var settlementFilePaths = allSelectedFiles;
+            if (channelConfig.ChannelType == ChannelType.CoupangGrowth && channelConfig.GrowthCfsFee != null)
+            {
+                settlementFilePaths = new List<string>();
+                foreach (var f in allSelectedFiles)
+                {
+                    try
+                    {
+                        using var pkg = ExcelFileOpener.Open(f);
+                        if (CfsFeeLoader.IsCfsFile(pkg, channelConfig.GrowthCfsFee))
+                            cfsFilePaths.Add(f);
+                        else
+                            settlementFilePaths.Add(f);
+                    }
+                    catch { settlementFilePaths.Add(f); }  // 열기 실패 시 정산파일로 처리
+                }
+                DiagnosticsLogger.Log($"[SettlementForm] CFS 분류 — 정산파일 {settlementFilePaths.Count}개, CFS파일 {cfsFilePaths.Count}개");
+            }
+
             var loadStopwatch = Stopwatch.StartNew();
             var fileRowCounts = new List<(string FilePath, int RowCount)>();
-            for (int i = 0; i < ofd.FileNames.Length; i++)
+            for (int i = 0; i < settlementFilePaths.Count; i++)
             {
-                var file = ofd.FileNames[i];
+                var file = settlementFilePaths[i];
                 var fileName = Path.GetFileName(file);
-                if (ofd.FileNames.Length > 1)
+                if (settlementFilePaths.Count > 1)
                 {
-                    progressDialog.SetProgress($"({i + 1}/{ofd.FileNames.Length}) {fileName} 처리 중...", i, ofd.FileNames.Length);
+                    progressDialog.SetProgress($"({i + 1}/{settlementFilePaths.Count}) {fileName} 처리 중...", i, settlementFilePaths.Count);
                 }
                 else
                 {
                     progressDialog.SetIndeterminate($"{fileName} 처리 중...");
                 }
 
-                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{ofd.FileNames.Length}) '{fileName}' LoadSettlementFileWithPasswordRetryAsync 호출");
+                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{settlementFilePaths.Count}) '{fileName}' LoadSettlementFileWithPasswordRetryAsync 호출");
                 var loadedRows = await LoadSettlementFileWithPasswordRetryAsync(skuMapper, channelConfig, file);
                 if (loadedRows == null) continue; // 사용자가 비밀번호 입력을 취소함
                 foreach (var row in loadedRows) _settlementRows.Add(row);
                 fileRowCounts.Add((file, loadedRows.Count));
-                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{ofd.FileNames.Length}) '{fileName}' 완료 — {loadedRows.Count}건 (총 누적 {_settlementRows.Count}건, {loadStopwatch.Elapsed.TotalSeconds:F2}s)");
+                DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{settlementFilePaths.Count}) '{fileName}' 완료 — {loadedRows.Count}건 (총 누적 {_settlementRows.Count}건, {loadStopwatch.Elapsed.TotalSeconds:F2}s)");
             }
 
             // 쿠팡로켓: 0행 파일을 계산서발행내역으로 간주하여 세금계산서번호 기준으로 발행일 JOIN
@@ -474,18 +501,55 @@ public class SettlementForm : Form
 
                     if (dateMap.Count > 0)
                     {
+                        int matchedCount = 0;
                         foreach (var row in _settlementRows)
                         {
-                            if (row.RawValues == null) continue;
-                            if (row.RawValues.TryGetValue(channelConfig.RocketInvoiceKeyHeader, out var invoiceNo) &&
-                                dateMap.TryGetValue(invoiceNo, out var date))
+                            // TaxNo는 StdField.TaxNo 매핑으로 이미 채워져 있으나, RawValues를 우선 참조해
+                            // 정규화 키로 검색한다 (계산서번호 열 헤더명과 RocketInvoiceKeyHeader가 일치하면 OK).
+                            var rawKey = row.RawValues != null &&
+                                row.RawValues.TryGetValue(channelConfig.RocketInvoiceKeyHeader, out var rv)
+                                ? rv : row.TaxNo;
+                            var normalizedKey = SettlementLoader.NormalizeInvoiceKey(rawKey);
+                            if (!string.IsNullOrEmpty(normalizedKey) && dateMap.TryGetValue(normalizedKey, out var date))
                             {
-                                row.RawValues[channelConfig.RocketInvoiceDateHeader] = date;
+                                row.TaxDate = date;
+                                if (row.RawValues != null)
+                                    row.RawValues[channelConfig.RocketInvoiceDateHeader] = date;
+                                matchedCount++;
                             }
                         }
-                        DiagnosticsLogger.Log($"[SettlementForm] 쿠팡로켓 계산서발행일 매칭 완료 — 발행일맵 {dateMap.Count}건, 적용대상 {_settlementRows.Count}건");
+                        DiagnosticsLogger.Log($"[SettlementForm] 쿠팡로켓 계산서발행일 매칭 완료 — 발행일맵 {dateMap.Count}건, 매칭성공 {matchedCount}/{_settlementRows.Count}건");
                     }
                 }
+            }
+
+            // 쿠팡그로스 CFS: 입출고비/배송비 파일 집계 후 정산 행에 옵션ID 기준 최초 1회 배분
+            if (cfsFilePaths.Count > 0 && channelConfig.GrowthCfsFee != null)
+            {
+                progressDialog.SetIndeterminate($"CFS 파일 {cfsFilePaths.Count}개 처리 중...");
+                var cfg = channelConfig.GrowthCfsFee;
+                var cfsResult = await Task.Run(() => CfsFeeLoader.LoadAndMerge(cfsFilePaths, cfg));
+                DiagnosticsLogger.Log($"[SettlementForm] CFS 집계 완료 — 입출고비 {cfsResult.HandlingByOptionId.Count}개 옵션, 배송비 {cfsResult.ShippingByOptionId.Count}개 옵션");
+
+                var rows = _settlementRows.ToList();
+                var affectedRows = ProfitCalculator.ApplyCoupangGrowthCfsFees(
+                    channelConfig.ChannelType, rows,
+                    cfg.SettlementOptionIdHeader,
+                    cfsResult.HandlingByOptionId,
+                    cfsResult.ShippingByOptionId);
+
+                if (affectedRows.Count > 0)
+                {
+                    var itemCache = await Task.Run(() => _itemRepository.GetAll().ToDictionary(i => i.Sku));
+                    var cskuCache = _channelSkuRepository.GetAllByChannel(channelConfig.ChannelCode)
+                        .ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
+                    foreach (var row in affectedRows)
+                        SettlementLoader.ApplyMappingAndProfit(row, skuMapper, _itemRepository, channelConfig, _channelSkuRepository, itemCache, cskuCache);
+                }
+
+                var cfsWarnings = cfsResult.Warnings.Count > 0 ? $"  ⚠ {string.Join("; ", cfsResult.Warnings)}" : string.Empty;
+                _cfsSummaryText = $"CFS {cfsResult.CfsFileCount}개 파일 — 입출고비 {cfsResult.HandlingTotal:N0}원({cfsResult.HandlingByOptionId.Count}개 옵션) / 배송비 {cfsResult.ShippingTotal:N0}원({cfsResult.ShippingByOptionId.Count}개 옵션) / {affectedRows.Count}건 배분됨(VAT포함){cfsWarnings}";
+                DiagnosticsLogger.Log($"[SettlementForm] CFS 배분 완료 — {affectedRows.Count}건 Profit 재계산");
             }
 
             loadStopwatch.Stop();
@@ -500,7 +564,8 @@ public class SettlementForm : Form
 
             var unresolvedCount = _settlementRows.Count(SettlementRowStatus.IsUnresolved);
             var diagnosticsText = $"파일처리 {loadStopwatch.Elapsed.TotalSeconds:F1}s / 화면갱신 {refreshStopwatch.Elapsed.TotalSeconds:F1}s ({LastRefreshDiagnostics})";
-            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]";
+            var cfsPart = string.IsNullOrEmpty(_cfsSummaryText) ? string.Empty : $"  |  {_cfsSummaryText}";
+            _statusLabel.Text = $"총 {_settlementRows.Count}건의 정산 데이터가 로드되었습니다. (미매핑/확인필요 {unresolvedCount}건) [{diagnosticsText}]{cfsPart}";
 
             Cursor = Cursors.Default;
             progressDialog.Close();
@@ -597,43 +662,92 @@ public class SettlementForm : Form
         }
     }
 
-    private void OnExportSettlementClick(object? sender, EventArgs e)
+    private async void OnExportSettlementClick(object? sender, EventArgs e)
     {
+        DiagnosticsLogger.Log("[이익분석 내보내기] 버튼 클릭");
         if (_settlementRows.Count == 0)
         {
             MessageBox.Show("내보낼 이익분석 결과가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
+        DiagnosticsLogger.Log("[이익분석 내보내기] 채널명 조회 시작");
+        var exportChannelCode = _settlementRows.FirstOrDefault()?.ChannelCode ?? "";
+        var exportChannelCfg = string.IsNullOrEmpty(exportChannelCode) ? null :
+            _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == exportChannelCode);
+        var exportChannelName = exportChannelCfg?.ChannelName ?? exportChannelCode;
+        var exportChannelType = exportChannelCfg?.ChannelType ?? ChannelType.General;
+        var exportChannelPrefix = exportChannelName.Length > 0 ? exportChannelName[..Math.Min(5, exportChannelName.Length)] + "_" : "";
+        DiagnosticsLogger.Log($"[이익분석 내보내기] 채널명 조회 완료 — 채널: {exportChannelCode} ({exportChannelName}, {exportChannelType})");
+
+        var lastFolder = _settingsService.GetLastFolder("SettlementExport");
+        DiagnosticsLogger.Log($"[이익분석 내보내기] SaveFileDialog 열기 전 — InitialDirectory: {lastFolder ?? "(Documents)"}");
+
         using var sfd = new SaveFileDialog
         {
             Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"이익분석_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("SettlementExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            FileName = $"{exportChannelPrefix}이익분석_{DateTime.Now:yyyyMMdd}.xlsx",
+            InitialDirectory = lastFolder ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
 
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        if (sfd.ShowDialog(this) != DialogResult.OK)
+        {
+            DiagnosticsLogger.Log("[이익분석 내보내기] SaveFileDialog 취소");
+            return;
+        }
 
         var filePath = sfd.FileName;
+        DiagnosticsLogger.Log($"[이익분석 내보내기] SaveFileDialog 완료 — 저장경로: {filePath}");
+
         _settingsService.SetLastFolder("SettlementExport", Path.GetDirectoryName(filePath)!);
+        DiagnosticsLogger.Log("[이익분석 내보내기] SetLastFolder 완료");
+
+        // UI 스레드에서 미리 스냅샷 및 계산 — Task.Run 안에서 인스턴스 필드 접근을 피한다
+        var rowsSnapshot = _settlementRows.ToList();
+        var (shipmentCount, isEstimated) = ComputeActualShipmentCount();
+        DiagnosticsLogger.Log($"[이익분석 내보내기] 스냅샷 완료 — {rowsSnapshot.Count}건, 송장수: {shipmentCount}");
+
+        Cursor = Cursors.WaitCursor;
+        _statusLabel.Text = "이익분석 엑셀 저장 중...";
 
         try
         {
-            ExcelLicense.Ensure();
-            using var package = new ExcelPackage();
+            await Task.Run(() =>
+            {
+                DiagnosticsLogger.Log("[이익분석 내보내기] Task.Run 시작");
+                ExcelLicense.Ensure();
+                using var package = new ExcelPackage();
 
-            WriteDetailSheet(package, "분석결과상세", _settlementRows);
-            WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"));
-            WriteDetailSheet(package, "미매핑·예외건", _settlementRows.Where(d => SettlementRowStatus.IsUnresolved(d) || SettlementRowStatus.IsExcludedByExceptionRule(d)).ToList());
-            WriteRawDataSheet(package, "원본데이터");
+                WriteDetailSheet(package, "분석결과상세", rowsSnapshot);
+                DiagnosticsLogger.Log("[이익분석 내보내기] 분석결과상세 시트 완료");
+                WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"), rowsSnapshot, shipmentCount, isEstimated);
+                DiagnosticsLogger.Log("[이익분析 내보내기] 분析요약 시트 완료");
+                if (exportChannelType == ChannelType.CoupangRocket)
+                {
+                    WriteRocketDetailSheet(package, "쿠팡명세", rowsSnapshot);
+                    DiagnosticsLogger.Log("[이익분析 내보내기] 쿠팡명세 시트 완료");
+                }
+                WriteDetailSheet(package, "미매핑·예외건", rowsSnapshot.Where(d => SettlementRowStatus.IsUnresolved(d) || SettlementRowStatus.IsExcludedByExceptionRule(d)).ToList());
+                DiagnosticsLogger.Log("[이익분석 내보내기] 미매핑·예외건 시트 완료");
+                WriteRawDataSheet(package, "원본데이터", rowsSnapshot);
+                DiagnosticsLogger.Log("[이익분석 내보내기] 원본데이터 시트 완료");
 
-            package.SaveAs(new FileInfo(filePath));
+                package.SaveAs(new FileInfo(filePath));
+                DiagnosticsLogger.Log("[이익분석 내보내기] 파일 저장 완료");
+            });
 
+            _statusLabel.Text = $"저장 완료: {Path.GetFileName(filePath)}";
+            DiagnosticsLogger.Log("[이익분석 내보내기] await 복귀 완료");
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
+            DiagnosticsLogger.Log($"[이익분석 내보내기] 오류 — {ex.GetType().Name}: {ex.Message}");
             MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
         }
     }
 
@@ -665,15 +779,50 @@ public class SettlementForm : Form
             sheet.Cells[row, 12].Value = data.Status;
             row++;
         }
-        sheet.Cells.AutoFitColumns();
+        // 헤더 행만 기준으로 AutoFit(최대 50) — 전체 행 스캔 대비 쿠팡로켓 수천 행에서 수십 배 빠름
+        sheet.Cells[1, 1, 1, DetailHeaders.Length].AutoFitColumns(8, 50);
     }
 
-    private void WriteSummarySheet(ExcelWorksheet sheet)
+    private static readonly string[] RocketDetailHeaders =
+    [
+        "채널", "작성일자", "계산서번호", "상품그룹", "상품명", "옵션명",
+        "매핑SKU", "수량", "매출액", "정산액", "배송비", "창고비", "이익액", "상태"
+    ];
+
+    /// <summary>쿠팡로켓 전용 명세 시트: 14열 구성 (작성일자·계산서번호 포함).</summary>
+    private static void WriteRocketDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows)
+    {
+        var sheet = package.Workbook.Worksheets.Add(sheetName);
+        for (int i = 0; i < RocketDetailHeaders.Length; i++) sheet.Cells[1, i + 1].Value = RocketDetailHeaders[i];
+
+        int row = 2;
+        foreach (var data in rows)
+        {
+            sheet.Cells[row, 1].Value = data.ChannelCode;
+            sheet.Cells[row, 2].Value = data.TaxDate;
+            sheet.Cells[row, 3].Value = data.TaxNo;
+            sheet.Cells[row, 4].Value = ResolveProductGroupLabel(data);
+            sheet.Cells[row, 5].Value = data.ProductName;
+            sheet.Cells[row, 6].Value = data.OptionName;
+            sheet.Cells[row, 7].Value = data.Msku;
+            sheet.Cells[row, 8].Value = data.Qty;
+            sheet.Cells[row, 9].Value = data.Revenue;
+            sheet.Cells[row, 10].Value = data.Settlement;
+            sheet.Cells[row, 11].Value = data.Shipping;
+            sheet.Cells[row, 12].Value = data.Fee;
+            sheet.Cells[row, 13].Value = data.Profit;
+            sheet.Cells[row, 14].Value = data.Status;
+            row++;
+        }
+        sheet.Cells[1, 1, 1, RocketDetailHeaders.Length].AutoFitColumns(8, 50);
+    }
+
+    private static void WriteSummarySheet(ExcelWorksheet sheet, IReadOnlyList<SettlementData> rows, int shipmentCount, bool isEstimated)
     {
         string[] headers = ["상품그룹", "건수", "수량", "매출액", "배송비", "입출고비", "순이익"];
         for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
-        var groups = _settlementRows
+        var groups = rows
             .GroupBy(ResolveProductGroupLabel)
             .Select(g => new ProfitGroupSummary
             {
@@ -711,23 +860,22 @@ public class SettlementForm : Form
         sheet.Cells[row, 7].Value = groups.Sum(g => g.Profit);
         sheet.Cells[row, 1, row, 7].Style.Font.Bold = true;
 
-        var (shipmentCount, isEstimated) = ComputeActualShipmentCount();
         row += 2;
         sheet.Cells[row, 1].Value = "실제발송송장수";
         sheet.Cells[row, 2].Value = shipmentCount;
         sheet.Cells[row, 3].Value = isEstimated ? "송장번호 없음 — 배송비÷3,000원으로 추정" : "송장번호 기준(중복 제외)";
 
-        sheet.Cells.AutoFitColumns();
+        sheet.Cells[1, 1, 1, headers.Length].AutoFitColumns(8, 50);
     }
 
     /// <summary>
     /// 정산 파일에서 읽은 원본 행(SettlementLoader가 RawValues에 채워둔 헤더->값)을 그대로 출력한다.
     /// 파일마다 헤더 구성이 다를 수 있으므로, 전체 행에서 등장하는 모든 헤더의 합집합을 열로 쓴다.
     /// </summary>
-    private void WriteRawDataSheet(ExcelPackage package, string sheetName)
+    private static void WriteRawDataSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows)
     {
         var sheet = package.Workbook.Worksheets.Add(sheetName);
-        var rowsWithRaw = _settlementRows.Where(d => d.RawValues is { Count: > 0 }).ToList();
+        var rowsWithRaw = rows.Where(d => d.RawValues is { Count: > 0 }).ToList();
         if (rowsWithRaw.Count == 0)
         {
             sheet.Cells[1, 1].Value = "원본 데이터가 없습니다.";
@@ -746,7 +894,8 @@ public class SettlementForm : Form
             }
             row++;
         }
-        sheet.Cells.AutoFitColumns();
+        // 헤더 행만 기준으로 AutoFit — RawValues 열이 수십 개인 경우 전체 스캔 대비 매우 빠름
+        sheet.Cells[1, 1, 1, headers.Count].AutoFitColumns(8, 50);
     }
 
     private void OnSettlementGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
@@ -1170,6 +1319,18 @@ public class SettlementForm : Form
 
         var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
         var quickDateMenu = new ContextMenuStrip();
+        quickDateMenu.Items.Add("오늘", null, (_, _) =>
+        {
+            _fromDatePicker.Value = DateTime.Today;
+            _toDatePicker.Value = DateTime.Today;
+        });
+        quickDateMenu.Items.Add("어제", null, (_, _) =>
+        {
+            var yesterday = DateTime.Today.AddDays(-1);
+            _fromDatePicker.Value = yesterday;
+            _toDatePicker.Value = yesterday;
+        });
+        quickDateMenu.Items.Add(new ToolStripSeparator());
         quickDateMenu.Items.Add("이번달", null, (_, _) =>
         {
             _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);

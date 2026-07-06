@@ -54,6 +54,12 @@ public class ChannelConfig
     [Browsable(false)]
     public List<GrowthAuxSource> GrowthAuxSources { get; set; } = new();
 
+    // 쿠팡그로스 CFS(쿠팡풀필먼트서비스) 입출고비·배송비 파일 연동 설정.
+    // null이면 CFS 비활성화(GrowthAuxSource 동작), non-null이면 CFS 활성화(GrowthAuxSource의
+    // HandlingFee/ShippingFee 무시).
+    [Browsable(false)]
+    public GrowthCfsFeeConfig? GrowthCfsFee { get; set; }
+
     // 채널설정 창의 "택배사 출력 고정값" 전용 탭에서 편집한다.
     [Browsable(false)]
     public List<CourierHeaderOverride> CourierHeaderOverrides { get; set; } = new();
