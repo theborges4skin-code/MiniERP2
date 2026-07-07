@@ -297,6 +297,14 @@ public class AdMappingForm : Form
             return;
         }
 
+        var layouts = _currentChannelConfig.AdFileLayouts;
+        if (layouts.Count == 0)
+        {
+            MessageBox.Show("채널설정 → 광고비 헤더 설정 탭에 레이아웃을 먼저 등록해주세요.",
+                "레이아웃 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         using var ofd = new OpenFileDialog
         {
             Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
@@ -316,16 +324,28 @@ public class AdMappingForm : Form
         {
             try
             {
+                // 레이아웃 자동탐지
+                var detected = _adSpendLoader.DetectLayout(fileName, layouts);
+                Models.AdFileLayout? selectedLayout = detected.Count switch
+                {
+                    1 => detected[0],
+                    > 1 => PickLayout(layouts, $"{Path.GetFileName(fileName)}: 여러 레이아웃이 매칭됩니다."),
+                    _ => layouts.Count == 1
+                            ? layouts[0]
+                            : PickLayout(layouts, $"{Path.GetFileName(fileName)}: 자동탐지에 실패했습니다. 레이아웃을 선택해주세요."),
+                };
+                if (selectedLayout == null) continue;
+
                 List<AdSpendItem> fileItems;
                 try
                 {
-                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, fileName);
+                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, channelCode, selectedLayout, fileName);
                 }
                 catch (EncryptedExcelFileException)
                 {
                     using var dialog = new PasswordPromptDialog(Path.GetFileName(fileName));
                     if (dialog.ShowDialog(this) != DialogResult.OK) continue;
-                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, _currentChannelConfig, fileName, dialog.Password);
+                    fileItems = await _adSpendLoader.LoadFromFileAsync(engine, channelCode, selectedLayout, fileName, dialog.Password);
                 }
                 allItems.AddRange(fileItems);
             }
@@ -338,7 +358,7 @@ public class AdMappingForm : Form
         if (_adSpendLoader.LastLoadHeaderRowLooksEmpty)
         {
             MessageBox.Show(
-                "채널설정(광고비 헤더 설정 탭)에 지정된 헤더 행에서 헤더를 하나도 찾지 못했습니다.\n시트 이름/헤더 행/열 이름을 확인해주세요.",
+                "레이아웃의 헤더 행에서 헤더를 하나도 찾지 못했습니다.\n채널설정 → 광고비 헤더 설정 탭에서 시트 이름/헤더 행/열 이름을 확인해주세요.",
                 "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
@@ -346,6 +366,29 @@ public class AdMappingForm : Form
         ApplyUnmappedFilter();
         UpdateAdSummary();
         UpdateConditionPreview();
+    }
+
+    private Models.AdFileLayout? PickLayout(IReadOnlyList<Models.AdFileLayout> layouts, string prompt)
+    {
+        using var form = new Form
+        {
+            Text = "레이아웃 선택", Size = new Size(360, 180),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false
+        };
+        var lbl = new Label { Text = prompt, Dock = DockStyle.Top, Height = 40, Padding = new Padding(8, 8, 8, 0), TextAlign = ContentAlignment.MiddleLeft };
+        var combo = new ComboBox
+        {
+            Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList,
+            Margin = new Padding(8), DataSource = layouts.ToList(), DisplayMember = "LayoutName"
+        };
+        var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
+        var btnOk = new Button { Text = "선택", DialogResult = DialogResult.OK, Width = 70 };
+        var btnCancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Width = 70 };
+        btnPanel.Controls.AddRange([btnCancel, btnOk]);
+        form.Controls.AddRange([lbl, combo, btnPanel]);
+        form.AcceptButton = btnOk; form.CancelButton = btnCancel;
+        return form.ShowDialog(this) == DialogResult.OK ? combo.SelectedItem as Models.AdFileLayout : null;
     }
 
     private void ApplyUnmappedFilter()

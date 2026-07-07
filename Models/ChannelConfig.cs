@@ -45,10 +45,10 @@ public class ChannelConfig
     [Browsable(false)]
     public Dictionary<StdField, FieldMapping> SettlementFieldMappings { get; set; } = new();
 
-    // 광고 매핑창("필드 매핑" 탭)에서 편집한다. 광고비 리포트는 발주서/정산서와 헤더 구성이 달라
-    // 별도 키(AdStdField)로 둔다.
+    // 채널설정 창의 "광고비 헤더 설정" 탭에서 편집한다. 하나의 채널에 여러 파일 레이아웃을 등록해
+    // 헤더 구성이 다른 여러 광고비 파일을 같은 채널로 처리할 수 있다.
     [Browsable(false)]
-    public Dictionary<AdStdField, FieldMapping> AdFieldMappings { get; set; } = new();
+    public List<AdFileLayout> AdFileLayouts { get; set; } = new();
 
     // 채널설정 창의 "보조 소스" 전용 탭에서 편집한다(PropertyGrid의 CollectionEditor는 쓰기 불편함).
     [Browsable(false)]

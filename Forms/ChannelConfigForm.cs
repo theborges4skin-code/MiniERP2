@@ -36,7 +36,12 @@ public class ChannelConfigForm : Form
     private DataGridView _settlementMappingGrid = new();
     private DataGridView _courierOverrideGrid = new();
     private DataGridView _auxSourceGrid = new();
+    private ListBox _adLayoutListBox = new();
+    private Button _btnAdLayoutAdd = new();
+    private Button _btnAdLayoutDelete = new();
+    private TextBox _adMatchColumnsTextBox = new();
     private DataGridView _adFieldMappingGrid = new();
+    private AdFileLayout? _currentAdLayout;
     private CheckBox _cfsFeeEnabledCheckBox = new();
     private PropertyGrid _cfsFeePropertyGrid = new();
 
@@ -405,7 +410,10 @@ public class ChannelConfigForm : Form
         _settlementMappingGrid.DataSource = null;
         _courierOverrideGrid.DataSource = null;
         _auxSourceGrid.DataSource = null;
+        _adLayoutListBox.Items.Clear();
+        _adMatchColumnsTextBox.Text = string.Empty;
         _adFieldMappingGrid.DataSource = null;
+        _currentAdLayout = null;
         _cfsFeeEnabledCheckBox.Checked = false;
         _cfsFeePropertyGrid.SelectedObject = null;
         _cfsFeePropertyGrid.Enabled = false;
@@ -723,17 +731,43 @@ public class ChannelConfigForm : Form
     {
         var tabPage = new TabPage("광고비 헤더 설정");
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        // ── 왼쪽: 레이아웃 목록 ──────────────────────────────────
+        _adLayoutListBox = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+        _adLayoutListBox.SelectedIndexChanged += OnAdLayoutSelected;
+        _adLayoutListBox.DoubleClick += OnAdLayoutRename;
 
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
-        var btnLoadSample = new Button { Text = "샘플 파일 불러오기", AutoSize = true };
-        toolbar.Controls.Add(btnLoadSample);
+        _btnAdLayoutAdd = new Button { Text = "추가", Width = 60, Height = 28 };
+        _btnAdLayoutAdd.Click += OnAdLayoutAdd;
+        _btnAdLayoutDelete = new Button { Text = "삭제", Width = 60, Height = 28 };
+        _btnAdLayoutDelete.Click += OnAdLayoutDelete;
+        var btnRename = new Button { Text = "이름변경", Width = 80, Height = 28 };
+        btnRename.Click += OnAdLayoutRename;
 
+        var layoutBtnPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, Height = 36,
+            FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(4, 4, 0, 0)
+        };
+        layoutBtnPanel.Controls.AddRange([_btnAdLayoutAdd, _btnAdLayoutDelete, btnRename]);
+
+        var leftPanel = new Panel { Dock = DockStyle.Left, Width = 190 };
+        leftPanel.Controls.Add(_adLayoutListBox);
+        leftPanel.Controls.Add(layoutBtnPanel);
+
+        var leftLabel = new Label
+        {
+            Text = "레이아웃 목록", Dock = DockStyle.Top, Height = 22,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(4, 0, 0, 0),
+            Font = new Font(Font.FontFamily, Font.Size, FontStyle.Bold)
+        };
+        leftPanel.Controls.Add(leftLabel);
+
+        // ── 오른쪽: 자동탐지 조건 + 필드 매핑 ───────────────────
         _adFieldMappingGrid.AutoGenerateColumns = false;
         _adFieldMappingGrid.AllowUserToAddRows = false;
         _adFieldMappingGrid.AllowUserToDeleteRows = false;
+        _adFieldMappingGrid.Dock = DockStyle.Fill;
         _adFieldMappingGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "Label", HeaderText = "표준 필드", DataPropertyName = "Label", Width = 130, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "SheetName", HeaderText = "시트 이름", DataPropertyName = "SheetName", Width = 110 },
@@ -743,22 +777,74 @@ public class ChannelConfigForm : Form
         );
         _adFieldMappingGrid.CellValueChanged += (s, e) => OnAdFieldMappingGridCellChanged(e);
 
-        var splitContainer = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 620 };
-        _adFieldMappingGrid.Dock = DockStyle.Fill;
-        splitContainer.Panel1.Controls.Add(_adFieldMappingGrid);
-        splitContainer.Panel2.Controls.Add(CreateSamplePreviewPanel(_adFieldMappingGrid, btnLoadSample));
+        var btnLoadSample = new Button { Text = "샘플 파일 불러오기", AutoSize = true };
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 35, Padding = new Padding(5) };
+        toolbar.Controls.Add(btnLoadSample);
 
-        layout.Controls.Add(toolbar, 0, 0);
-        layout.Controls.Add(splitContainer, 0, 1);
-        tabPage.Controls.Add(layout);
+        _adMatchColumnsTextBox = new TextBox
+        {
+            Dock = DockStyle.Top, Height = 72, Multiline = true, ScrollBars = ScrollBars.Vertical,
+            PlaceholderText = "자동탐지 AND 조건 (한 줄에 하나씩 — 비워두면 수동 선택)"
+        };
+        _adMatchColumnsTextBox.Leave += OnAdMatchColumnsLeave;
+
+        var matchLabel = new Label
+        {
+            Text = "자동탐지 문구 (AND 조건):",
+            Dock = DockStyle.Top, Height = 20,
+            TextAlign = ContentAlignment.BottomLeft,
+            Padding = new Padding(2, 0, 0, 0)
+        };
+
+        var gridSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 580 };
+        gridSplit.Panel1.Controls.Add(_adFieldMappingGrid);
+        gridSplit.Panel2.Controls.Add(CreateSamplePreviewPanel(_adFieldMappingGrid, btnLoadSample));
+
+        var rightPanel = new Panel { Dock = DockStyle.Fill };
+        rightPanel.Controls.Add(gridSplit);      // fill
+        rightPanel.Controls.Add(matchLabel);     // top (added last → drawn below toolbar)
+        rightPanel.Controls.Add(_adMatchColumnsTextBox); // top
+        rightPanel.Controls.Add(toolbar);        // top
+
+        tabPage.Controls.Add(rightPanel);
+        tabPage.Controls.Add(leftPanel);
         return tabPage;
     }
 
     private void LoadAdFieldMappingGrid(ChannelConfig config)
     {
+        _adLayoutListBox.Items.Clear();
+        _adMatchColumnsTextBox.Text = string.Empty;
+        _adFieldMappingGrid.DataSource = null;
+        _currentAdLayout = null;
+
+        foreach (var layout in config.AdFileLayouts)
+            _adLayoutListBox.Items.Add(layout);
+
+        _adLayoutListBox.DisplayMember = "LayoutName";
+
+        if (_adLayoutListBox.Items.Count > 0)
+            _adLayoutListBox.SelectedIndex = 0;
+    }
+
+    private void OnAdLayoutSelected(object? sender, EventArgs e)
+    {
+        // Flush match-columns text from previous layout before switching
+        FlushMatchColumns();
+
+        _currentAdLayout = _adLayoutListBox.SelectedItem as AdFileLayout;
+        if (_currentAdLayout == null)
+        {
+            _adMatchColumnsTextBox.Text = string.Empty;
+            _adFieldMappingGrid.DataSource = null;
+            return;
+        }
+
+        _adMatchColumnsTextBox.Text = string.Join(Environment.NewLine, _currentAdLayout.MatchColumns);
+
         var rows = AdMappingFields.Select(f =>
         {
-            config.AdFieldMappings.TryGetValue(f.Field, out var mapping);
+            _currentAdLayout.FieldMappings.TryGetValue(f.Field, out var mapping);
             return new AdFieldMappingRow
             {
                 Field = f.Field,
@@ -772,19 +858,80 @@ public class ChannelConfigForm : Form
         _adFieldMappingGrid.DataSource = new BindingList<AdFieldMappingRow>(rows);
     }
 
+    private void OnAdMatchColumnsLeave(object? sender, EventArgs e) => FlushMatchColumns();
+
+    private void FlushMatchColumns()
+    {
+        if (_currentAdLayout == null) return;
+        _currentAdLayout.MatchColumns = _adMatchColumnsTextBox.Text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+
+    private void OnAdLayoutAdd(object? sender, EventArgs e)
+    {
+        if (_currentConfig == null) return;
+        var name = PromptInput("새 레이아웃 이름을 입력하세요:", "레이아웃 추가", "새 레이아웃");
+        if (name == null) return;
+        var layout = new AdFileLayout { LayoutName = name };
+        _currentConfig.AdFileLayouts.Add(layout);
+        _adLayoutListBox.Items.Add(layout);
+        _adLayoutListBox.SelectedItem = layout;
+    }
+
+    private void OnAdLayoutDelete(object? sender, EventArgs e)
+    {
+        if (_currentConfig == null || _currentAdLayout == null) return;
+        if (MessageBox.Show($"레이아웃 '{_currentAdLayout.LayoutName}'을 삭제하시겠습니까?",
+                "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        _currentConfig.AdFileLayouts.Remove(_currentAdLayout);
+        _adLayoutListBox.Items.Remove(_currentAdLayout);
+    }
+
+    private void OnAdLayoutRename(object? sender, EventArgs e)
+    {
+        if (_currentAdLayout == null) return;
+        var name = PromptInput("새 이름을 입력하세요:", "이름 변경", _currentAdLayout.LayoutName);
+        if (name == null || name == _currentAdLayout.LayoutName) return;
+        _currentAdLayout.LayoutName = name;
+        // ListBox refresh
+        int idx = _adLayoutListBox.SelectedIndex;
+        _adLayoutListBox.Items[idx] = _currentAdLayout;
+        _adLayoutListBox.SelectedIndex = idx;
+    }
+
+    private static string? PromptInput(string prompt, string title, string defaultValue)
+    {
+        using var form = new Form
+        {
+            Text = title, Size = new Size(340, 130), StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false
+        };
+        var lbl = new Label { Text = prompt, Dock = DockStyle.Top, Height = 28, TextAlign = ContentAlignment.BottomLeft, Padding = new Padding(8, 0, 0, 0) };
+        var txt = new TextBox { Text = defaultValue, Dock = DockStyle.Top, Margin = new Padding(8) };
+        var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(4) };
+        var btnOk = new Button { Text = "확인", DialogResult = DialogResult.OK, Width = 70 };
+        var btnCancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Width = 70 };
+        btnPanel.Controls.AddRange([btnCancel, btnOk]);
+        form.Controls.AddRange([lbl, txt, btnPanel]);
+        form.AcceptButton = btnOk; form.CancelButton = btnCancel;
+        txt.SelectAll();
+        return form.ShowDialog() == DialogResult.OK ? txt.Text.Trim() : null;
+    }
+
     private void OnAdFieldMappingGridCellChanged(DataGridViewCellEventArgs e)
     {
-        if (_currentConfig == null || e.RowIndex < 0 || e.RowIndex >= _adFieldMappingGrid.Rows.Count) return;
+        if (_currentAdLayout == null || e.RowIndex < 0 || e.RowIndex >= _adFieldMappingGrid.Rows.Count) return;
         if (_adFieldMappingGrid.Rows[e.RowIndex].DataBoundItem is not AdFieldMappingRow row) return;
 
         var inUse = !string.IsNullOrWhiteSpace(row.Column) || !string.IsNullOrWhiteSpace(row.FixedValue);
         if (!inUse)
         {
-            _currentConfig.AdFieldMappings.Remove(row.Field);
+            _currentAdLayout.FieldMappings.Remove(row.Field);
         }
         else
         {
-            _currentConfig.AdFieldMappings[row.Field] = new FieldMapping
+            _currentAdLayout.FieldMappings[row.Field] = new FieldMapping
             {
                 SheetName = row.SheetName,
                 HeaderRow = row.HeaderRow <= 0 ? 1 : row.HeaderRow,
@@ -1138,6 +1285,7 @@ public class ChannelConfigForm : Form
 
     private void OnSaveClick(object? sender, EventArgs e)
     {
+        FlushMatchColumns();
         try
         {
             _channelConfigService.Save(_channelConfigs);

@@ -118,10 +118,13 @@ public class AdLegacyMigrationService
                 allConfigs.Add(config);
             }
 
+            if (config.AdFileLayouts.Count == 0)
+                config.AdFileLayouts.Add(new AdFileLayout { LayoutName = "기본 레이아웃" });
+            var layout = config.AdFileLayouts[0];
             foreach (var (adField, col) in EnumerateLegacyMapping(legacy))
             {
                 if (string.IsNullOrWhiteSpace(col)) continue;
-                config.AdFieldMappings[adField] = new FieldMapping { HeaderRow = legacy.HeaderRow ?? 1, Column = col };
+                layout.FieldMappings[adField] = new FieldMapping { HeaderRow = legacy.HeaderRow ?? 1, Column = col };
             }
 
             result.ChannelFieldMappingsImported++;

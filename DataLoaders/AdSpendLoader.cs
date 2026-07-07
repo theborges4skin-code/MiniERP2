@@ -7,23 +7,101 @@ namespace MiniERP2.DataLoaders;
 
 /// <summary>
 /// 광고비 파일(채널별 광고 리포트)을 읽어 광고비 항목 목록으로 변환합니다. 발주서 OrderLoader와
-/// 같은 구조지만 AdFieldMappings/AdStdField를 사용합니다. xlsx와 csv 모두 지원합니다.
+/// 같은 구조지만 AdFileLayout/AdStdField를 사용합니다. xlsx와 csv 모두 지원합니다.
 /// </summary>
 public class AdSpendLoader
 {
     public bool LastLoadHeaderRowLooksEmpty { get; private set; }
 
-    public async Task<List<AdSpendItem>> LoadFromFileAsync(AdMappingEngine engine, ChannelConfig channelConfig, string filePath, string? password = null)
+    // ── 레이아웃 자동탐지 ──────────────────────────────────────────
+
+    /// <summary>
+    /// 파일의 1~50행을 스캔해 각 레이아웃의 MatchColumns를 모두 포함하는 행이 있는지 확인합니다.
+    /// MatchColumns가 비어있는 레이아웃은 대상에서 제외합니다(수동 선택만 가능).
+    /// </summary>
+    public List<AdFileLayout> DetectLayout(string filePath, IReadOnlyList<AdFileLayout> layouts, string? password = null)
+    {
+        if (layouts.Count == 0) return [];
+        var candidates = layouts.Where(l => l.MatchColumns.Count > 0).ToList();
+        if (candidates.Count == 0) return [];
+
+        return string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase)
+            ? DetectLayoutCsv(filePath, candidates)
+            : DetectLayoutExcel(filePath, candidates, password);
+    }
+
+    private static List<AdFileLayout> DetectLayoutExcel(string filePath, List<AdFileLayout> candidates, string? password)
+    {
+        var matched = new List<AdFileLayout>();
+        try
+        {
+            using var package = ExcelFileOpener.Open(filePath, password);
+            var ws = package.Workbook.Worksheets.FirstOrDefault();
+            if (ws?.Dimension == null) return matched;
+
+            int maxRow = Math.Min(ws.Dimension.End.Row, 50);
+            int maxCol = ws.Dimension.End.Column;
+
+            for (int row = 1; row <= maxRow; row++)
+            {
+                var cellValues = Enumerable.Range(1, maxCol)
+                    .Select(c => ws.Cells[row, c].Value?.ToString() ?? string.Empty)
+                    .Where(v => v.Length > 0)
+                    .ToList();
+
+                foreach (var layout in candidates)
+                {
+                    if (!matched.Contains(layout) &&
+                        layout.MatchColumns.All(mc => cellValues.Any(v => v.Contains(mc, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        matched.Add(layout);
+                    }
+                }
+            }
+        }
+        catch { /* 탐지 실패 시 빈 목록 반환 */ }
+        return matched;
+    }
+
+    private static List<AdFileLayout> DetectLayoutCsv(string filePath, List<AdFileLayout> candidates)
+    {
+        var matched = new List<AdFileLayout>();
+        try
+        {
+            var allRows = ReadCsvRows(filePath);
+            int maxRow = Math.Min(allRows.Count, 50);
+            for (int r = 0; r < maxRow; r++)
+            {
+                var cellValues = allRows[r].Where(v => v.Length > 0).ToList();
+                foreach (var layout in candidates)
+                {
+                    if (!matched.Contains(layout) &&
+                        layout.MatchColumns.All(mc => cellValues.Any(v => v.Contains(mc, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        matched.Add(layout);
+                    }
+                }
+            }
+        }
+        catch { }
+        return matched;
+    }
+
+    // ── 파일 로드 ─────────────────────────────────────────────────
+
+    public async Task<List<AdSpendItem>> LoadFromFileAsync(
+        AdMappingEngine engine, string channelCode, AdFileLayout layout, string filePath, string? password = null)
     {
         LastLoadHeaderRowLooksEmpty = false;
 
         if (string.Equals(Path.GetExtension(filePath), ".csv", StringComparison.OrdinalIgnoreCase))
-            return await LoadFromCsvAsync(engine, channelConfig, filePath);
+            return await LoadFromCsvAsync(engine, channelCode, layout, filePath);
 
-        return await LoadFromExcelAsync(engine, channelConfig, filePath, password);
+        return await LoadFromExcelAsync(engine, channelCode, layout, filePath, password);
     }
 
-    private async Task<List<AdSpendItem>> LoadFromExcelAsync(AdMappingEngine engine, ChannelConfig channelConfig, string filePath, string? password)
+    private async Task<List<AdSpendItem>> LoadFromExcelAsync(
+        AdMappingEngine engine, string channelCode, AdFileLayout layout, string filePath, string? password)
     {
         var items = new List<AdSpendItem>();
 
@@ -31,9 +109,9 @@ public class AdSpendLoader
         {
             using var package = ExcelFileOpener.Open(filePath, password);
 
-            var firstValidMapping = channelConfig.AdFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
+            var firstValidMapping = layout.FieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             if (firstValidMapping == null)
-                throw new InvalidOperationException($"채널 '{channelConfig.ChannelName}'에 유효한 광고비 필드 매핑 설정이 없습니다.");
+                throw new InvalidOperationException($"레이아웃 '{layout.LayoutName}'에 유효한 광고비 필드 매핑 설정이 없습니다.");
 
             var sheetName = firstValidMapping.SheetName;
             var headerRow = firstValidMapping.HeaderRow;
@@ -53,14 +131,14 @@ public class AdSpendLoader
                     headerToIndexMap[header] = col;
             }
 
-            var (stdMap, fixedValues) = BuildStdMaps(channelConfig, headerToIndexMap);
+            var (stdMap, fixedValues) = BuildStdMaps(layout, headerToIndexMap);
             LastLoadHeaderRowLooksEmpty = stdMap.Count == 0 && fixedValues.Count == 0;
 
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
                 var item = new AdSpendItem
                 {
-                    ChannelCode = channelConfig.ChannelCode,
+                    ChannelCode = channelCode,
                     ProductName = NE(GetValue(worksheet, row, stdMap, fixedValues, AdStdField.ProductName)),
                     ProductId   = NE(GetValue(worksheet, row, stdMap, fixedValues, AdStdField.ProductId)),
                     OptionName  = NE(GetValue(worksheet, row, stdMap, fixedValues, AdStdField.OptionName)),
@@ -85,7 +163,8 @@ public class AdSpendLoader
         return items;
     }
 
-    private async Task<List<AdSpendItem>> LoadFromCsvAsync(AdMappingEngine engine, ChannelConfig channelConfig, string filePath)
+    private async Task<List<AdSpendItem>> LoadFromCsvAsync(
+        AdMappingEngine engine, string channelCode, AdFileLayout layout, string filePath)
     {
         var items = new List<AdSpendItem>();
 
@@ -94,7 +173,7 @@ public class AdSpendLoader
             var allRows = ReadCsvRows(filePath);
             if (allRows.Count == 0) return;
 
-            var firstValidMapping = channelConfig.AdFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
+            var firstValidMapping = layout.FieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
             var headerRowIndex = (firstValidMapping?.HeaderRow ?? 1) - 1; // 0-based
 
             if (headerRowIndex >= allRows.Count) return;
@@ -107,7 +186,7 @@ public class AdSpendLoader
                     headerToIndexMap[headers[i]] = i;
             }
 
-            var (stdMap, fixedValues) = BuildStdMaps(channelConfig, headerToIndexMap);
+            var (stdMap, fixedValues) = BuildStdMaps(layout, headerToIndexMap);
             LastLoadHeaderRowLooksEmpty = stdMap.Count == 0 && fixedValues.Count == 0;
 
             for (int rowIdx = headerRowIndex + 1; rowIdx < allRows.Count; rowIdx++)
@@ -122,7 +201,7 @@ public class AdSpendLoader
 
                 var item = new AdSpendItem
                 {
-                    ChannelCode = channelConfig.ChannelCode,
+                    ChannelCode = channelCode,
                     ProductName = NE(CsvGet(AdStdField.ProductName)),
                     ProductId   = NE(CsvGet(AdStdField.ProductId)),
                     OptionName  = NE(CsvGet(AdStdField.OptionName)),
@@ -150,12 +229,12 @@ public class AdSpendLoader
     // ── 공통 헬퍼 ──────────────────────────────────────────────────
 
     private static (Dictionary<AdStdField, int> stdMap, Dictionary<AdStdField, string> fixedValues)
-        BuildStdMaps(ChannelConfig channelConfig, Dictionary<string, int> headerToIndexMap)
+        BuildStdMaps(AdFileLayout layout, Dictionary<string, int> headerToIndexMap)
     {
         var stdMap = new Dictionary<AdStdField, int>();
         var fixedValues = new Dictionary<AdStdField, string>();
 
-        foreach (var (stdField, mapping) in channelConfig.AdFieldMappings)
+        foreach (var (stdField, mapping) in layout.FieldMappings)
         {
             if (!string.IsNullOrEmpty(mapping.FixedValue))
                 fixedValues[stdField] = mapping.FixedValue;
@@ -173,7 +252,7 @@ public class AdSpendLoader
 
         // Try UTF-8; if it contains replacement characters, fall back to EUC-KR (CP949)
         var lines = File.ReadAllLines(filePath, enc);
-        if (lines.Length > 0 && lines[0].Contains('�'))
+        if (lines.Length > 0 && lines[0].Contains('?'))
         {
             try { lines = File.ReadAllLines(filePath, System.Text.Encoding.GetEncoding(949)); }
             catch { /* keep UTF-8 result */ }

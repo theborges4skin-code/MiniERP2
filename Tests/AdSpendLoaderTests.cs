@@ -47,11 +47,10 @@ public class AdSpendLoaderTests
             package.SaveAs(new FileInfo(_excelFilePath));
         }
 
-        var channelConfig = new ChannelConfig
+        var layout = new AdFileLayout
         {
-            ChannelCode = "CH-A",
-            ChannelName = "테스트채널",
-            AdFieldMappings = new Dictionary<AdStdField, FieldMapping>
+            LayoutName = "기본",
+            FieldMappings = new Dictionary<AdStdField, FieldMapping>
             {
                 [AdStdField.ProductName] = new FieldMapping { HeaderRow = 1, Column = "상품명" },
                 [AdStdField.ProductId] = new FieldMapping { HeaderRow = 1, Column = "캠페인" },
@@ -64,7 +63,7 @@ public class AdSpendLoaderTests
             [new AdConditionDetail { HeaderField = AdStdField.ProductName, Operator = AdConditionOperator.Contains, TargetValue = "면도", Logic = ConditionLogic.And }]);
         var engine = new AdMappingEngine(repository, "CH-A");
 
-        var items = await new AdSpendLoader().LoadFromFileAsync(engine, channelConfig, _excelFilePath);
+        var items = await new AdSpendLoader().LoadFromFileAsync(engine, "CH-A", layout, _excelFilePath);
 
         Assert.HasCount(1, items);
         Assert.AreEqual(1234m, items[0].Cost);

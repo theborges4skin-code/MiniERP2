@@ -124,7 +124,8 @@ public class AdLegacyMigrationServiceTests
         Assert.Contains("존재안하는채널", result.UnmatchedChannelNames);
 
         var config = new ChannelConfigService().Load().Single(c => c.ChannelCode == "CH-COUPANG");
-        Assert.AreEqual("상품명", config.AdFieldMappings[AdStdField.ProductName].Column);
+        Assert.IsTrue(config.AdFileLayouts.Count > 0, "레이아웃이 생성되어야 합니다.");
+        Assert.AreEqual("상품명", config.AdFileLayouts[0].FieldMappings[AdStdField.ProductName].Column);
     }
 
     [TestMethod]
