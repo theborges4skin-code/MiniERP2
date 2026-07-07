@@ -922,7 +922,8 @@ public class OfsForm : Form
             ch?.ChannelCode ?? _lastChannelCode ?? "",
             ch?.ChannelName ?? "",
             _outboundRepository,
-            _channelSkuRepository);
+            _channelSkuRepository,
+            _channelConfigService);
         _manualOrderDialog.StartPosition = FormStartPosition.Manual;
         _manualOrderDialog.Location = new Point(Right + 4, Top);
     }

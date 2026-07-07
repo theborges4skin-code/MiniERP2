@@ -1,3 +1,4 @@
+using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 
@@ -15,9 +16,11 @@ public class ManualOrderDialog : Form
     private readonly Action<OfsOrderItem> _addItem;
     private readonly OutboundRepository _outboundRepository;
     private readonly ChannelSkuRepository _channelSkuRepository;
+    private readonly ChannelConfigService _channelConfigService;
 
     private string _channelCode = string.Empty;
     private string _channelName = string.Empty;
+    private Dictionary<StdField, string> _fixedValues = new();
 
     // 교체 모드에서 업데이트할 대상 행. null이면 추가 모드.
     private OfsOrderItem? _replaceTarget;
@@ -34,22 +37,47 @@ public class ManualOrderDialog : Form
         string channelCode,
         string channelName,
         OutboundRepository outboundRepository,
-        ChannelSkuRepository channelSkuRepository)
+        ChannelSkuRepository channelSkuRepository,
+        ChannelConfigService channelConfigService)
     {
         _addItem = addItem;
         _outboundRepository = outboundRepository;
         _channelSkuRepository = channelSkuRepository;
+        _channelConfigService = channelConfigService;
         InitializeComponent();
         SetChannel(channelCode, channelName);
     }
 
-    /// <summary>OFS 툴바 채널 콤보 변경 시 호출 — 버튼 목록을 갱신합니다.</summary>
+    /// <summary>OFS 툴바 채널 콤보 변경 시 호출 — 버튼 목록과 고정값을 갱신합니다.</summary>
     public void SetChannel(string channelCode, string channelName)
     {
         _channelCode = channelCode;
         _channelName = channelName;
         _channelLabel.Text = $"채널:  {channelName}  ({channelCode})";
+        _fixedValues = LoadFixedValues(channelCode);
         RefreshQuickPanel();
+    }
+
+    private Dictionary<StdField, string> LoadFixedValues(string channelCode)
+    {
+        var result = new Dictionary<StdField, string>();
+        if (string.IsNullOrEmpty(channelCode)) return result;
+        var config = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == channelCode);
+        if (config == null) return result;
+        foreach (var (field, mapping) in config.OrderFieldMappings)
+        {
+            if (!string.IsNullOrEmpty(mapping.FixedValue))
+                result[field] = mapping.FixedValue;
+        }
+        return result;
+    }
+
+    private void ApplyFixedValues(OfsOrderItem item)
+    {
+        if (_fixedValues.TryGetValue(StdField.Recipient, out var r)) item.Recipient = r;
+        if (_fixedValues.TryGetValue(StdField.Phone, out var p)) item.Phone = p;
+        if (_fixedValues.TryGetValue(StdField.Address, out var a)) item.Address = a;
+        if (_fixedValues.TryGetValue(StdField.DeliveryMessage, out var d)) item.DeliveryMessage = d;
     }
 
     /// <summary>
@@ -195,12 +223,12 @@ public class ManualOrderDialog : Form
             Height = 32,
             Visible = _replaceTarget == null
         };
-        _btnBlank.Click += (s, e) => _addItem(new OfsOrderItem
+        _btnBlank.Click += (s, e) =>
         {
-            ChannelCode = _channelCode,
-            Quantity = 1,
-            Status = "수동 추가"
-        });
+            var blankItem = new OfsOrderItem { ChannelCode = _channelCode, Quantity = 1, Status = "수동 추가" };
+            ApplyFixedValues(blankItem);
+            _addItem(blankItem);
+        };
         _quickPanel.Controls.Add(_btnBlank);
     }
 
@@ -228,7 +256,7 @@ public class ManualOrderDialog : Form
         using var qtyDialog = new ManualOrderQuantityDialog(cskuCode, productName);
         if (qtyDialog.ShowDialog(this) != DialogResult.OK) return;
 
-        _addItem(new OfsOrderItem
+        var newItem = new OfsOrderItem
         {
             ChannelCode = _channelCode,
             MappedSku = cskuCode,
@@ -236,7 +264,9 @@ public class ManualOrderDialog : Form
             Quantity = qtyDialog.Quantity,
             Status = "수동 추가",
             InvoiceDisplayName = displayName
-        });
+        };
+        ApplyFixedValues(newItem);
+        _addItem(newItem);
     }
 
     private int ButtonWidth()
