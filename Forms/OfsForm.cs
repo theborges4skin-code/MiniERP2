@@ -711,23 +711,10 @@ public class OfsForm : Form
             return;
         }
 
-        // 이미 열린 다이얼로그가 있으면 채널만 갱신하고 앞으로 가져온다.
-        if (_manualOrderDialog == null || _manualOrderDialog.IsDisposed)
-        {
-            _manualOrderDialog = new ManualOrderDialog(
-                AddManualOrderItem,
-                selectedChannel.ChannelCode,
-                selectedChannel.ChannelName,
-                _outboundRepository,
-                _channelSkuRepository);
-            // OFS 창 오른쪽 옆에 붙여서 열기 (겹치지 않도록)
-            _manualOrderDialog.StartPosition = FormStartPosition.Manual;
-            _manualOrderDialog.Location = new Point(Right + 4, Top);
-        }
-        else
-        {
-            _manualOrderDialog.SetChannel(selectedChannel.ChannelCode, selectedChannel.ChannelName);
-        }
+        EnsureManualOrderDialog();
+        // 버튼으로 연 경우: 추가 모드로 복귀 + 현재 채널로 갱신
+        _manualOrderDialog!.SetReplaceTarget(null);
+        _manualOrderDialog.SetChannel(selectedChannel.ChannelCode, selectedChannel.ChannelName);
 
         if (!_manualOrderDialog.Visible)
             _manualOrderDialog.Show(this);
@@ -889,6 +876,29 @@ public class OfsForm : Form
     private void OnOrdersGridSelectionChanged(object? sender, EventArgs e)
     {
         var item = _ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem;
+
+        // 수동 추가 행이면서 CSKU 미지정 → ManualOrderDialog를 교체 모드로 열기
+        if (item?.Status == "수동 추가" && string.IsNullOrWhiteSpace(item.MappedSku))
+        {
+            HideQuickMapPanel();
+            EnsureManualOrderDialog();
+            var rowIdx = _ordersGrid.CurrentRow?.Index ?? -1;
+            _manualOrderDialog!.SetReplaceTarget(item, () =>
+            {
+                if (rowIdx >= 0) _ordersGrid.InvalidateRow(rowIdx);
+                RefreshExportPreview();
+            });
+            if (!_manualOrderDialog.Visible)
+                _manualOrderDialog.Show(this);
+            _manualOrderDialog.BringToFront();
+            return;
+        }
+
+        // 교체 모드 해제 — 다른 행으로 이동하면 추가 모드로 복귀
+        if (_manualOrderDialog?.Visible == true)
+            _manualOrderDialog.SetReplaceTarget(null);
+
+        // 기존 QuickMappingPanel 로직
         if (item == null || (item.Status != "매핑 실패" && item.Status != "매핑 키 없음"))
         {
             HideQuickMapPanel();
@@ -901,6 +911,20 @@ public class OfsForm : Form
         _quickMapPanel.SetChannelCode(channelCode, settlementMode: false);
         _quickMapPanel.LoadItem(item.ProductName ?? "", item.OptionName ?? "", item.Quantity, revenue: null);
         ShowQuickMapPanel();
+    }
+
+    private void EnsureManualOrderDialog()
+    {
+        if (_manualOrderDialog != null && !_manualOrderDialog.IsDisposed) return;
+        var ch = _channelCombo.SelectedItem as Models.SalesChannel;
+        _manualOrderDialog = new ManualOrderDialog(
+            AddManualOrderItem,
+            ch?.ChannelCode ?? _lastChannelCode ?? "",
+            ch?.ChannelName ?? "",
+            _outboundRepository,
+            _channelSkuRepository);
+        _manualOrderDialog.StartPosition = FormStartPosition.Manual;
+        _manualOrderDialog.Location = new Point(Right + 4, Top);
     }
 
     private void ShowQuickMapPanel()
