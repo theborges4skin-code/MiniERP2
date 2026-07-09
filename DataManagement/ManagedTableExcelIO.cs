@@ -44,7 +44,7 @@ public static class ManagedTableExcelIO
         }
 
         sheet.Cells[sheet.Dimension.Address].AutoFitColumns();
-        package.SaveAs(new FileInfo(filePath));
+        ExportHelper.SaveExcel(package, filePath);
         return rowIndex - 2;
     }
 

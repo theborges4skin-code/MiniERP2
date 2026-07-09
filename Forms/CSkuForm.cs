@@ -335,7 +335,7 @@ public class CSkuForm : Form
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
-            package.SaveAs(new FileInfo(filePath));
+            ExportHelper.SaveExcel(package, filePath);
 
             ExportHelper.ShowPostExportDialog(this, filePath);
         }

@@ -660,7 +660,8 @@ public class DataManagementForm : Form
     private TabPage CreateLegacyImportTab()
     {
         var tabPage = new TabPage("레거시 가져오기");
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, Padding = new Padding(10) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, Padding = new Padding(10) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
@@ -675,6 +676,12 @@ public class DataManagementForm : Form
         layout.Controls.Add(CreateChannelConfigImportSection(), 0, 1);
 
         layout.Controls.Add(CreateAdLegacyImportSection(), 0, 2);
+
+        layout.Controls.Add(CreateLegacyImportSection(
+            "거래명세표(엑셀) 마이그레이션",
+            "과거 엑셀 거래명세표 파일들이 있는 폴더를 스캔해 거래처/발행건/품목라인을 DB로 이식합니다. " +
+            "즉시 반영되지 않고 스캔 결과를 검토(포함/제외 체크)한 뒤 커밋하는 별도 창이 열립니다.",
+            "마이그레이션 열기...", (s, e) => new TradeStatementMigrationDialog().ShowDialog(this)), 0, 3);
 
         tabPage.Controls.Add(layout);
         return tabPage;

@@ -24,6 +24,7 @@ public class AdMappingForm : Form
     private readonly SettingsService _settingsService = new();
     private readonly AdSpendLoader _adSpendLoader = new();
     private readonly AdLegacyMigrationService _legacyMigrationService = new();
+    private readonly ProfitFactRepository _profitFactRepository = new();
 
     private ComboBox _channelComboBox = new();
     private TabControl _tabControl = new();
@@ -198,6 +199,10 @@ public class AdMappingForm : Form
         var btnExport = new Button { Text = "분석결과 내보내기", Size = new Size(120, 30) };
         btnExport.Click += OnExportAdResultClick;
         toolStrip.Controls.Add(btnExport);
+
+        var btnSaveReport = new Button { Text = "보고서에 저장", Size = new Size(100, 30) };
+        btnSaveReport.Click += OnSaveAdFactClick;
+        toolStrip.Controls.Add(btnSaveReport);
 
         _unmappedOnlyCheckBox = new CheckBox
         {
@@ -452,6 +457,49 @@ public class AdMappingForm : Form
     /// 시트 구성/열 이름/순서를 동일하게 맞춤: "광고매핑상세"(원본 열 전체 + 판매채널 + 표준화된
     /// AD_* 열 + 매핑결과) / "그룹별_광고비"(판매채널/MAPPED_GROUP/AD_COST, 매핑된 행만 합산).
     /// </summary>
+    private async void OnSaveAdFactClick(object? sender, EventArgs e)
+    {
+        if (_loadedAdItems.Count == 0)
+        {
+            MessageBox.Show("저장할 광고비 분석 결과가 없습니다. 먼저 광고비 파일을 불러오세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var channelCode = _channelComboBox.SelectedValue as string ?? string.Empty;
+        var channelName = (_channelComboBox.SelectedItem as SalesChannel)?.ChannelName ?? channelCode;
+        using var periodDialog = new AdFactPeriodInputDialog(channelCode, channelName, _profitFactRepository);
+        if (periodDialog.ShowDialog(this) != DialogResult.OK) return;
+        var period = periodDialog.SelectedPeriod;
+
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            var items = _loadedAdItems.ToList();
+            var facts = await Task.Run(() =>
+            {
+                return items
+                    .Where(i => !string.IsNullOrEmpty(i.MappedGroup) && i.MatchType != "예외처리")
+                    .GroupBy(i => i.MappedGroup!)
+                    .Select(g => new AdFactRow
+                    {
+                        ProductGroup = g.Key,
+                        AdCost = g.Sum(i => i.Cost),
+                    })
+                    .ToList();
+            });
+
+            await Task.Run(() => _profitFactRepository.SaveAdFacts(period, channelCode, channelName, facts));
+            MessageBox.Show($"보고서 저장 완료 — {period} / {channelName} / {facts.Count}개 그룹", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"보고서 저장 오류: {ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+    }
+
     private async void OnExportAdResultClick(object? sender, EventArgs e)
     {
         if (_loadedAdItems.Count == 0)
@@ -483,7 +531,7 @@ public class AdMappingForm : Form
                 using var package = new ExcelPackage();
                 WriteAdDetailSheetStatic(package.Workbook.Worksheets.Add("광고매핑상세"), channelName, itemsSnapshot);
                 WriteAdGroupSummarySheetStatic(package.Workbook.Worksheets.Add("그룹별_광고비"), channelName, itemsSnapshot);
-                package.SaveAs(new FileInfo(filePath));
+                ExportHelper.SaveExcel(package, filePath);
             });
             ExportHelper.ShowPostExportDialog(this, filePath);
         }

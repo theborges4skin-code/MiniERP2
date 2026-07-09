@@ -19,10 +19,17 @@ public class ChannelConfigForm : Form
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly CourierRepository _courierRepository = new();
     private readonly SalesChannelLegacyMigrationService _legacyMigrationService = new();
+    private readonly DocPartyRepository _docPartyRepository = new();
 
     private List<SalesChannel> _channels = new();
     private List<ChannelConfig> _channelConfigs = new();
     private ChannelConfig? _currentConfig;
+    private DocParty? _currentChannelParty;
+
+    private TextBox _partyRegNo = new(), _partyCompany = new(), _partyCeo = new();
+    private TextBox _partyAddress = new(), _partyBizType = new(), _partyBizItem = new();
+    private TextBox _partyTel = new(), _partyEmail = new();
+    private Label _partyStatusLabel = new();
 
     private PropertyGrid _propertyGrid = new();
     private Label _statusLabel = new();
@@ -174,6 +181,7 @@ public class ChannelConfigForm : Form
         // Right Panel (Tabs: 기본 정보 / 발주서 매핑 / 정산서 매핑)
         var rightTabControl = new TabControl { Dock = DockStyle.Fill };
         rightTabControl.TabPages.Add(CreateBasicInfoTab());
+        rightTabControl.TabPages.Add(CreatePartyInfoTab());
         rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
         rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
         rightTabControl.TabPages.Add(CreateCourierOverrideTab());
@@ -199,6 +207,109 @@ public class ChannelConfigForm : Form
         _propertyGrid.PropertyValueChanged += OnConfigPropertyValueChanged;
         tabPage.Controls.Add(_propertyGrid);
         return tabPage;
+    }
+
+    /// <summary>
+    /// 이 채널로 거래명세표/매출장 등을 발행할 때 공급받는자로 자동 불러올 수 있는 사업자 정보.
+    /// DocPartyTable에 ChannelCode로 연결된 1건을 저장/조회한다(문서관리 화면의 DocParty와 동일 저장소).
+    /// </summary>
+    private TabPage CreatePartyInfoTab()
+    {
+        var tabPage = new TabPage("거래처 정보(공급받는자)");
+        var outer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Padding = new Padding(10) };
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+
+        var tbl = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4 };
+        tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
+        tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+        tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+        tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        for (int i = 0; i < 4; i++) tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+
+        _partyRegNo = new TextBox { Dock = DockStyle.Fill, PlaceholderText = "000-00-00000" };
+        _partyCompany = new TextBox { Dock = DockStyle.Fill };
+        _partyCeo = new TextBox { Dock = DockStyle.Fill };
+        _partyAddress = new TextBox { Dock = DockStyle.Fill };
+        _partyBizType = new TextBox { Dock = DockStyle.Fill };
+        _partyBizItem = new TextBox { Dock = DockStyle.Fill };
+        _partyTel = new TextBox { Dock = DockStyle.Fill };
+        _partyEmail = new TextBox { Dock = DockStyle.Fill };
+
+        static Label L(string text) => new() { Text = text, AutoSize = true, Padding = new Padding(0, 4, 4, 0) };
+
+        tbl.Controls.Add(L("등록번호"), 0, 0); tbl.Controls.Add(_partyRegNo, 1, 0);
+        tbl.Controls.Add(L("상호"), 2, 0);     tbl.Controls.Add(_partyCompany, 3, 0);
+        tbl.Controls.Add(L("대표자"), 0, 1);   tbl.Controls.Add(_partyCeo, 1, 1);
+        tbl.Controls.Add(L("주소"), 2, 1);     tbl.Controls.Add(_partyAddress, 3, 1);
+        tbl.Controls.Add(L("업태"), 0, 2);     tbl.Controls.Add(_partyBizType, 1, 2);
+        tbl.Controls.Add(L("종목"), 2, 2);     tbl.Controls.Add(_partyBizItem, 3, 2);
+        tbl.Controls.Add(L("전화"), 0, 3);     tbl.Controls.Add(_partyTel, 1, 3);
+        tbl.Controls.Add(L("이메일"), 2, 3);   tbl.Controls.Add(_partyEmail, 3, 3);
+
+        var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) };
+        var btnSave = new Button { Text = "저장", Width = 90 };
+        btnSave.Click += OnSavePartyInfoClick;
+        _partyStatusLabel = new Label { AutoSize = true, Padding = new Padding(10, 7, 0, 0), ForeColor = Color.DarkGreen };
+        btnPanel.Controls.Add(btnSave);
+        btnPanel.Controls.Add(_partyStatusLabel);
+
+        outer.Controls.Add(tbl, 0, 0);
+        outer.Controls.Add(btnPanel, 0, 1);
+        tabPage.Controls.Add(outer);
+        return tabPage;
+    }
+
+    private void LoadPartyInfoTab(ChannelConfig config)
+    {
+        _currentChannelParty = _docPartyRepository.GetByChannelCode(config.ChannelCode);
+        var p = _currentChannelParty;
+        _partyRegNo.Text = p?.RegNo ?? "";
+        _partyCompany.Text = p?.CompanyName ?? config.ChannelName;
+        _partyCeo.Text = p?.CeoName ?? "";
+        _partyAddress.Text = p?.Address ?? "";
+        _partyBizType.Text = p?.BizType ?? "";
+        _partyBizItem.Text = p?.BizItem ?? "";
+        _partyTel.Text = p?.Tel ?? "";
+        _partyEmail.Text = p?.Email ?? "";
+        _partyStatusLabel.Text = "";
+    }
+
+    private void ClearPartyInfoTab()
+    {
+        _currentChannelParty = null;
+        _partyRegNo.Text = _partyCompany.Text = _partyCeo.Text = _partyAddress.Text = "";
+        _partyBizType.Text = _partyBizItem.Text = _partyTel.Text = _partyEmail.Text = "";
+        _partyStatusLabel.Text = "";
+    }
+
+    private void OnSavePartyInfoClick(object? sender, EventArgs e)
+    {
+        if (_currentConfig == null) return;
+        if (string.IsNullOrWhiteSpace(_partyCompany.Text))
+        {
+            MessageBox.Show("상호를 입력하세요.", "알림");
+            return;
+        }
+
+        var party = new DocParty
+        {
+            Id = _currentChannelParty?.Id ?? 0,
+            ProfileName = _currentConfig.ChannelName,
+            RegNo = _partyRegNo.Text.Trim(),
+            CompanyName = _partyCompany.Text.Trim(),
+            CeoName = _partyCeo.Text.Trim(),
+            Address = _partyAddress.Text.Trim(),
+            BizType = _partyBizType.Text.Trim(),
+            BizItem = _partyBizItem.Text.Trim(),
+            Tel = _partyTel.Text.Trim(),
+            Email = _partyEmail.Text.Trim(),
+            ChannelCode = _currentConfig.ChannelCode,
+            IsDefaultSupplier = _currentChannelParty?.IsDefaultSupplier ?? false,
+        };
+        _docPartyRepository.Save(party);
+        _currentChannelParty = party;
+        _partyStatusLabel.Text = "저장되었습니다.";
     }
 
     /// <summary>
@@ -401,11 +512,13 @@ public class ChannelConfigForm : Form
         LoadAuxSourceGrid(config);
         LoadAdFieldMappingGrid(config);
         LoadCfsFeeTab(config);
+        LoadPartyInfoTab(config);
     }
 
     private void ClearFieldMappingGrids()
     {
         _currentConfig = null;
+        ClearPartyInfoTab();
         _orderMappingGrid.DataSource = null;
         _settlementMappingGrid.DataSource = null;
         _courierOverrideGrid.DataSource = null;
@@ -462,6 +575,16 @@ public class ChannelConfigForm : Form
                 comboBox.DropDownStyle = ComboBoxStyle.DropDown;
             }
         };
+        // 직접 입력한 값이 Items에 없으면 DataGridView가 검증 오류를 던진다.
+        // CellEndEdit에서 입력값을 Items에 추가해 렌더링 오류를 막고, DataError는 억제한다.
+        _courierOverrideGrid.CellEndEdit += (s, e) =>
+        {
+            if (e.RowIndex < 0 || _courierOverrideGrid.Columns[e.ColumnIndex] is not DataGridViewComboBoxColumn col) return;
+            var val = _courierOverrideGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value as string;
+            if (!string.IsNullOrEmpty(val) && !col.Items.Contains(val))
+                col.Items.Add(val);
+        };
+        _courierOverrideGrid.DataError += (s, e) => e.ThrowException = false;
         _courierOverrideGrid.CellValueChanged += (s, e) => SyncCourierOverrides();
         _courierOverrideGrid.RowsAdded += (s, e) => SyncCourierOverrides();
         _courierOverrideGrid.RowsRemoved += (s, e) => SyncCourierOverrides();

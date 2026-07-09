@@ -426,7 +426,7 @@ public class MasterSkuForm : Form
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
-            package.SaveAs(new FileInfo(filePath));
+            ExportHelper.SaveExcel(package, filePath);
 
             // 기획서 2.2절: 엑셀 내보내기 후 처리 공통 다이얼로그 호출
             ExportHelper.ShowPostExportDialog(this, filePath);

@@ -184,6 +184,138 @@ public static class DbSchema
                 Operator TEXT NOT NULL,
                 TargetValue TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS ClosingRun (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                FolderPath TEXT NOT NULL,
+                Period TEXT NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'draft',
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ClosingStagedFile (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RunId INTEGER NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                ChannelName TEXT NOT NULL DEFAULT '',
+                SourceType TEXT NOT NULL DEFAULT 'settlement',
+                OriginalPath TEXT NOT NULL,
+                FileCreatedAt TEXT NOT NULL DEFAULT '',
+                Status TEXT NOT NULL DEFAULT 'pending',
+                RowCount INTEGER NOT NULL DEFAULT 0,
+                UnmappedCount INTEGER NOT NULL DEFAULT 0,
+                ErrorMessage TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ClosingUnmapped (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RunId INTEGER NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                SourceKey TEXT NOT NULL,
+                OccurrenceCount INTEGER NOT NULL DEFAULT 1,
+                SampleAmount REAL NOT NULL DEFAULT 0,
+                MappedSku TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ProfitFactTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period TEXT NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                ChannelName TEXT NOT NULL DEFAULT '',
+                ProductGroup TEXT NOT NULL,
+                Qty INTEGER NOT NULL DEFAULT 0,
+                Revenue REAL NOT NULL DEFAULT 0,
+                GrossProfit REAL NOT NULL DEFAULT 0,
+                SavedAt TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AdFactTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period TEXT NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                ChannelName TEXT NOT NULL DEFAULT '',
+                ProductGroup TEXT NOT NULL,
+                AdCost REAL NOT NULL DEFAULT 0,
+                SavedAt TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ExportSummaryDraftEntry (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MarketCode TEXT NOT NULL,
+                YearMonth TEXT NOT NULL,
+                Indicator TEXT NOT NULL,
+                Currency TEXT NOT NULL DEFAULT '',
+                Amount REAL NOT NULL DEFAULT 0,
+                SavedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS DocFavoritePhraseTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Title TEXT NOT NULL DEFAULT '',
+                Body TEXT NOT NULL DEFAULT '',
+                Category TEXT NOT NULL DEFAULT '일반',
+                IsFavorite INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS DocPartyTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProfileName TEXT NOT NULL DEFAULT '',
+                RegNo TEXT NOT NULL DEFAULT '',
+                CompanyName TEXT NOT NULL DEFAULT '',
+                CeoName TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                BizType TEXT NOT NULL DEFAULT '',
+                BizItem TEXT NOT NULL DEFAULT '',
+                Tel TEXT NOT NULL DEFAULT '',
+                Email TEXT NOT NULL DEFAULT '',
+                IsDefaultSupplier INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS DocStatementTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                PartyId INTEGER NOT NULL,
+                IssueDate TEXT,
+                IssueYearMonth TEXT NOT NULL DEFAULT '',
+                TotalSupply REAL NOT NULL DEFAULT 0,
+                TotalTax REAL NOT NULL DEFAULT 0,
+                TotalAmount REAL NOT NULL DEFAULT 0,
+                TotalQty REAL NOT NULL DEFAULT 0,
+                CarryoverBalance REAL NOT NULL DEFAULT 0,
+                ReconcileNote TEXT NOT NULL DEFAULT '',
+                TemplateSignature TEXT NOT NULL DEFAULT '',
+                StatusFlags TEXT NOT NULL DEFAULT '',
+                SourceFileName TEXT NOT NULL DEFAULT '',
+                SourceSheetName TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                UNIQUE(SourceFileName, SourceSheetName)
+            );
+
+            CREATE TABLE IF NOT EXISTS DocStatementLineTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StatementId INTEGER NOT NULL,
+                RowNo INTEGER NOT NULL DEFAULT 0,
+                LineDate TEXT,
+                ItemName TEXT NOT NULL DEFAULT '',
+                Spec TEXT NOT NULL DEFAULT '',
+                Qty REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                UnitPriceVatIncluded INTEGER NOT NULL DEFAULT 0,
+                SupplyAmount REAL NOT NULL DEFAULT 0,
+                Tax REAL NOT NULL DEFAULT 0,
+                Total REAL NOT NULL DEFAULT 0,
+                Note TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS DocHistoryTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DocType TEXT NOT NULL DEFAULT '',
+                IssueDate TEXT NOT NULL DEFAULT '',
+                BuyerName TEXT NOT NULL DEFAULT '',
+                TotalAmount REAL NOT NULL DEFAULT 0,
+                FilePath TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT ''
+            );
             """;
         command.ExecuteNonQuery();
 
@@ -230,6 +362,9 @@ public static class DbSchema
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "QuantityNotationFormat", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "SalesChannelTable", "LastUsedDate", "TEXT");
+        EnsureColumn(connection, "DocPartyTable", "ChannelCode", "TEXT");
+        EnsureColumn(connection, "DocPartyTable", "IsActive", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "DocPartyTable", "CreatedAt", "TEXT");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(dotnet add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git fetch *)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(grep -n \"class ShipmentPreviewRow\\\\|ItemsDescription\\\\|public string? Recipient\\\\|public string? Phone\\\\|public string? Address\\\\|ReadOnly = true.*Recipient\\\\|Split\\('\\\\\\\\\\\\\\\\n'\\)\" Forms/OfsForm.cs)",
+      "Bash(grep -n \"ReadOnly = true\\\\|Split\\('\\\\\\\\\\\\\\\\n'\\)\" Forms/OfsForm.cs)",
+      "Bash(grep -n \"Split\\('\\\\\\\\\\\\\\\\n'\\)\" Forms/OfsForm.cs)",
+      "Bash(cd \"c:\\\\Users\\\\thebo\\\\Documents\\\\MiniERP2\" && grep -rn \"Error saving file\\\\|error saving file\" ~/.nuget/packages/epplus*/ 2>/dev/null | head -10 *)",
+      "Read(//c//**)",
+      "Bash(cd \"c:\\\\Users\\\\thebo\\\\Documents\\\\MiniERP2\" && find / -iname \"EPPlus*.dll\" 2>/dev/null | head -5)",
+      "mcp__claude_ai_Notion__notion-search"
     ]
   }
 }

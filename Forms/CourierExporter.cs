@@ -92,7 +92,7 @@ public class CourierExporter
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
-            package.SaveAs(new FileInfo(filePath));
+            ExportHelper.SaveExcel(package, filePath);
 
             return overflowGroups;
         });

@@ -360,7 +360,13 @@ public class SettlementLoader
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
                 var key = NormalizeInvoiceKey(worksheet.Cells[row, keyCol.Value].Value?.ToString());
-                var date = worksheet.Cells[row, dateCol.Value].Value?.ToString();
+                var rawDate = worksheet.Cells[row, dateCol.Value].Value;
+                var date = rawDate switch
+                {
+                    DateTime dtv => dtv.ToString("yyyy-MM-dd"),
+                    double dv => DateTime.FromOADate(dv).ToString("yyyy-MM-dd"),
+                    _ => rawDate?.ToString() ?? ""
+                };
                 if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(date) && !map.ContainsKey(key))
                     map[key] = date;
             }

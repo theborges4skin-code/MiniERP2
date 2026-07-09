@@ -29,9 +29,13 @@ public class SettlementForm : Form
     private readonly SettlementLoader _settlementLoader = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
 
+    private readonly ProfitFactRepository _profitFactRepository = new();
+
     private ExcelLikeDataGridView _settlementGrid = new();
     private BindingList<SettlementData> _settlementRows = new();
     private ChannelType? _activeChannelType;
+    private string _activeChannelCode = string.Empty;
+    private string _activeChannelName = string.Empty;
     private MappingForm? _subscribedMappingForm;
 
     private TableLayoutPanel _profitMainLayout = new();
@@ -93,14 +97,17 @@ public class SettlementForm : Form
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnLoad = new Button { Text = "정산파일 로드", Size = new Size(120, 30) };
         var btnSave = new Button { Text = "결과 저장", Size = new Size(100, 30) };
+        var btnSaveReport = new Button { Text = "보고서 저장", Size = new Size(100, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
 
         btnLoad.Click += OnLoadSettlementClick;
         btnSave.Click += OnSaveSettlementClick;
+        btnSaveReport.Click += OnSaveProfitFactClick;
         btnExport.Click += OnExportSettlementClick;
 
         toolStrip.Controls.Add(btnLoad);
         toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(btnSaveReport);
         toolStrip.Controls.Add(btnExport);
 
         // 99.1: 기본값은 미매핑/확인필요 건만 보이게 — 체크 해제하면 전체(미매핑이 위로 정렬된 채)를 본다.
@@ -438,6 +445,8 @@ public class SettlementForm : Form
 
         _settlementRows.Clear();
         _activeChannelType = channelConfig.ChannelType;
+        _activeChannelCode = channelConfig.ChannelCode;
+        _activeChannelName = channelDialog.SelectedChannel.ChannelName;
         _cfsSummaryText = string.Empty;
         RefreshProfitAnalysisView();
 
@@ -495,30 +504,35 @@ public class SettlementForm : Form
                 DiagnosticsLogger.Log($"[SettlementForm] ({i + 1}/{settlementFilePaths.Count}) '{fileName}' 완료 — {loadedRows.Count}건 (총 누적 {_settlementRows.Count}건, {loadStopwatch.Elapsed.TotalSeconds:F2}s)");
             }
 
-            // 쿠팡로켓: 0행 파일을 계산서발행내역으로 간주하여 세금계산서번호 기준으로 발행일 JOIN
+            // 쿠팡로켓: TaxNo(계산서번호) 백필 + 계산서발행내역 파일이 있으면 TaxDate(작성일자) JOIN
             if (channelConfig.ChannelType == ChannelType.CoupangRocket &&
-                !string.IsNullOrEmpty(channelConfig.RocketInvoiceKeyHeader) &&
-                !string.IsNullOrEmpty(channelConfig.RocketInvoiceDateHeader))
+                !string.IsNullOrEmpty(channelConfig.RocketInvoiceKeyHeader))
             {
-                var invoiceFile = fileRowCounts.FirstOrDefault(r => r.RowCount == 0).FilePath;
-                if (invoiceFile != null)
+                // StdField.TaxNo 매핑 여부에 상관없이 RawValues에서 계산서번호를 직접 채운다.
+                foreach (var row in _settlementRows)
                 {
-                    progressDialog.SetIndeterminate("계산서발행내역 파일 매칭 중...");
-                    var dateMap = await _settlementLoader.BuildRocketInvoiceDateMapAsync(
-                        invoiceFile, channelConfig.RocketInvoiceKeyHeader,
-                        channelConfig.RocketInvoiceDateHeader, channelConfig.RocketInvoiceHeaderRow);
+                    if (!string.IsNullOrEmpty(row.TaxNo)) continue;
+                    if (row.RawValues != null &&
+                        row.RawValues.TryGetValue(channelConfig.RocketInvoiceKeyHeader, out var rv) &&
+                        !string.IsNullOrEmpty(rv))
+                        row.TaxNo = rv;
+                }
 
-                    if (dateMap.Count > 0)
+                // 0행 파일을 계산서발행내역으로 간주하여 작성일자 JOIN
+                if (!string.IsNullOrEmpty(channelConfig.RocketInvoiceDateHeader))
+                {
+                    var invoiceFile = fileRowCounts.FirstOrDefault(r => r.RowCount == 0).FilePath;
+                    if (invoiceFile != null)
                     {
+                        progressDialog.SetIndeterminate("계산서발행내역 파일 매칭 중...");
+                        var dateMap = await _settlementLoader.BuildRocketInvoiceDateMapAsync(
+                            invoiceFile, channelConfig.RocketInvoiceKeyHeader,
+                            channelConfig.RocketInvoiceDateHeader, channelConfig.RocketInvoiceHeaderRow);
+
                         int matchedCount = 0;
                         foreach (var row in _settlementRows)
                         {
-                            // TaxNo는 StdField.TaxNo 매핑으로 이미 채워져 있으나, RawValues를 우선 참조해
-                            // 정규화 키로 검색한다 (계산서번호 열 헤더명과 RocketInvoiceKeyHeader가 일치하면 OK).
-                            var rawKey = row.RawValues != null &&
-                                row.RawValues.TryGetValue(channelConfig.RocketInvoiceKeyHeader, out var rv)
-                                ? rv : row.TaxNo;
-                            var normalizedKey = SettlementLoader.NormalizeInvoiceKey(rawKey);
+                            var normalizedKey = SettlementLoader.NormalizeInvoiceKey(row.TaxNo ?? row.RawValues?.GetValueOrDefault(channelConfig.RocketInvoiceKeyHeader));
                             if (!string.IsNullOrEmpty(normalizedKey) && dateMap.TryGetValue(normalizedKey, out var date))
                             {
                                 row.TaxDate = date;
@@ -528,6 +542,10 @@ public class SettlementForm : Form
                             }
                         }
                         DiagnosticsLogger.Log($"[SettlementForm] 쿠팡로켓 계산서발행일 매칭 완료 — 발행일맵 {dateMap.Count}건, 매칭성공 {matchedCount}/{_settlementRows.Count}건");
+                    }
+                    else
+                    {
+                        DiagnosticsLogger.Log($"[SettlementForm] 쿠팡로켓 계산서발행내역 파일을 찾지 못함 (0행 파일 없음) — 작성일자 JOIN 건너뜀");
                     }
                 }
             }
@@ -671,6 +689,56 @@ public class SettlementForm : Form
         }
     }
 
+    private async void OnSaveProfitFactClick(object? sender, EventArgs e)
+    {
+        if (_settlementRows.Count == 0)
+        {
+            _statusLabel.Text = "저장할 이익분석 결과가 없습니다.";
+            return;
+        }
+
+        using var periodDialog = new PeriodInputDialog(_activeChannelCode, _activeChannelName, _profitFactRepository);
+        if (periodDialog.ShowDialog(this) != DialogResult.OK) return;
+        var period = periodDialog.SelectedPeriod;
+
+        Cursor = Cursors.WaitCursor;
+        _statusLabel.Text = "보고서 저장 중...";
+        try
+        {
+            var channelCode = _activeChannelCode;
+            var channelName = _activeChannelName;
+            var rows = _settlementRows.ToList();
+            var activeChannelType = _activeChannelType;
+
+            var facts = await Task.Run(() =>
+            {
+                return rows
+                    .GroupBy(d => ResolveProductGroupLabel(d, activeChannelType))
+                    .Where(g => g.Key != TotalRowLabel)
+                    .Select(g => new ProfitFactRow
+                    {
+                        ProductGroup = g.Key,
+                        Qty = g.Sum(x => x.Qty),
+                        Revenue = g.Sum(x => x.Revenue),
+                        GrossProfit = g.Sum(x => x.Profit),
+                    })
+                    .ToList();
+            });
+
+            await Task.Run(() => _profitFactRepository.SaveProfitFacts(period, channelCode, channelName, facts));
+            _statusLabel.Text = $"보고서 저장 완료 — {period} / {channelName} / {facts.Count}개 그룹";
+        }
+        catch (Exception ex)
+        {
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"보고서 저장 오류: {ex.Message}";
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+    }
+
     private async void OnExportSettlementClick(object? sender, EventArgs e)
     {
         DiagnosticsLogger.Log("[이익분석 내보내기] 버튼 클릭");
@@ -741,8 +809,8 @@ public class SettlementForm : Form
                 WriteRawDataSheet(package, "원본데이터", rowsSnapshot);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 원본데이터 시트 완료");
 
-                package.SaveAs(new FileInfo(filePath));
-                DiagnosticsLogger.Log("[이익분석 내보내기] 파일 저장 완료");
+                ExportHelper.SaveExcel(package, filePath);
+                DiagnosticsLogger.Log("[이익분析 내보내기] 파일 저장 완료");
             });
 
             _statusLabel.Text = $"저장 완료: {Path.GetFileName(filePath)}";
@@ -1517,7 +1585,7 @@ public class SettlementForm : Form
             }
 
             sheet.Cells.AutoFitColumns();
-            package.SaveAs(new FileInfo(filePath));
+            ExportHelper.SaveExcel(package, filePath);
 
             ExportHelper.ShowPostExportDialog(this, filePath);
         }

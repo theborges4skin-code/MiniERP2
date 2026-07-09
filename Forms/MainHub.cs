@@ -84,11 +84,29 @@ public class MainHub : Form
         adAnalysisButton.Enabled = true;
         sidebarPanel.Controls.Add(adAnalysisButton);
 
+        var reportButton = CreateMenuButton("종합보고서", (s, e) => { FormManager.Show<ReportForm>(); });
+        reportButton.Enabled = true;
+        sidebarPanel.Controls.Add(reportButton);
+
+        var monthlyClosingButton = CreateMenuButton("월별 마감 자동화", (s, e) => { FormManager.Show<MonthlyClosingForm>(); });
+        monthlyClosingButton.Enabled = true;
+        sidebarPanel.Controls.Add(monthlyClosingButton);
+
         var outboundHistoryButton = CreateMenuButton("발주/출고 이력", (s, e) => { FormManager.Show<OutboundHistoryForm>(); });
         outboundHistoryButton.Enabled = true;
         sidebarPanel.Controls.Add(outboundHistoryButton);
 
-        sidebarPanel.Controls.Add(CreateMenuButton("기타/문서관리", (s, e) => { /* FormManager.Show<DocsForm>(); */ }));
+        var exportSummaryButton = CreateMenuButton("수출요약보고서", (s, e) => { FormManager.Show<ExportSummaryForm>(); });
+        exportSummaryButton.Enabled = true;
+        sidebarPanel.Controls.Add(exportSummaryButton);
+
+        var docsButton = CreateMenuButton("기타/문서관리", (s, e) => { FormManager.Show<DocsForm>(); });
+        docsButton.Enabled = true;
+        sidebarPanel.Controls.Add(docsButton);
+
+        var docStatementBrowserButton = CreateMenuButton("거래명세표 조회/내보내기", (s, e) => { FormManager.Show<DocStatementBrowserForm>(); });
+        docStatementBrowserButton.Enabled = true;
+        sidebarPanel.Controls.Add(docStatementBrowserButton);
 
         var legacyImportButton = CreateMenuButton("레거시 데이터 가져오기", OnLegacyImportClick);
         legacyImportButton.Enabled = true;

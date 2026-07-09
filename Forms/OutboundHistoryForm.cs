@@ -5,6 +5,8 @@ using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using OfficeOpenXml;
+using OfficeOpenXml.Style;
 
 namespace MiniERP2.Forms;
 
@@ -32,6 +34,22 @@ public class OutboundHistoryForm : Form
     // 셀 직접 편집은 실수 방지를 위해 즉시 DB에 쓰지 않고, "변경사항 저장"을 눌러야 반영된다.
     // 같은 BindingList 인스턴스가 그대로 변경되므로 참조 동일성으로 추적하면 충분하다.
     private readonly HashSet<OutboundDetail> _dirtyDetails = [];
+
+    private static readonly (string Key, string Label, bool DefaultOn)[] TrackingExportFieldDefs =
+    [
+        ("Recipient",   "수령인",       true),
+        ("TrackingNo",  "운송장번호",   true),
+        ("OrderNo",     "주문번호",     false),
+        ("ChannelCode", "채널",         false),
+        ("ProductName", "품목명",       false),
+        ("MskuCode",    "SKU",          false),
+        ("Qty",         "수량",         false),
+        ("SupplyPrice", "납품가",       false),
+        ("Address",     "주소",         false),
+        ("Status",      "상태",         false),
+        ("CreatedAt",   "발주확정 시점", false),
+        ("ConfirmedAt", "출고확정 시점", false),
+    ];
 
     public OutboundHistoryForm()
     {
@@ -69,11 +87,22 @@ public class OutboundHistoryForm : Form
         _channelComboBox.DisplayMember = "ChannelName";
         _channelComboBox.ValueMember = "ChannelCode";
 
-        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), Width = 100 };
+        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
         _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
 
         var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
         var quickDateMenu = new ContextMenuStrip();
+        quickDateMenu.Items.Add("오늘", null, (_, _) =>
+        {
+            _fromDatePicker.Value = DateTime.Today;
+            _toDatePicker.Value = DateTime.Today;
+        });
+        quickDateMenu.Items.Add("어제", null, (_, _) =>
+        {
+            var yesterday = DateTime.Today.AddDays(-1);
+            _fromDatePicker.Value = yesterday;
+            _toDatePicker.Value = yesterday;
+        });
         quickDateMenu.Items.Add("이번달", null, (_, _) =>
         {
             _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
@@ -106,12 +135,14 @@ public class OutboundHistoryForm : Form
         var btnExport = new Button { Text = "선택 건 택배사 양식 출력", Size = new Size(170, 30) };
         var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 30) };
         var btnSaveChanges = new Button { Text = "변경사항 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
+        var btnExportTracking = new Button { Text = "송장번호 출력", Size = new Size(110, 30) };
 
         btnLoad.Click += OnLoadClick;
         btnImportTracking.Click += OnImportTrackingClick;
         btnExport.Click += OnExportClick;
         btnDelete.Click += OnDeleteClick;
         btnSaveChanges.Click += OnSaveChangesClick;
+        btnExportTracking.Click += OnExportTrackingClick;
 
         toolStrip.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
         toolStrip.Controls.Add(_channelComboBox);
@@ -125,6 +156,7 @@ public class OutboundHistoryForm : Form
         toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnDelete);
         toolStrip.Controls.Add(btnSaveChanges);
+        toolStrip.Controls.Add(btnExportTracking);
 
         // 행 머리글(왼쪽 끝)을 클릭해야 행 전체가 선택된다(선택 삭제/택배사 양식 출력용) — 셀을
         // 클릭하면 그 셀만 선택되어, 오른클릭 복사 시 행 전체가 아니라 클릭한 셀만 복사된다.
@@ -520,5 +552,163 @@ public class OutboundHistoryForm : Form
         if (skippedNoMatch.Count > 0) summary += $" / 일치하는 발주확정 건이 없어 건너뜀: {skippedNoMatch.Count}건";
         if (skippedByUser > 0) summary += $" / 동일 수령인 중 사용자가 건너뜀: {skippedByUser}건";
         _statusLabel.Text = summary;
+    }
+
+    // ─── 송장번호 출력 ──────────────────────────────────────────────────────
+
+    private void OnExportTrackingClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedDetails();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("출력할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var saved = _settingsService.GetLastFolder("TrackingExportFields");
+        var enabledKeys = saved != null
+            ? saved.Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet()
+            : TrackingExportFieldDefs.Where(f => f.DefaultOn).Select(f => f.Key).ToHashSet();
+
+        using var dialog = new TrackingFieldDialog(enabledKeys);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var fieldKeys = dialog.SelectedKeys;
+        _settingsService.SetLastFolder("TrackingExportFields", string.Join(",", fieldKeys));
+
+        if (fieldKeys.Count == 0)
+        {
+            MessageBox.Show("출력할 필드를 하나 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var sfd = new SaveFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            FileName = $"송장번호_{DateTime.Now:yyyyMMdd}.xlsx",
+            InitialDirectory = _settingsService.GetLastFolder("TrackingExport")
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+        _settingsService.SetLastFolder("TrackingExport", Path.GetDirectoryName(sfd.FileName)!);
+
+        try
+        {
+            ExportTrackingToExcel(selected, fieldKeys, sfd.FileName);
+            _statusLabel.Text = $"송장번호 {selected.Count}건을 출력했습니다.";
+            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"내보내기 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private static void ExportTrackingToExcel(List<OutboundDetail> rows, HashSet<string> fieldKeys, string filePath)
+    {
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("송장번호");
+
+        var fields = TrackingExportFieldDefs.Where(f => fieldKeys.Contains(f.Key)).ToList();
+
+        for (int c = 0; c < fields.Count; c++)
+        {
+            var cell = ws.Cells[1, c + 1];
+            cell.Value = fields[c].Label;
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+            cell.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(68, 114, 196));
+            cell.Style.Font.Color.SetColor(System.Drawing.Color.White);
+        }
+
+        for (int r = 0; r < rows.Count; r++)
+        {
+            var d = rows[r];
+            for (int c = 0; c < fields.Count; c++)
+                ws.Cells[r + 2, c + 1].Value = GetTrackingFieldValue(d, fields[c].Key);
+        }
+
+        if (ws.Dimension != null)
+            ws.Cells[ws.Dimension.Address].AutoFitColumns();
+
+        ExportHelper.SaveExcel(package, filePath);
+    }
+
+    private static object? GetTrackingFieldValue(OutboundDetail d, string key) => key switch
+    {
+        "ChannelCode"  => d.ChannelCode,
+        "OrderNo"      => d.OrderNo,
+        "Recipient"    => d.Recipient,
+        "Address"      => d.Address,
+        "ProductName"  => d.ProductName,
+        "MskuCode"     => d.MskuCode,
+        "Qty"          => (object)d.Qty,
+        "SupplyPrice"  => d.SupplyPrice,
+        "TrackingNo"   => d.TrackingNo,
+        "Status"       => d.Status,
+        "CreatedAt"    => d.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+        "ConfirmedAt"  => d.ConfirmedAt?.ToString("yyyy-MM-dd HH:mm"),
+        _              => null,
+    };
+
+    private sealed class TrackingFieldDialog : Form
+    {
+        private readonly Dictionary<string, CheckBox> _checks = new();
+
+        public HashSet<string> SelectedKeys =>
+            _checks.Where(kv => kv.Value.Checked).Select(kv => kv.Key).ToHashSet();
+
+        public TrackingFieldDialog(HashSet<string> enabledKeys)
+        {
+            Text = "출력 필드 선택";
+            Size = new Size(260, 420);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MinimizeBox = false; MaximizeBox = false;
+
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(12, 10, 12, 8) };
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+
+            var checksPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                AutoScroll = true,
+                WrapContents = false,
+            };
+
+            foreach (var (key, label, _) in TrackingExportFieldDefs)
+            {
+                var cb = new CheckBox
+                {
+                    Text = label,
+                    Checked = enabledKeys.Contains(key),
+                    AutoSize = true,
+                    Margin = new Padding(2, 5, 2, 0),
+                };
+                _checks[key] = cb;
+                checksPanel.Controls.Add(cb);
+            }
+
+            var btnPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(0, 6, 0, 0),
+            };
+            var btnCancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Width = 70 };
+            var btnOk = new Button { Text = "출력", DialogResult = DialogResult.OK, Width = 70 };
+            btnPanel.Controls.AddRange([btnCancel, btnOk]);
+
+            layout.Controls.Add(checksPanel, 0, 0);
+            layout.Controls.Add(btnPanel, 0, 1);
+            Controls.Add(layout);
+
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+        }
     }
 }

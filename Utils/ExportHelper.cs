@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MiniERP2.Forms;
 using MiniERP2.Models;
+using OfficeOpenXml;
 
 namespace MiniERP2.Utils;
 
@@ -9,6 +10,19 @@ namespace MiniERP2.Utils;
 /// </summary>
 public static class ExportHelper
 {
+    /// <summary>
+    /// EPPlus 패키지를 지정한 경로에 저장합니다.
+    /// EPPlus의 SaveAs(FileInfo)는 내부에서 File.Delete + FileMode.CreateNew 를 사용하는데,
+    /// 파일이 다른 프로세스(예: Excel)에서 열려 있으면 NTFS 지연 삭제(pending-delete) 때문에
+    /// CreateNew 가 무한 대기 상태에 빠집니다. FileMode.Create 로 직접 스트림을 열면 잠긴
+    /// 경우 즉시 IOException(공유 위반)을 던져 <see cref="DescribeSaveError"/>로 처리됩니다.
+    /// </summary>
+    public static void SaveExcel(ExcelPackage package, string filePath)
+    {
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
+        package.SaveAs(fs);
+    }
+
     /// <summary>
     /// 파일 내보내기 완료 후 사용자에게 다음 행동을 묻는 다이얼로그를 표시하고,
     /// 선택에 따라 파일 또는 폴더를 엽니다.
