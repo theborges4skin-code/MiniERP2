@@ -53,6 +53,49 @@ public class OutboundRepositoryTests
     }
 
     [TestMethod]
+    public void SaveOutbound_SameOrderAndSkuTwice_ReturnsNoConflict()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-1", TrackingNo = "T001", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var conflicts = repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-1", TrackingNo = "T002", MskuCode = "SKU-1", Qty = 2, SupplyPrice = 1500m },
+        });
+
+        Assert.IsEmpty(conflicts);
+    }
+
+    [TestMethod]
+    public void SaveOutbound_DifferentOrdersSameShipmentGroupKeyAndSku_ReportsConflict()
+    {
+        // ShipmentGroupKey 재사용(예: 근본 결함으로 두 발주서가 우연히 같은 키를 갖게 된 경우)으로
+        // 서로 다른 주문이 같은 (ShipmentGroupKey, MskuCode)에 충돌하면, 조용히 덮어쓰지 않고
+        // 호출 측에 알려야 한다.
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-A", ShipmentGroupKey = "SAME-KEY", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        var conflicts = repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-B", ShipmentGroupKey = "SAME-KEY", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        Assert.HasCount(1, conflicts);
+        Assert.AreEqual("ORDER-A", conflicts[0].ExistingOrderNo);
+        Assert.AreEqual("ORDER-B", conflicts[0].NewOrderNo);
+    }
+
+    [TestMethod]
     public void SaveOutbound_DifferentSkusSameOrder_SavesBothRows()
     {
         var repository = new OutboundRepository();
@@ -213,6 +256,9 @@ public class OutboundRepositoryTests
         saved.TrackingNo = "T500";
         saved.Status = "출고확정";
         saved.ConfirmedAt = DateTime.Now;
+        saved.PurchaseChannelCode = "VENDOR_A";
+        saved.PurchasePrice = 700m;
+        saved.WeightKg = 12.5m;
         repository.UpdateDetail(saved);
 
         var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
@@ -220,6 +266,9 @@ public class OutboundRepositoryTests
         Assert.AreEqual(9999m, updated.SupplyPrice);
         Assert.AreEqual("T500", updated.TrackingNo);
         Assert.AreEqual("출고확정", updated.Status);
+        Assert.AreEqual("VENDOR_A", updated.PurchaseChannelCode);
+        Assert.AreEqual(700m, updated.PurchasePrice);
+        Assert.AreEqual(12.5m, updated.WeightKg);
     }
 
     [TestMethod]

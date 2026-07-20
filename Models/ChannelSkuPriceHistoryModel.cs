@@ -14,4 +14,9 @@ public class ChannelSkuPriceHistoryModel
     public decimal OldPrice { get; set; }
     public decimal NewPrice { get; set; }
     public DateTime ChangedAt { get; set; }
+
+    /// <summary>가격조정 사유(예: "원자재 인상"). 가격조정 자동발행(M6)에서 입력받아 채운다.</summary>
+    public string? Reason { get; set; }
+
+    public string? Note { get; set; }
 }

@@ -30,4 +30,16 @@ public class ChannelSkuModel
     /// 비어있으면 발주서의 원본 상품명을 그대로 사용합니다.
     /// </summary>
     public string? InvoiceDisplayName { get; set; }
+
+    /// <summary>담당자가 남기는 자유 메모입니다(예: 옵션 특이사항, 협의 이력 등).</summary>
+    public string? Note { get; set; }
+
+    /// <summary>이 CSKU의 Msku/InvoiceDisplayName/SupplyPrice/Note 중 하나라도 마지막으로 바뀐 시각입니다.</summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>B2B 등 kg 단위 납품에 쓰는 단위입니다(예: "kg", "개", "박스"). 기본값 "kg".</summary>
+    public string Unit { get; set; } = "kg";
+
+    /// <summary>포장 단위 설명입니다(예: "20kg/포대"). 견적서 출력 시 비고에 함께 표시됩니다.</summary>
+    public string? Packing { get; set; }
 }

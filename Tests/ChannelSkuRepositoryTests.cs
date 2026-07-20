@@ -61,6 +61,20 @@ public class ChannelSkuRepositoryTests
     }
 
     [TestMethod]
+    public void Upsert_WithReason_RecordsReasonOnPriceHistory()
+    {
+        // B2B 가격조정 공문(§M6)의 "납품가 반영" 버튼이 의존하는 경로 — 문서 제목을 사유로 남긴다.
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-REASON", Msku = "MSKU-REASON", SupplyPrice = 1000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-REASON", Msku = "MSKU-REASON", SupplyPrice = 1200m }, priceChangeReason: "2026년 3분기 단가 조정에 관한 건");
+
+        var history = repository.GetPriceHistory("COUPANG", "CSKU-REASON");
+
+        Assert.HasCount(1, history);
+        Assert.AreEqual("2026년 3분기 단가 조정에 관한 건", history[0].Reason);
+    }
+
+    [TestMethod]
     public void Upsert_WithInvoiceDisplayName_PersistsAndCanBeUpdated()
     {
         var repository = new ChannelSkuRepository();

@@ -9,4 +9,7 @@ public class ItemModel
     public string? Reserve2 { get; set; }
     public string? Reserve3 { get; set; }
     public string? ProductGroup { get; set; }
+
+    /// <summary>B2B 등 kg 단위 매입/납품에 쓰는 기본 단위입니다. 기본값 "kg".</summary>
+    public string Unit { get; set; } = "kg";
 }

@@ -13,7 +13,7 @@ public class SalesChannelRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder, LastUsedDate
+            SELECT ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder, LastUsedDate, IsPurchase, IsSales
             FROM SalesChannelTable
             ORDER BY GroupName, DisplayOrder, ChannelName
             """;
@@ -29,7 +29,9 @@ public class SalesChannelRepository
                 GroupName = reader.IsDBNull(2) ? null : reader.GetString(2),
                 IsFavorite = reader.GetBoolean(3),
                 DisplayOrder = reader.GetInt32(4),
-                LastUsedDate = reader.IsDBNull(5) ? null : DateTime.Parse(reader.GetString(5))
+                LastUsedDate = reader.IsDBNull(5) ? null : DateTime.Parse(reader.GetString(5)),
+                IsPurchase = reader.GetBoolean(6),
+                IsSales = reader.GetBoolean(7),
             });
         }
         return channels;
@@ -52,19 +54,23 @@ public class SalesChannelRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO SalesChannelTable (ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder)
-            VALUES ($channelCode, $channelName, $groupName, $isFavorite, $displayOrder)
+            INSERT INTO SalesChannelTable (ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder, IsPurchase, IsSales)
+            VALUES ($channelCode, $channelName, $groupName, $isFavorite, $displayOrder, $isPurchase, $isSales)
             ON CONFLICT(ChannelCode) DO UPDATE SET
                 ChannelName = excluded.ChannelName,
                 GroupName = excluded.GroupName,
                 IsFavorite = excluded.IsFavorite,
-                DisplayOrder = excluded.DisplayOrder
+                DisplayOrder = excluded.DisplayOrder,
+                IsPurchase = excluded.IsPurchase,
+                IsSales = excluded.IsSales
             """;
         command.Parameters.AddWithValue("$channelCode", channel.ChannelCode);
         command.Parameters.AddWithValue("$channelName", channel.ChannelName);
         command.Parameters.AddWithValue("$groupName", (object?)channel.GroupName ?? DBNull.Value);
         command.Parameters.AddWithValue("$isFavorite", channel.IsFavorite);
         command.Parameters.AddWithValue("$displayOrder", channel.DisplayOrder);
+        command.Parameters.AddWithValue("$isPurchase", channel.IsPurchase);
+        command.Parameters.AddWithValue("$isSales", channel.IsSales);
         command.ExecuteNonQuery();
     }
 

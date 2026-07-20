@@ -137,4 +137,61 @@ public class DbSchemaMigrationTests
         Assert.AreEqual("발주확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-1").Status);
         Assert.AreEqual("출고확정", results.Single(r => r.OrderNo == "ORDER-LEGACY-2").Status);
     }
+
+    /// <summary>
+    /// B2B 견적관리(§2.1) 도입 전 스키마(IsPurchase/IsSales 컬럼 없음)의 SalesChannelTable을 열었을 때
+    /// 기존 채널 데이터를 잃지 않고, 신규 컬럼이 기본값(IsSales=1/IsPurchase=0)으로 보강되는지 검증한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_OnLegacySalesChannelTable_AddsPurchaseSalesFlagsWithSalesDefault()
+    {
+        using (var legacyConnection = new SqliteConnection($"Data Source={PathProvider.DatabaseFilePath}"))
+        {
+            legacyConnection.Open();
+            using var command = legacyConnection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE SalesChannelTable (
+                    ChannelCode TEXT PRIMARY KEY,
+                    ChannelName TEXT NOT NULL,
+                    GroupName TEXT,
+                    IsFavorite INTEGER NOT NULL DEFAULT 0,
+                    DisplayOrder INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO SalesChannelTable (ChannelCode, ChannelName) VALUES ('CH01', '레거시채널');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var repository = new SalesChannelRepository();
+        var migrated = repository.GetAll().Single(c => c.ChannelCode == "CH01");
+
+        Assert.IsTrue(migrated.IsSales, "기존 채널은 전부 판매 채널이었으므로 IsSales 기본값은 true여야 한다.");
+        Assert.IsFalse(migrated.IsPurchase);
+    }
+
+    /// <summary>B2B 견적관리(§2.7) 도입 전 스키마(Unit 컬럼 없음)의 ItemTable이 기본값 "kg"으로 보강되는지 검증한다.</summary>
+    [TestMethod]
+    public void EnsureCreated_OnLegacyItemTableWithoutUnit_AddsUnitColumnWithKgDefault()
+    {
+        using (var legacyConnection = new SqliteConnection($"Data Source={PathProvider.DatabaseFilePath}"))
+        {
+            legacyConnection.Open();
+            using var command = legacyConnection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE ItemTable (
+                    Sku TEXT PRIMARY KEY,
+                    ItemName TEXT NOT NULL,
+                    CostPrice REAL NOT NULL
+                );
+                INSERT INTO ItemTable (Sku, ItemName, CostPrice) VALUES ('SKU-LEGACY', '레거시품목', 500);
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var repository = new ItemRepository();
+        var migrated = repository.GetBySku("SKU-LEGACY");
+
+        Assert.IsNotNull(migrated);
+        Assert.AreEqual("kg", migrated.Unit);
+    }
 }

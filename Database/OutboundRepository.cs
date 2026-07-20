@@ -13,17 +13,49 @@ public class OutboundRepository
     /// 운송장번호가 이미 입력되어 있으면 "출고확정"으로, 없으면 "발주확정"으로 시작합니다.
     /// 이미 출고확정으로 확정된 건을 다시 저장해도(같은 OrderNo+MskuCode) 상태가 뒤로 되돌아가지
     /// 않도록, 새 운송장번호가 없으면 기존 Status/ConfirmedAt을 그대로 유지합니다.
+    /// (ShipmentGroupKey, MskuCode) UNIQUE 충돌 시 ON CONFLICT가 기존 행을 조용히 덮어쓰므로,
+    /// 저장 전에 같은 키의 기존 행이 있는지 미리 조회해 OrderNo가 다르면(=서로 다른 주문이 충돌)
+    /// 반환값으로 알린다 — 호출 측이 사용자에게 경고할 수 있도록.
     /// </summary>
-    public void SaveOutbound(IEnumerable<OutboundDetail> details)
+    public List<OutboundSaveConflict> SaveOutbound(IEnumerable<OutboundDetail> details)
     {
+        var detailList = details.ToList();
+        var conflicts = new List<OutboundSaveConflict>();
+
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
+
+        using (var checkCommand = connection.CreateCommand())
+        {
+            checkCommand.Transaction = transaction;
+            checkCommand.CommandText = "SELECT OrderNo FROM OutboundDetailTable WHERE ShipmentGroupKey = $key AND MskuCode = $msku";
+            var keyParam = checkCommand.Parameters.Add("$key", SqliteType.Text);
+            var mskuParam = checkCommand.Parameters.Add("$msku", SqliteType.Text);
+
+            foreach (var detail in detailList)
+            {
+                var effectiveKey = string.IsNullOrEmpty(detail.ShipmentGroupKey) ? detail.OrderNo : detail.ShipmentGroupKey;
+                keyParam.Value = effectiveKey;
+                mskuParam.Value = detail.MskuCode;
+
+                if (checkCommand.ExecuteScalar() is string existingOrderNo && existingOrderNo != detail.OrderNo)
+                {
+                    conflicts.Add(new OutboundSaveConflict
+                    {
+                        ShipmentGroupKey = effectiveKey,
+                        MskuCode = detail.MskuCode,
+                        ExistingOrderNo = existingOrderNo,
+                        NewOrderNo = detail.OrderNo,
+                    });
+                }
+            }
+        }
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName)
-            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName)
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $purchaseChannelCode, $purchasePrice, $weightKg)
             ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
                 OrderNo = excluded.OrderNo,
@@ -33,11 +65,14 @@ public class OutboundRepository
                 Recipient = excluded.Recipient,
                 Address = excluded.Address,
                 ProductName = excluded.ProductName,
+                PurchaseChannelCode = excluded.PurchaseChannelCode,
+                PurchasePrice = excluded.PurchasePrice,
+                WeightKg = excluded.WeightKg,
                 Status = CASE WHEN excluded.TrackingNo <> '' THEN '출고확정' ELSE OutboundDetailTable.Status END,
                 ConfirmedAt = CASE WHEN excluded.TrackingNo <> '' AND OutboundDetailTable.ConfirmedAt IS NULL THEN excluded.ConfirmedAt ELSE OutboundDetailTable.ConfirmedAt END
             """;
 
-        foreach (var detail in details)
+        foreach (var detail in detailList)
         {
             var hasTracking = !string.IsNullOrWhiteSpace(detail.TrackingNo);
             var now = DateTime.Now;
@@ -56,10 +91,14 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$recipient", detail.Recipient);
             command.Parameters.AddWithValue("$address", detail.Address);
             command.Parameters.AddWithValue("$productName", detail.ProductName);
+            command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
+            command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
+            command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
             command.ExecuteNonQuery();
         }
 
         transaction.Commit();
+        return conflicts;
     }
 
     /// <summary>
@@ -101,7 +140,8 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 발주/출고 이력 관리창에서 수정한 내용(수량/납품가/운송장번호/상태)을 Id 기준으로 저장합니다.
+    /// 발주/출고 이력 관리창에서 수정한 내용(수량/납품가/운송장번호/상태 + B2B 매입처/원가/중량)을
+    /// Id 기준으로 저장합니다.
     /// </summary>
     public void UpdateDetail(OutboundDetail detail)
     {
@@ -110,11 +150,15 @@ public class OutboundRepository
         command.CommandText = """
             UPDATE OutboundDetailTable
             SET Qty = $qty, SupplyPrice = $supplyPrice, TrackingNo = $trackingNo, Status = $status,
-                ConfirmedAt = $confirmedAt
+                ConfirmedAt = $confirmedAt, PurchaseChannelCode = $purchaseChannelCode,
+                PurchasePrice = $purchasePrice, WeightKg = $weightKg
             WHERE Id = $id
             """;
         command.Parameters.AddWithValue("$qty", detail.Qty);
         command.Parameters.AddWithValue("$supplyPrice", detail.SupplyPrice);
+        command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
+        command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
         command.Parameters.AddWithValue("$trackingNo", detail.TrackingNo);
         command.Parameters.AddWithValue("$status", detail.Status);
         command.Parameters.AddWithValue("$confirmedAt", (object?)detail.ConfirmedAt ?? DBNull.Value);
@@ -161,13 +205,13 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = string.IsNullOrEmpty(channelCode)
             ? """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
                 FROM OutboundDetailTable
                 WHERE CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
                 """
             : """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
                 FROM OutboundDetailTable
                 WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
@@ -203,7 +247,7 @@ public class OutboundRepository
 
         var paramNames = orderNoList.Select((_, i) => $"$o{i}").ToList();
         command.CommandText = $"""
-            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName
+            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
             FROM OutboundDetailTable
             WHERE OrderNo IN ({string.Join(",", paramNames)})
             """;
@@ -262,5 +306,8 @@ public class OutboundRepository
         Recipient = reader.GetString(10),
         Address = reader.GetString(11),
         ProductName = reader.GetString(12),
+        PurchaseChannelCode = reader.IsDBNull(13) ? null : reader.GetString(13),
+        PurchasePrice = reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+        WeightKg = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
     };
 }

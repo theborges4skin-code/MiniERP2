@@ -40,6 +40,35 @@ public class SalesChannelRepositoryTests
     }
 
     [TestMethod]
+    public void Upsert_DefaultFlags_IsSalesTrueAndIsPurchaseFalse()
+    {
+        // 기존 채널은 전부 판매 채널이었으므로, 플래그를 지정하지 않으면 IsSales=true/IsPurchase=false여야 한다.
+        var repository = new SalesChannelRepository();
+        repository.Upsert(new SalesChannel { ChannelCode = "COUPANG", ChannelName = "쿠팡" });
+
+        var saved = repository.GetAll().Single();
+
+        Assert.IsTrue(saved.IsSales);
+        Assert.IsFalse(saved.IsPurchase);
+    }
+
+    [TestMethod]
+    public void Upsert_WithPurchaseFlag_PersistsAndCanBeUpdated()
+    {
+        var repository = new SalesChannelRepository();
+        repository.Upsert(new SalesChannel { ChannelCode = "VENDOR_A", ChannelName = "농산물벤더A", IsPurchase = true, IsSales = false });
+
+        var saved = repository.GetAll().Single();
+        Assert.IsTrue(saved.IsPurchase);
+        Assert.IsFalse(saved.IsSales);
+
+        repository.Upsert(new SalesChannel { ChannelCode = "VENDOR_A", ChannelName = "농산물벤더A", IsPurchase = true, IsSales = true });
+        var updated = repository.GetAll().Single();
+        Assert.IsTrue(updated.IsPurchase);
+        Assert.IsTrue(updated.IsSales, "한 채널이 매입·매출을 동시에 겸할 수 있어야 한다.");
+    }
+
+    [TestMethod]
     public void Delete_RemovesChannel()
     {
         var repository = new SalesChannelRepository();

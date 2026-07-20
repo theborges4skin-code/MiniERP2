@@ -49,6 +49,47 @@ public static class DbSchema
                 ChangedAt TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ChannelSkuFieldHistory (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                CskuCode TEXT NOT NULL,
+                FieldName TEXT NOT NULL,
+                OldValue TEXT,
+                NewValue TEXT,
+                ChangedAt TEXT NOT NULL
+            );
+
+            -- B2B 견적관리(매입측): 채널(매입처)별 마스터SKU 매입가. 매출측 ChannelSkuTable과 대칭 구조.
+            CREATE TABLE IF NOT EXISTS PurchaseSkuTable (
+                ChannelCode TEXT NOT NULL,
+                Msku TEXT NOT NULL,
+                PurchasePrice REAL NOT NULL,
+                Unit TEXT NOT NULL DEFAULT 'kg',
+                Note TEXT,
+                UpdatedAt TEXT,
+                PRIMARY KEY (ChannelCode, Msku)
+            );
+
+            CREATE TABLE IF NOT EXISTS PurchaseSkuPriceHistory (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                Msku TEXT NOT NULL,
+                OldPrice REAL NOT NULL,
+                NewPrice REAL NOT NULL,
+                ChangedAt TEXT NOT NULL,
+                Reason TEXT,
+                Note TEXT
+            );
+
+            -- B2B 견적관리: 발송헤더(ShipmentGroupKey) 1건 = 그 발송에 속한 모든 출고 라인이 공통으로
+            -- 나누는 실운임. OutboundDetailTable.ShipmentGroupKey와 같은 값으로 연결한다.
+            CREATE TABLE IF NOT EXISTS OutboundShipmentTable (
+                ShipmentGroupKey TEXT PRIMARY KEY,
+                FreightCost REAL NOT NULL DEFAULT 0,
+                ShippedAt TEXT,
+                Note TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS CourierMasterTable (
                 CourierName TEXT PRIMARY KEY,
                 HeaderMappingJson TEXT NOT NULL,
@@ -316,6 +357,70 @@ public static class DbSchema
                 FilePath TEXT NOT NULL DEFAULT '',
                 CreatedAt TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS FboCskuMaster (
+                Csku TEXT PRIMARY KEY,
+                FboItemCode TEXT NOT NULL DEFAULT '',
+                ItemName TEXT NOT NULL DEFAULT '',
+                QtyPerBox INTEGER NOT NULL DEFAULT 0,
+                BoxType TEXT NOT NULL DEFAULT '소',
+                FreightType TEXT,
+                IsActive INTEGER NOT NULL DEFAULT 1,
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS FboChannelConfig (
+                ChannelId TEXT PRIMARY KEY,
+                ChannelName TEXT NOT NULL DEFAULT '',
+                ReceiverName TEXT NOT NULL DEFAULT '',
+                Phone TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                ReceiverSeqFormat TEXT NOT NULL DEFAULT '{name}{seq:00}',
+                ChannelLabel TEXT NOT NULL DEFAULT '',
+                OrderNoPrefix TEXT NOT NULL DEFAULT '#FBO',
+                InboundType TEXT NOT NULL DEFAULT '31',
+                IsDefault INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS FboOrder (
+                FboNo TEXT PRIMARY KEY,
+                OrderDate TEXT NOT NULL,
+                ChannelId TEXT NOT NULL,
+                ReceiverName TEXT NOT NULL DEFAULT '',
+                Phone TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                Status TEXT NOT NULL DEFAULT '작성중',
+                Memo TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS FboBox (
+                FboNo TEXT NOT NULL,
+                BoxSeq INTEGER NOT NULL,
+                ReceiverDisplayName TEXT NOT NULL DEFAULT '',
+                MatchKey TEXT NOT NULL DEFAULT '',
+                BoxType TEXT NOT NULL DEFAULT '소',
+                TrackingNo TEXT,
+                TrackingLoadedAt TEXT,
+                Status TEXT NOT NULL DEFAULT '대기',
+                PRIMARY KEY (FboNo, BoxSeq)
+            );
+
+            CREATE TABLE IF NOT EXISTS FboBoxItem (
+                FboNo TEXT NOT NULL,
+                BoxSeq INTEGER NOT NULL,
+                ItemSeq INTEGER NOT NULL,
+                Csku TEXT NOT NULL,
+                FboItemCode TEXT NOT NULL DEFAULT '',
+                ItemName TEXT NOT NULL DEFAULT '',
+                QtyPerBox INTEGER NOT NULL DEFAULT 0,
+                Qty INTEGER NOT NULL DEFAULT 0,
+                ExpiryDate TEXT,
+                PRIMARY KEY (FboNo, BoxSeq, ItemSeq)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_FboBox_MatchKey ON FboBox (MatchKey);
             """;
         command.ExecuteNonQuery();
 
@@ -352,19 +457,41 @@ public static class DbSchema
         EnsureColumn(connection, "ItemTable", "Reserve3", "TEXT");
         EnsureColumn(connection, "ItemTable", "ProductGroup", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "InvoiceDisplayName", "TEXT");
+        EnsureColumn(connection, "ChannelSkuTable", "Note", "TEXT");
+        EnsureColumn(connection, "ChannelSkuTable", "UpdatedAt", "TEXT");
+        EnsureColumn(connection, "ChannelSkuTable", "Unit", "TEXT NOT NULL DEFAULT 'kg'");
+        EnsureColumn(connection, "ChannelSkuTable", "Packing", "TEXT");
+        EnsureColumn(connection, "ChannelSkuPriceHistory", "Reason", "TEXT");
+        EnsureColumn(connection, "ChannelSkuPriceHistory", "Note", "TEXT");
+        EnsureColumn(connection, "ItemTable", "Unit", "TEXT NOT NULL DEFAULT 'kg'");
         EnsureColumn(connection, "OutboundDetailTable", "Status", "TEXT NOT NULL DEFAULT '발송대기'");
         EnsureColumn(connection, "OutboundDetailTable", "ConfirmedAt", "TEXT");
         EnsureColumn(connection, "OutboundDetailTable", "Recipient", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "OutboundDetailTable", "Address", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "OutboundDetailTable", "ProductName", "TEXT NOT NULL DEFAULT ''");
+        // B2B 견적관리(§2.8): 판매 출고 라인에 매입처/원가 스냅샷/중량을 붙인다. CSKU는 별도 컬럼을
+        // 두지 않는다 — MskuCode가 이름과 달리 이미 CSKU 코드를 저장하고 있다(OfsOrderItem.MappedSku).
+        EnsureColumn(connection, "OutboundDetailTable", "PurchaseChannelCode", "TEXT");
+        EnsureColumn(connection, "OutboundDetailTable", "PurchasePrice", "REAL");
+        EnsureColumn(connection, "OutboundDetailTable", "WeightKg", "REAL");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportHeaderRow", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportRecipientHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "QuantityNotationFormat", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "SalesChannelTable", "LastUsedDate", "TEXT");
+        // B2B 견적관리(§2.1): 한 채널이 매입·매출을 동시에 겸할 수 있어 별도 VendorTable 대신 플래그로
+        // 구분한다. 기존 채널은 전부 판매 채널이었으므로 IsSales 기본값 1, IsPurchase 기본값 0.
+        EnsureColumn(connection, "SalesChannelTable", "IsPurchase", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "SalesChannelTable", "IsSales", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "DocPartyTable", "ChannelCode", "TEXT");
         EnsureColumn(connection, "DocPartyTable", "IsActive", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "DocPartyTable", "CreatedAt", "TEXT");
+        EnsureColumn(connection, "DocPartyTable", "StampImagePath", "TEXT");
+        // FBO 발주처리 — 하배출고이서(택배사 출력양식)용 품목 표시명을 내부 관리용 ItemName과
+        // 분리한다(OFS ChannelSkuTable.InvoiceDisplayName과 같은 목적). FboBoxItem은 저장 시점의
+        // 스냅샷을 갖는다.
+        EnsureColumn(connection, "FboCskuMaster", "InvoiceDisplayName", "TEXT");
+        EnsureColumn(connection, "FboBoxItem", "InvoiceDisplayName", "TEXT");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.
