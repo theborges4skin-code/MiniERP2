@@ -10,6 +10,9 @@ public enum ChannelType
     AmazonUs,
     AmazonJp,
     Partner,
+
+    /// <summary>B2B 매입/납품 거래처(§D1). 기존 Partner와 완전히 별도로 병존한다(§D8 — 흡수/치환 안 함).</summary>
+    B2B,
     Other,
 }
 
@@ -21,13 +24,14 @@ public static class ChannelTypeExtensions
     /// </summary>
     public static bool IsMarketplace(this ChannelType type) => type switch
     {
-        ChannelType.Partner or ChannelType.Other => false,
+        ChannelType.Partner or ChannelType.B2B or ChannelType.Other => false,
         _ => true,
     };
 
     public static string ToKoreanLabel(this ChannelType type) => type switch
     {
         ChannelType.Partner       => "거래처",
+        ChannelType.B2B           => "B2B 거래처",
         ChannelType.Other         => "기타",
         ChannelType.CoupangGeneral => "쿠팡 일반",
         ChannelType.CoupangRocket  => "쿠팡 로켓",

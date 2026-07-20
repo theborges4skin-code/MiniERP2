@@ -23,6 +23,10 @@ public class OutboundHistoryForm : Form
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly CourierExporter _courierExporter = new();
     private readonly SettingsService _settingsService = new();
+    private readonly ItemRepository _itemRepository = new();
+    private readonly ChannelSkuRepository _channelSkuRepository = new();
+    private readonly PurchaseSkuRepository _purchaseSkuRepository = new();
+    private readonly OutboundShipmentRepository _outboundShipmentRepository = new();
 
     private ComboBox _channelComboBox = new();
     private DateTimePicker _fromDatePicker = new();
@@ -34,6 +38,13 @@ public class OutboundHistoryForm : Form
     // 셀 직접 편집은 실수 방지를 위해 즉시 DB에 쓰지 않고, "변경사항 저장"을 눌러야 반영된다.
     // 같은 BindingList 인스턴스가 그대로 변경되므로 참조 동일성으로 추적하면 충분하다.
     private readonly HashSet<OutboundDetail> _dirtyDetails = [];
+
+    // B2B 견적관리(§M5) — 발송헤더(운임)는 라인과 별도 저장소(OutboundShipmentTable)라 여기서
+    // ShipmentGroupKey 기준으로 캐시해두고, "운임" 열 편집 시 이 캐시만 갱신했다가 저장 시점에
+    // 한꺼번에 반영한다(그리드 한 줄=라인 1개이지만 운임은 발송헤더 1건에 귀속되는 값이라 같은
+    // ShipmentGroupKey를 가진 여러 줄이 항상 같은 운임을 보여줘야 함).
+    private Dictionary<string, decimal> _freightByShipmentKey = new();
+    private readonly HashSet<string> _dirtyShipmentKeys = [];
 
     private static readonly (string Key, string Label, bool DefaultOn)[] TrackingExportFieldDefs =
     [
@@ -59,10 +70,10 @@ public class OutboundHistoryForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_dirtyDetails.Count == 0) return;
+        if (_dirtyDetails.Count == 0 && _dirtyShipmentKeys.Count == 0) return;
 
         var result = MessageBox.Show(
-            $"저장하지 않은 변경사항이 {_dirtyDetails.Count}건 있습니다. 저장하지 않고 닫으시겠습니까?",
+            $"저장하지 않은 변경사항이 {_dirtyDetails.Count + _dirtyShipmentKeys.Count}건 있습니다. 저장하지 않고 닫으시겠습니까?",
             "저장되지 않은 변경사항", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (result != DialogResult.Yes) e.Cancel = true;
     }
@@ -87,48 +98,9 @@ public class OutboundHistoryForm : Form
         _channelComboBox.DisplayMember = "ChannelName";
         _channelComboBox.ValueMember = "ChannelCode";
 
-        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
-        _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
-
-        var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
-        var quickDateMenu = new ContextMenuStrip();
-        quickDateMenu.Items.Add("오늘", null, (_, _) =>
-        {
-            _fromDatePicker.Value = DateTime.Today;
-            _toDatePicker.Value = DateTime.Today;
-        });
-        quickDateMenu.Items.Add("어제", null, (_, _) =>
-        {
-            var yesterday = DateTime.Today.AddDays(-1);
-            _fromDatePicker.Value = yesterday;
-            _toDatePicker.Value = yesterday;
-        });
-        quickDateMenu.Items.Add("이번달", null, (_, _) =>
-        {
-            _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
-            _toDatePicker.Value = DateTime.Today;
-        });
-        quickDateMenu.Items.Add("저번달", null, (_, _) =>
-        {
-            var prev = DateTime.Today.AddMonths(-1);
-            _fromDatePicker.Value = new DateTime(prev.Year, prev.Month, 1);
-            _toDatePicker.Value = new DateTime(prev.Year, prev.Month, DateTime.DaysInMonth(prev.Year, prev.Month));
-        });
-        quickDateMenu.Items.Add("이번 분기", null, (_, _) =>
-        {
-            var t = DateTime.Today;
-            _fromDatePicker.Value = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
-            _toDatePicker.Value = t;
-        });
-        quickDateMenu.Items.Add("지난 분기", null, (_, _) =>
-        {
-            var t = DateTime.Today;
-            var qStart = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
-            _fromDatePicker.Value = qStart.AddMonths(-3);
-            _toDatePicker.Value = qStart.AddDays(-1);
-        });
-        btnQuickDate.ContextMenuStrip = quickDateMenu;
-        btnQuickDate.Click += (s, e) => quickDateMenu.Show(btnQuickDate, new Point(0, btnQuickDate.Height));
+        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
+        _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
+        var btnQuickDate = DateRangeQuickSelect.CreateButton(_fromDatePicker, _toDatePicker);
 
         var btnLoad = new Button { Text = "조회", Size = new Size(80, 30) };
         var btnImportTracking = new Button { Text = "운송장번호 불러오기", Size = new Size(150, 30) };
@@ -179,11 +151,19 @@ public class OutboundHistoryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "운송장번호", Name = "TrackingNo", DataPropertyName = "TrackingNo", Width = 120 },
+            // 운송장번호 불러오기에서 이름은 같지만 운송장번호가 여럿이라 자동 적용을 못 하고 사용자가
+            // 건너뛴 건을 표시한다(DB 컬럼 아님 — 이번 조회 세션에 한해서만 유지되는 안내용 열).
+            new DataGridViewTextBoxColumn { HeaderText = "확인", Name = "ReviewFlag", Width = 90, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { ForeColor = Color.OrangeRed, Font = new Font("맑은 고딕", 9, FontStyle.Bold) } },
             new DataGridViewComboBoxColumn { HeaderText = "상태", Name = "Status", DataPropertyName = "Status", Width = 90, Items = { "발주확정", "출고확정" }, FlatStyle = FlatStyle.Flat },
             new DataGridViewTextBoxColumn { HeaderText = "발주확정 시점", Name = "CreatedAt", DataPropertyName = "CreatedAt", Width = 130, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "출고확정 시점", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130, ReadOnly = true }
         );
+        AddB2BMarginColumns();
         _historyGrid.CellEndEdit += OnHistoryGridCellEndEdit;
+        // ExcelLikeDataGridView의 붙여넣기(Ctrl+V)는 셀 값을 코드로 직접 대입해서(cell.Value = ...)
+        // CellValueChanged만 발생시키고 CellEndEdit는 발생시키지 않는다 — 운송장번호를 붙여넣기로
+        // 채운 뒤 "변경사항 저장"을 눌러도 아무 것도 저장되지 않던 버그의 원인이라 함께 구독한다.
+        _historyGrid.CellValueChanged += OnHistoryGridCellEndEdit;
         // 옛 용어("발송대기"/"발송완료")로 저장된 데이터가 DB 정규화 전에 이미 메모리에 올라온 경우 등
         // 상태 콤보(Items)에 없는 값이 들어와도 창이 죽지 않도록 방어한다(DataGridViewComboBoxCell 오류).
         _historyGrid.DataError += (s, e) => { e.ThrowException = false; };
@@ -196,12 +176,93 @@ public class OutboundHistoryForm : Form
         Controls.Add(mainLayout);
     }
 
+    /// <summary>
+    /// B2B 견적관리(§M5) — 매입처/원가/중량/운임/물류비/실질원가/마진 열을 추가한다. 기존
+    /// 마켓플레이스 채널 이력은 이 값들을 전혀 쓰지 않으므로(WeightKg 등이 null) 전부 빈 칸으로
+    /// 보이고 기존 사용에 영향이 없다.
+    /// </summary>
+    private void AddB2BMarginColumns()
+    {
+        var purchaseChannels = new List<SalesChannel> { new() { ChannelCode = "", ChannelName = "" } };
+        purchaseChannels.AddRange(_salesChannelRepository.GetAll().Where(c => c.IsPurchase));
+
+        _historyGrid.Columns.AddRange(
+            new DataGridViewComboBoxColumn
+            {
+                HeaderText = "매입처", Name = "PurchaseChannelCode", DataPropertyName = "PurchaseChannelCode", Width = 100,
+                DataSource = purchaseChannels, DisplayMember = "ChannelName", ValueMember = "ChannelCode", FlatStyle = FlatStyle.Flat,
+            },
+            new DataGridViewTextBoxColumn { HeaderText = "원가/kg", Name = "PurchasePrice", DataPropertyName = "PurchasePrice", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "중량(kg)", Name = "WeightKg", DataPropertyName = "WeightKg", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N2", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "발송운임", Name = "FreightCost", DataPropertyName = string.Empty, Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "물류비/kg", Name = "FreightPerKg", DataPropertyName = string.Empty, Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight, ForeColor = Color.DimGray } },
+            new DataGridViewTextBoxColumn { HeaderText = "실질원가/kg", Name = "EffectiveCost", DataPropertyName = string.Empty, Width = 90, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight, ForeColor = Color.DimGray } },
+            new DataGridViewTextBoxColumn { HeaderText = "마진", Name = "Margin", DataPropertyName = string.Empty, Width = 90, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight, ForeColor = Color.DimGray } }
+        );
+        _historyGrid.CellFormatting += OnB2BColumnCellFormatting;
+    }
+
+    /// <summary>
+    /// "발송운임"은 발송헤더 캐시(_freightByShipmentKey)에서, 나머지 3개(물류비/kg·실질원가/kg·마진)는
+    /// 그 값과 라인 데이터로부터 매번 다시 계산해서 보여준다(§3 산출 규칙). WeightKg이 없는 줄(=
+    /// B2B 대상이 아닌 마켓플레이스 라인)은 빈 칸으로 남긴다 — 이 열들을 안 쓰면 기존 화면과 동일.
+    /// </summary>
+    private void OnB2BColumnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
+        var columnName = _historyGrid.Columns[e.ColumnIndex].Name;
+        if (columnName is not ("FreightCost" or "FreightPerKg" or "EffectiveCost" or "Margin")) return;
+        if (_historyGrid.Rows[e.RowIndex].DataBoundItem is not OutboundDetail detail) return;
+
+        if (columnName == "FreightCost")
+        {
+            e.Value = _freightByShipmentKey.TryGetValue(detail.ShipmentGroupKey, out var freight) ? freight : 0m;
+            e.FormattingApplied = true;
+            return;
+        }
+
+        if (detail.WeightKg is not { } weightKg || weightKg <= 0)
+        {
+            e.Value = null;
+            e.FormattingApplied = true;
+            return;
+        }
+
+        var totalWeight = _historyGrid.Rows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as OutboundDetail)
+            .Where(d => d != null && d.ShipmentGroupKey == detail.ShipmentGroupKey)
+            .Sum(d => d!.WeightKg ?? 0m);
+        var hasFreight = _freightByShipmentKey.TryGetValue(detail.ShipmentGroupKey, out var freightCost) && freightCost > 0;
+        var freightPerKg = hasFreight && totalWeight > 0 ? freightCost / totalWeight : 0m;
+
+        if (columnName == "FreightPerKg")
+        {
+            e.Value = freightPerKg;
+            e.FormattingApplied = true;
+            return;
+        }
+
+        var costPerKg = detail.PurchasePrice ?? 0m;
+        var effectiveCost = costPerKg + freightPerKg;
+
+        if (columnName == "EffectiveCost")
+        {
+            e.Value = effectiveCost;
+            e.FormattingApplied = true;
+            return;
+        }
+
+        // Margin
+        e.Value = (detail.SupplyPrice - effectiveCost) * weightKg;
+        e.FormattingApplied = true;
+    }
+
     private void OnLoadClick(object? sender, EventArgs e)
     {
-        if (_dirtyDetails.Count > 0)
+        if (_dirtyDetails.Count > 0 || _dirtyShipmentKeys.Count > 0)
         {
             var result = MessageBox.Show(
-                $"저장하지 않은 변경사항이 {_dirtyDetails.Count}건 있습니다. 저장하지 않고 다시 조회하시겠습니까?",
+                $"저장하지 않은 변경사항이 {_dirtyDetails.Count + _dirtyShipmentKeys.Count}건 있습니다. 저장하지 않고 다시 조회하시겠습니까?",
                 "저장되지 않은 변경사항", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (result != DialogResult.Yes) return;
         }
@@ -213,6 +274,9 @@ public class OutboundHistoryForm : Form
         var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to);
         EnsureStatusItemsInclude(details.Select(d => d.Status));
         _dirtyDetails.Clear();
+        _dirtyShipmentKeys.Clear();
+        _freightByShipmentKey = _outboundShipmentRepository.GetByKeys(details.Select(d => d.ShipmentGroupKey))
+            .ToDictionary(s => s.ShipmentGroupKey, s => s.FreightCost);
         _suppressCellEndEdit = true;
         _historyGrid.DataSource = new BindingList<OutboundDetail>(details);
         _suppressCellEndEdit = false;
@@ -256,13 +320,41 @@ public class OutboundHistoryForm : Form
 
     /// <summary>
     /// 그리드 셀을 직접 수정(수량/납품가/운송장번호/상태)해도 실수 방지를 위해 바로 DB에 쓰지
-    /// 않고, 변경된 항목만 표시해두었다가 "변경사항 저장"을 눌러야 한꺼번에 반영된다.
+    /// 않고, 변경된 항목만 표시해두었다가 "변경사항 저장"을 눌러야 한꺼번에 반영된다. 타이핑 편집
+    /// (CellEndEdit)뿐 아니라 붙여넣기(CellValueChanged로만 감지됨)도 감지해야 하므로 두 이벤트
+    /// 모두 이 핸들러를 구독한다.
     /// </summary>
     private void OnHistoryGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
         if (_suppressCellEndEdit) return;
         if (e.RowIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
+        if (e.ColumnIndex < 0 || e.ColumnIndex >= _historyGrid.Columns.Count) return;
+        var columnName = _historyGrid.Columns[e.ColumnIndex].Name;
+        // "확인" 열은 운송장번호 불러오기가 안내용으로 채우는 표시일 뿐 실제 편집 대상이 아니므로 제외.
+        if (columnName == "ReviewFlag") return;
         if (_historyGrid.Rows[e.RowIndex].DataBoundItem is not OutboundDetail detail) return;
+
+        // "발송운임"은 라인이 아니라 발송헤더(ShipmentGroupKey) 소속 값이라 OutboundDetail의
+        // 필드가 아니다 — 별도 캐시에 반영하고, 같은 발송(합포장)의 다른 줄도 화면에 즉시 반영한다.
+        if (columnName == "FreightCost")
+        {
+            var raw = _historyGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
+            var freight = decimal.TryParse(raw, out var parsed) ? parsed : 0m;
+            _freightByShipmentKey[detail.ShipmentGroupKey] = freight;
+            _dirtyShipmentKeys.Add(detail.ShipmentGroupKey);
+            InvalidateRowsForShipment(detail.ShipmentGroupKey);
+            _statusLabel.Text = $"운임 변경 {_dirtyShipmentKeys.Count}건 + 이력 변경 {_dirtyDetails.Count}건이 저장되지 않았습니다. '변경사항 저장'을 눌러주세요.";
+            return;
+        }
+
+        // 매입처를 고르면(또는 지우면) 원가/kg을 자동으로 채워준다 — 매입처 지정 시 그 매입가,
+        // 아니면 마스터DB 대표원가(CostPrice)로 스냅샷(§3 원가 스냅샷 규칙). 사용자가 원가 칸을
+        // 직접 고친 뒤에는 매입처를 다시 바꾸기 전까지 그 값을 건드리지 않는다.
+        if (columnName == "PurchaseChannelCode")
+        {
+            detail.PurchasePrice = ResolveCostSnapshot(detail);
+            _historyGrid.Rows[e.RowIndex].Cells["PurchasePrice"].Value = detail.PurchasePrice;
+        }
 
         if (detail.Status == "출고확정" && detail.ConfirmedAt is null)
         {
@@ -278,9 +370,32 @@ public class OutboundHistoryForm : Form
         _statusLabel.Text = $"{_dirtyDetails.Count}건의 변경사항이 저장되지 않았습니다. '변경사항 저장'을 눌러주세요.";
     }
 
+    /// <summary>매입처 지정 시 그 매입가, 없으면 마스터DB 대표원가(CostPrice)를 원가/kg 스냅샷으로 반환한다.</summary>
+    private decimal ResolveCostSnapshot(OutboundDetail detail)
+    {
+        var masterSku = _channelSkuRepository.ResolveMasterSku(detail.ChannelCode, detail.MskuCode);
+
+        if (!string.IsNullOrEmpty(detail.PurchaseChannelCode))
+        {
+            var purchaseSku = _purchaseSkuRepository.GetByChannelAndMsku(detail.PurchaseChannelCode, masterSku);
+            if (purchaseSku != null) return purchaseSku.PurchasePrice;
+        }
+
+        return _itemRepository.GetBySku(masterSku)?.CostPrice ?? 0m;
+    }
+
+    private void InvalidateRowsForShipment(string shipmentGroupKey)
+    {
+        foreach (DataGridViewRow row in _historyGrid.Rows)
+        {
+            if (row.DataBoundItem is OutboundDetail d && d.ShipmentGroupKey == shipmentGroupKey)
+                _historyGrid.InvalidateRow(row.Index);
+        }
+    }
+
     private void OnSaveChangesClick(object? sender, EventArgs e)
     {
-        if (_dirtyDetails.Count == 0)
+        if (_dirtyDetails.Count == 0 && _dirtyShipmentKeys.Count == 0)
         {
             MessageBox.Show("저장할 변경사항이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -291,9 +406,22 @@ public class OutboundHistoryForm : Form
             _outboundRepository.UpdateDetail(detail);
         }
 
+        foreach (var shipmentKey in _dirtyShipmentKeys)
+        {
+            _outboundShipmentRepository.Upsert(new OutboundShipmentModel
+            {
+                ShipmentGroupKey = shipmentKey,
+                FreightCost = _freightByShipmentKey.TryGetValue(shipmentKey, out var freight) ? freight : 0m,
+            });
+        }
+
         var savedCount = _dirtyDetails.Count;
+        var savedShipmentCount = _dirtyShipmentKeys.Count;
         _dirtyDetails.Clear();
-        _statusLabel.Text = $"{savedCount}건의 변경사항을 저장했습니다.";
+        _dirtyShipmentKeys.Clear();
+        _statusLabel.Text = savedShipmentCount > 0
+            ? $"이력 {savedCount}건, 운임 {savedShipmentCount}건의 변경사항을 저장했습니다."
+            : $"{savedCount}건의 변경사항을 저장했습니다.";
     }
 
     /// <summary>
@@ -409,9 +537,11 @@ public class OutboundHistoryForm : Form
     }
 
     /// <summary>
-    /// 운송장 결과 파일(택배사 프로그램에서 받은 엑셀)을 불러와 수령인 기준으로 매칭하고 운송장번호를
-    /// 채운다. 주소/품목이 운송장 파일엔 불분명하게 나오므로 매칭은 수령인만으로 하고, 동일 수령인이
-    /// 여러 건이면 사용자에게 직접 고르게 한다.
+    /// 운송장 결과 파일(택배사 프로그램에서 받은 엑셀)을 불러와 이름+주소가 일치하는 발주확정 건에
+    /// 운송장번호를 채운다. 이름+주소가 같은 건이 여럿이어도 그 이름에 대해 파일에서 찾은 운송장번호가
+    /// 1개뿐이면 무조건 합포장된 것으로 보고 전부 같은 운송장번호를 적용하고(1번 규칙), 운송장번호가
+    /// 2개 이상 발견되면(같은 사람이 여러 번 주문했거나 이름만 같은 동명이인일 수 있어 시스템이 판단할
+    /// 수 없으므로) 사용자가 직접 어느 건에 어느 운송장번호를 적용할지 골라야 한다(2/3번 규칙).
     /// </summary>
     private void OnImportTrackingClick(object? sender, EventArgs e)
     {
@@ -490,68 +620,111 @@ public class OutboundHistoryForm : Form
             return;
         }
 
-        // 매칭 대상은 운송장번호가 아직 없는(=발주확정 상태) 건으로 한정한다. 수령인별로 모아두면
-        // 동일 수령인 다건을 한 번에 비교할 수 있다.
-        var candidatesByRecipient = details
-            .Where(d => string.IsNullOrWhiteSpace(d.TrackingNo))
-            .GroupBy(d => d.Recipient, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-
-        var appliedCount = 0;
-        var skippedNoMatch = new List<string>();
-        var skippedByUser = 0;
-
+        // 운송장 파일에서 (수령인 이름 → 그 이름에 대해 발견된 고유 운송장번호 목록)을 먼저 전부
+        // 모은다. 같은 수령인이 여러 줄로 나와도(예: 합포장 시 품목별로 줄이 나뉘는 택배사 양식)
+        // 여기서 중복 없이 합쳐지므로, 파일 행 하나하나가 아니라 이름당 한 번씩만 판단하면 된다.
+        var trackingNosByRecipientName = new Dictionary<string, List<string>>();
         for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
         {
             var recipient = worksheet.Cells[row, recipientCol.Value].Value?.ToString()?.Trim();
             var trackingNo = worksheet.Cells[row, trackingCol.Value].Value?.ToString()?.Trim();
             if (string.IsNullOrWhiteSpace(recipient) || string.IsNullOrWhiteSpace(trackingNo)) continue;
 
-            if (!candidatesByRecipient.TryGetValue(recipient, out var candidates) || candidates.Count == 0)
+            var key = NormalizeForMatch(recipient);
+            if (!trackingNosByRecipientName.TryGetValue(key, out var list))
+                trackingNosByRecipientName[key] = list = [];
+            if (!list.Contains(trackingNo, StringComparer.OrdinalIgnoreCase)) list.Add(trackingNo);
+        }
+
+        // 매칭 대상은 운송장번호가 아직 없는(=발주확정 상태) 건. 이름+주소가 완전히 같은 건들만 한
+        // 그룹으로 묶는다 — 이름만 같은 동명이인(주소 다름)은 서로 다른 배송으로 취급해야 하므로
+        // 별도 그룹이 된다(3번 규칙).
+        var candidateGroups = details
+            .Where(d => string.IsNullOrWhiteSpace(d.TrackingNo))
+            .GroupBy(d => (Name: NormalizeForMatch(d.Recipient), Addr: NormalizeForMatch(d.Address)));
+
+        var appliedCount = 0;
+        var autoBundledGroups = 0;
+        var userResolvedCount = 0;
+        var needsReviewIds = new HashSet<long>();
+        var noFileDataCount = 0;
+
+        foreach (var group in candidateGroups)
+        {
+            var candidates = group.ToList();
+            if (!trackingNosByRecipientName.TryGetValue(group.Key.Name, out var trackingNos) || trackingNos.Count == 0)
             {
-                skippedNoMatch.Add($"{recipient}({trackingNo})");
-                continue;
+                noFileDataCount += candidates.Count;
+                continue; // 운송장 파일에 이 이름 자체가 없음 — 아직 처리할 게 없으므로 그냥 둔다.
             }
 
-            List<OutboundDetail> targets;
-            if (candidates.Count == 1)
+            if (trackingNos.Count == 1)
             {
-                targets = [candidates[0]];
+                // 1번 규칙: 이 이름+주소 조합에 대해 파일에 운송장번호가 딱 1개뿐 — 여러 주문행이
+                // 있어도 무조건 하나의 운송장으로 합포장된 것이므로 그룹 전체에 같은 운송장번호를
+                // 적용한다(사용자 확인 없이 자동).
+                var trackingNo = trackingNos[0];
+                foreach (var d in candidates)
+                {
+                    _outboundRepository.ApplyTrackingNo(d.Id, trackingNo);
+                    d.TrackingNo = trackingNo;
+                    d.Status = "출고확정";
+                    d.ConfirmedAt = DateTime.Now;
+                    appliedCount++;
+                }
+                autoBundledGroups++;
             }
             else
             {
-                // 동일 수령인이 여럿이면 택배사에서 합포장돼 한 운송장으로 함께 발송된 경우일 수
-                // 있다 — 여러 건을 선택하면 모두 같은 운송장번호로 처리하고, 1건만 선택하면 그
-                // 건에만 개별로 적용한다(선택은 항상 사용자가 직접 한다).
-                using var picker = new TrackingMatchPickerDialog(recipient, trackingNo, candidates);
-                if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedItems.Count == 0)
+                // 2/3번 규칙: 이 이름에 대해 운송장번호가 여러 개 발견됨 — 어느 주문행이 어느
+                // 운송장번호로 나갔는지 시스템이 판단할 수 없으므로(같은 사람이 여러 번 주문했거나,
+                // 이름만 같은 동명이인일 수 있음) 사용자가 직접 골라야 한다.
+                using var picker = new TrackingAssignDialog(group.Key.Name, group.Key.Addr, candidates, trackingNos);
+                var resolvedIds = new HashSet<long>();
+                if (picker.ShowDialog(this) == DialogResult.OK)
                 {
-                    skippedByUser++;
-                    continue;
+                    foreach (var (detail, trackingNo) in picker.Assignments)
+                    {
+                        _outboundRepository.ApplyTrackingNo(detail.Id, trackingNo);
+                        detail.TrackingNo = trackingNo;
+                        detail.Status = "출고확정";
+                        detail.ConfirmedAt = DateTime.Now;
+                        resolvedIds.Add(detail.Id);
+                        appliedCount++;
+                        userResolvedCount++;
+                    }
                 }
-                targets = picker.SelectedItems;
-            }
-
-            foreach (var target in targets)
-            {
-                _outboundRepository.ApplyTrackingNo(target.Id, trackingNo);
-                target.TrackingNo = trackingNo;
-                target.Status = "출고확정";
-                target.ConfirmedAt = DateTime.Now;
-                candidates.Remove(target); // 같은 수령인의 다른 건에 같은 운송장번호가 재적용되지 않게 한다.
-                appliedCount++;
+                foreach (var d in candidates.Where(d => !resolvedIds.Contains(d.Id)))
+                    needsReviewIds.Add(d.Id);
             }
         }
 
+        MarkReviewFlags(needsReviewIds);
         _historyGrid.Refresh();
 
         // 2026-06-28 점검: 그리드 갱신 직후 모달을 띄우는 패턴이 다른 화면들에서 반복 재현됐던
-        // 경쟁 상태와 같은 위험군이라(특히 중복수령인 선택창(TrackingMatchPickerDialog)이 막
-        // 닫혔을 수 있는 상황이라 더 위험) 이미 있던 상태표시줄에 요약을 그대로 담아 대체한다.
-        var summary = $"운송장번호 {appliedCount}건을 적용해 출고확정으로 처리했습니다.";
-        if (skippedNoMatch.Count > 0) summary += $" / 일치하는 발주확정 건이 없어 건너뜀: {skippedNoMatch.Count}건";
-        if (skippedByUser > 0) summary += $" / 동일 수령인 중 사용자가 건너뜀: {skippedByUser}건";
+        // 경쟁 상태와 같은 위험군이라(특히 선택창(TrackingAssignDialog)이 막 닫혔을 수 있는 상황이라
+        // 더 위험) 이미 있던 상태표시줄에 요약을 그대로 담아 대체한다.
+        var summary = $"운송장번호 {appliedCount}건을 적용해 출고확정으로 처리했습니다";
+        summary += autoBundledGroups > 0 ? $"(합포장 자동적용 {autoBundledGroups}건 포함)." : ".";
+        if (userResolvedCount > 0) summary += $" 직접 선택해 적용: {userResolvedCount}건.";
+        if (needsReviewIds.Count > 0) summary += $" ▶ 확인요망(운송장번호가 여러 개라 직접 확인 필요): {needsReviewIds.Count}건.";
+        if (noFileDataCount > 0) summary += $" 운송장 파일에 이름이 없어 건너뜀: {noFileDataCount}건.";
         _statusLabel.Text = summary;
+    }
+
+    /// <summary>공백/대소문자 차이로 같은 이름·주소가 다른 그룹으로 갈리지 않도록 비교용으로만 정규화한다.</summary>
+    private static string NormalizeForMatch(string? s) =>
+        string.Join(" ", (s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToUpperInvariant();
+
+    /// <summary>운송장번호가 여럿이라 자동 적용을 못 하고 사용자도 건너뛴 건을 "확인" 열에 표시한다.</summary>
+    private void MarkReviewFlags(HashSet<long> needsReviewIds)
+    {
+        foreach (DataGridViewRow row in _historyGrid.Rows)
+        {
+            if (row.DataBoundItem is not OutboundDetail d) continue;
+            row.Cells["ReviewFlag"].Value = needsReviewIds.Contains(d.Id) ? "▶ 확인요망" : "";
+        }
     }
 
     // ─── 송장번호 출력 ──────────────────────────────────────────────────────

@@ -43,9 +43,10 @@ public class SelectChannelDialog : Form
         _channelGrid.KeyDown += OnGridKeyDown;
         _channelGrid.ColumnHeaderMouseClick += OnColumnHeaderMouseClick;
 
-        _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "GroupName",    HeaderText = "그룹",       FillWeight = 20 });
+        _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "IsFavorite",   HeaderText = "★",         FillWeight = 8, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter } });
+        _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "GroupName",    HeaderText = "그룹",       FillWeight = 17 });
         _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ChannelCode",  HeaderText = "채널코드",   FillWeight = 20 });
-        _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ChannelName",  HeaderText = "채널명",     FillWeight = 35 });
+        _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ChannelName",  HeaderText = "채널명",     FillWeight = 30 });
         _channelGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "LastUsedDate", HeaderText = "마지막 사용", FillWeight = 25 });
 
         var buttonPanel = new FlowLayoutPanel
@@ -76,23 +77,25 @@ public class SelectChannelDialog : Form
 
     private void LoadChannels()
     {
+        // 즐겨찾기 채널을 맨 위로, 그 다음은 최근 사용일 순(자주/최근 쓰는 채널을 빨리 찾도록).
         var channels = new SalesChannelRepository().GetAll()
-            .OrderBy(c => c.GroupName ?? "")
+            .OrderByDescending(c => c.IsFavorite)
             .ThenByDescending(c => c.LastUsedDate ?? DateTime.MinValue)
             .ThenBy(c => c.ChannelName)
             .ToList();
 
         _channelGrid.Rows.Clear();
-
-        foreach (var ch in channels)
-        {
-            var lastUsed = ch.LastUsedDate.HasValue ? ch.LastUsedDate.Value.ToString("yyyy-MM-dd") : "-";
-            int idx = _channelGrid.Rows.Add(ch.GroupName ?? "", ch.ChannelCode, ch.ChannelName, lastUsed);
-            _channelGrid.Rows[idx].Tag = ch;
-        }
+        foreach (var ch in channels) AddChannelRow(ch);
 
         if (_channelGrid.Rows.Count > 0)
             _channelGrid.Rows[0].Selected = true;
+    }
+
+    private void AddChannelRow(SalesChannel ch)
+    {
+        var lastUsed = ch.LastUsedDate.HasValue ? ch.LastUsedDate.Value.ToString("yyyy-MM-dd") : "-";
+        int idx = _channelGrid.Rows.Add(ch.IsFavorite ? "★" : "", ch.GroupName ?? "", ch.ChannelCode, ch.ChannelName, lastUsed);
+        _channelGrid.Rows[idx].Tag = ch;
     }
 
     private void OnColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
@@ -107,6 +110,7 @@ public class SelectChannelDialog : Form
 
         IOrderedEnumerable<SalesChannel> sorted = propName switch
         {
+            "IsFavorite" => ascending ? channels.OrderBy(c => c.IsFavorite) : channels.OrderByDescending(c => c.IsFavorite),
             "ChannelCode" => ascending ? channels.OrderBy(c => c.ChannelCode) : channels.OrderByDescending(c => c.ChannelCode),
             "ChannelName" => ascending ? channels.OrderBy(c => c.ChannelName) : channels.OrderByDescending(c => c.ChannelName),
             "LastUsedDate" => ascending
@@ -116,12 +120,7 @@ public class SelectChannelDialog : Form
         };
 
         _channelGrid.Rows.Clear();
-        foreach (var ch in sorted)
-        {
-            var lastUsed = ch.LastUsedDate.HasValue ? ch.LastUsedDate.Value.ToString("yyyy-MM-dd") : "-";
-            int idx = _channelGrid.Rows.Add(ch.GroupName ?? "", ch.ChannelCode, ch.ChannelName, lastUsed);
-            _channelGrid.Rows[idx].Tag = ch;
-        }
+        foreach (var ch in sorted) AddChannelRow(ch);
 
         if (_channelGrid.Rows.Count > 0)
             _channelGrid.Rows[0].Selected = true;

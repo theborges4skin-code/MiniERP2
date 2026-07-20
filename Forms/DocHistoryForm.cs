@@ -49,11 +49,12 @@ public class DocHistoryForm : Form
         };
 
         top.Controls.Add(new Label { Text = "발행일:", AutoSize = true, Margin = new Padding(2, 6, 4, 0) });
-        _dtFrom = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110, Value = DateTime.Today.AddMonths(-3) };
+        _dtFrom = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110 };
         top.Controls.Add(_dtFrom);
         top.Controls.Add(new Label { Text = "~", AutoSize = true, Margin = new Padding(4, 6, 4, 0) });
-        _dtTo = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110, Value = DateTime.Today };
+        _dtTo = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110 };
         top.Controls.Add(_dtTo);
+        top.Controls.Add(DateRangeQuickSelect.CreateButton(_dtFrom, _dtTo));
 
         top.Controls.Add(new Label { Text = "문서종류:", AutoSize = true, Margin = new Padding(10, 6, 4, 0) });
         _cmbDocType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };

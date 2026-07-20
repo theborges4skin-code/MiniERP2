@@ -13,15 +13,17 @@ public class CumulativeOrderSelectionDialog : Form
     private readonly DataGridView _grid = new();
     public List<OfsOrderItem> SelectedItems { get; private set; } = [];
 
-    public CumulativeOrderSelectionDialog(List<OfsOrderItem> recentItems, int windowDays)
+    /// <param name="alreadyShippedOrderNos">이미 출고확정 이력이 있는 주문번호(채널 무관). 이 목록에
+    /// 속한 건은 목록에 "출고확정"으로 표시되고 기본 선택에서 제외된다.</param>
+    public CumulativeOrderSelectionDialog(List<OfsOrderItem> recentItems, int windowDays, ISet<string> alreadyShippedOrderNos)
     {
-        InitializeComponent(recentItems, windowDays);
+        InitializeComponent(recentItems, windowDays, alreadyShippedOrderNos);
     }
 
-    private void InitializeComponent(List<OfsOrderItem> recentItems, int windowDays)
+    private void InitializeComponent(List<OfsOrderItem> recentItems, int windowDays, ISet<string> alreadyShippedOrderNos)
     {
         Text = "누적발주서 — 발주 처리할 항목 선택";
-        Size = new Size(820, 520);
+        Size = new Size(880, 520);
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -35,8 +37,8 @@ public class CumulativeOrderSelectionDialog : Form
         var infoLabel = new Label
         {
             Dock = DockStyle.Fill,
-            Text = $"발주일 기준 최근 {windowDays}일 이내 {recentItems.Count}건입니다. 실제로 발주 처리할 건을 선택하세요" +
-                   "(Ctrl/Shift+클릭으로 여러 건 선택 가능, 선택하지 않은 건은 이번에 처리되지 않습니다).",
+            Text = $"발주일 기준 최근 {windowDays}일 이내 {recentItems.Count}건입니다(최신순). 출고미확정 건이 기본 선택되어 있습니다 — " +
+                   "확인 후 바로 '선택 건 발주처리'를 누르거나, Ctrl/Shift+클릭으로 선택을 조정하세요.",
             AutoSize = false,
         };
 
@@ -52,10 +54,24 @@ public class CumulativeOrderSelectionDialog : Form
             new DataGridViewTextBoxColumn { Name = "ProductName", HeaderText = "상품명", DataPropertyName = "ProductName", Width = 220 },
             new DataGridViewTextBoxColumn { Name = "OptionName", HeaderText = "옵션명", DataPropertyName = "OptionName", Width = 180 },
             new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "수량", DataPropertyName = "Quantity", Width = 60 },
-            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 100 }
+            new DataGridViewTextBoxColumn { Name = "Recipient", HeaderText = "수취인", DataPropertyName = "Recipient", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "ShippedStatus", HeaderText = "출고확정 여부", Width = 90 }
         );
         _grid.Columns["OrderDate"]!.DefaultCellStyle.Format = "yyyy-MM-dd";
-        _grid.DataSource = new BindingList<OfsOrderItem>(recentItems);
+
+        var sortedItems = recentItems.OrderByDescending(o => o.OrderDate ?? DateTime.MinValue).ToList();
+        _grid.DataSource = new BindingList<OfsOrderItem>(sortedItems);
+
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            if (row.DataBoundItem is not OfsOrderItem item) continue;
+            bool alreadyShipped = !string.IsNullOrWhiteSpace(item.OrderNo) && alreadyShippedOrderNos.Contains(item.OrderNo!);
+            row.Cells["ShippedStatus"].Value = alreadyShipped ? "출고확정" : "";
+            if (alreadyShipped)
+                row.DefaultCellStyle.ForeColor = Color.Gray;
+            else
+                row.Selected = true;
+        }
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnCancel = new Button { Text = "취소", Width = 90 };

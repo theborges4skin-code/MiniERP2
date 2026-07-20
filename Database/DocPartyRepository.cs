@@ -5,7 +5,7 @@ namespace MiniERP2.Database;
 
 public class DocPartyRepository
 {
-    private const string SelectCols = "Id, ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt";
+    private const string SelectCols = "Id, ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath";
 
     public List<DocParty> GetAll()
     {
@@ -76,8 +76,8 @@ public class DocPartyRepository
             party.CreatedAt ??= DateTime.Now;
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO DocPartyTable (ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt)
-                VALUES ($pn, $rn, $cn, $ceo, $addr, $bt, $bi, $tel, $email, $sup, $chan, $active, $created)
+                INSERT INTO DocPartyTable (ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath)
+                VALUES ($pn, $rn, $cn, $ceo, $addr, $bt, $bi, $tel, $email, $sup, $chan, $active, $created, $stamp)
                 """;
             Bind(cmd, party);
             cmd.Parameters.AddWithValue("$created", party.CreatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -92,7 +92,7 @@ public class DocPartyRepository
             cmd.CommandText = """
                 UPDATE DocPartyTable SET ProfileName=$pn, RegNo=$rn, CompanyName=$cn, CeoName=$ceo,
                     Address=$addr, BizType=$bt, BizItem=$bi, Tel=$tel, Email=$email, IsDefaultSupplier=$sup,
-                    ChannelCode=$chan, IsActive=$active
+                    ChannelCode=$chan, IsActive=$active, StampImagePath=$stamp
                 WHERE Id=$id
                 """;
             Bind(cmd, party);
@@ -137,7 +137,8 @@ public class DocPartyRepository
         IsDefaultSupplier = r.GetInt32(10) == 1,
         ChannelCode = r.IsDBNull(11) ? "" : r.GetString(11),
         IsActive = !r.IsDBNull(12) && r.GetInt32(12) == 1,
-        CreatedAt = r.IsDBNull(13) || string.IsNullOrWhiteSpace(r.GetString(13)) ? null : DateTime.Parse(r.GetString(13))
+        CreatedAt = r.IsDBNull(13) || string.IsNullOrWhiteSpace(r.GetString(13)) ? null : DateTime.Parse(r.GetString(13)),
+        StampImagePath = r.IsDBNull(14) ? null : r.GetString(14)
     };
 
     private static void Bind(SqliteCommand cmd, DocParty p)
@@ -154,5 +155,6 @@ public class DocPartyRepository
         cmd.Parameters.AddWithValue("$sup", p.IsDefaultSupplier ? 1 : 0);
         cmd.Parameters.AddWithValue("$chan", p.ChannelCode);
         cmd.Parameters.AddWithValue("$active", p.IsActive ? 1 : 0);
+        cmd.Parameters.AddWithValue("$stamp", (object?)p.StampImagePath ?? DBNull.Value);
     }
 }

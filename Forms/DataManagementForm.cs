@@ -4,6 +4,7 @@ using MiniERP2.Controls;
 using MiniERP2.DataManagement;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
@@ -23,8 +24,10 @@ public class DataManagementForm : Form
     private readonly AdLegacyMigrationService _adLegacyMigrationService = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly MappingRepository _mappingRepository = new();
+    private readonly PurchaseSkuRepository _purchaseSkuRepository = new();
 
     private readonly List<TableTabContext> _tableTabs = [];
+    private TabControl _tabControl = new();
     private DataGridView _backupGrid = new();
     private DataGridView _exportLogGrid = new();
     private ComboBox _adImportChannelCombo = new();
@@ -55,25 +58,42 @@ public class DataManagementForm : Form
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
-        var tabControl = new TabControl { Dock = DockStyle.Fill };
+        _tabControl = new TabControl { Dock = DockStyle.Fill };
 
-        tabControl.TabPages.Add(CreateTableTab(new MasterSkuManagedTable()));
-        tabControl.TabPages.Add(CreateCskuTabWithRules());
-        tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exact, "1:1 매핑")));
-        tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Temp, "임시 매핑")));
-        tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exception, "예외 매핑")));
-        tabControl.TabPages.Add(CreateTableTab(new ConditionalMappingManagedTable()));
-        tabControl.TabPages.Add(CreateBackupTab());
-        tabControl.TabPages.Add(CreateExportLogTab());
-        tabControl.TabPages.Add(CreateLegacyImportTab());
+        _tabControl.TabPages.Add(CreateTableTab(new MasterSkuManagedTable(), ConfigureMasterSkuTab));
+        _tabControl.TabPages.Add(CreateCskuTabWithRules());
+        _tabControl.TabPages.Add(CreatePurchaseSkuTabWithHistory());
+        _tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exact, "1:1 매핑")));
+        _tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Temp, "임시 매핑")));
+        _tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exception, "예외 매핑")));
+        _tabControl.TabPages.Add(CreateTableTab(new ConditionalMappingManagedTable()));
+        _tabControl.TabPages.Add(CreateTableTab(new FboCskuManagedTable()));
+        _tabControl.TabPages.Add(CreateTableTab(new FboChannelConfigManagedTable()));
+        _tabControl.TabPages.Add(CreateBackupTab());
+        _tabControl.TabPages.Add(CreateExportLogTab());
+        _tabControl.TabPages.Add(CreateLegacyImportTab());
 
         _statusLabel = new Label { Dock = DockStyle.Fill, Text = "준비됨.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
-        mainLayout.Controls.Add(tabControl, 0, 0);
+        mainLayout.Controls.Add(_tabControl, 0, 0);
         mainLayout.Controls.Add(_statusLabel, 0, 1);
         Controls.Add(mainLayout);
 
         FormClosing += OnFormClosing;
+    }
+
+    /// <summary>
+    /// 지정된 표시 이름의 탭으로 전환한다(예: 풀필먼트 발주처리 화면의 "품목/설정 관리" 버튼이
+    /// 여기 있는 "FBO 품목마스터"/"FBO 채널설정" 탭으로 바로 이동할 때 사용).
+    /// </summary>
+    public void SelectTabByDisplayName(string displayName)
+    {
+        foreach (TabPage page in _tabControl.TabPages)
+        {
+            if (page.Text != displayName) continue;
+            _tabControl.SelectedTab = page;
+            return;
+        }
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -90,7 +110,7 @@ public class DataManagementForm : Form
 
     // ===================== 테이블 탭(마스터SKU/CSKU/매핑규칙 공통) =====================
 
-    private TabPage CreateTableTab(IManagedDataTable adapter)
+    private TabPage CreateTableTab(IManagedDataTable adapter, Action<TableTabContext>? configure = null)
     {
         var context = new TableTabContext(adapter);
         _tableTabs.Add(context);
@@ -129,6 +149,7 @@ public class DataManagementForm : Form
 
         context.Grid.DataSource = context.Table.DefaultView;
         context.Grid.DataError += (s, e) => { e.ThrowException = false; };
+        configure?.Invoke(context);
 
         layout.Controls.Add(toolStrip, 0, 0);
         layout.Controls.Add(context.Grid, 0, 1);
@@ -137,6 +158,27 @@ public class DataManagementForm : Form
 
         UpdateTabStatus(context);
         return tabPage;
+    }
+
+    /// <summary>
+    /// 마스터SKU 탭 — "Sku" 열을 더블클릭하면 그 SKU에 연결된 모든 CSKU(채널 전체)를 보여주는
+    /// 채널 SKU 관리창을 새 창으로 연다. 별도 화면인 MasterSkuForm의 "해당 CSKU 보기"와 같은
+    /// CSkuForm을 그대로 재사용한다.
+    /// </summary>
+    private void ConfigureMasterSkuTab(TableTabContext context)
+    {
+        context.Grid.CellDoubleClick += (s, e) =>
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (context.Grid.Rows[e.RowIndex].DataBoundItem is not DataRowView rowView) return;
+
+            var sku = rowView.Row["Sku"]?.ToString();
+            if (string.IsNullOrWhiteSpace(sku)) return;
+
+            using var cskuForm = new CSkuForm(sku);
+            FormManager.ApplyBoundsTracking(cskuForm);
+            cskuForm.ShowDialog(this);
+        };
     }
 
     private void UpdateTabStatus(TableTabContext context)
@@ -361,12 +403,14 @@ public class DataManagementForm : Form
         var btnSave = new Button { Text = "변경내역 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
         var btnDiscard = new Button { Text = "변경내역 취소", Size = new Size(110, 30) };
         var btnReload = new Button { Text = "새로고침", Size = new Size(90, 30) };
+        var btnDeleteCsku = new Button { Text = "선택한 CSKU 삭제", Size = new Size(120, 30) };
 
         btnExport.Click += (s, e) => OnExportClick(context);
         btnImport.Click += (s, e) => OnImportClick(context);
         btnSave.Click += (s, e) => OnSaveChangesClick(context);
         btnDiscard.Click += (s, e) => OnDiscardChangesClick(context);
         btnReload.Click += (s, e) => OnDiscardChangesClick(context);
+        btnDeleteCsku.Click += (s, e) => OnDeleteCskuRowsClick(context);
 
         context.SearchBox.TextChanged += (s, e) =>
         {
@@ -378,6 +422,7 @@ public class DataManagementForm : Form
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnDiscard);
         toolStrip.Controls.Add(btnReload);
+        toolStrip.Controls.Add(btnDeleteCsku);
         toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Margin = new Padding(10, 8, 2, 0) });
         toolStrip.Controls.Add(context.SearchBox);
 
@@ -465,6 +510,157 @@ public class DataManagementForm : Form
             rulesGrid.DataSource = null;
             rulesGrid.DataSource = ruleItems;
             _statusLabel.Text = "규칙을 삭제했습니다.";
+        };
+
+        tabPage.Controls.Add(splitContainer);
+        UpdateTabStatus(context);
+        return tabPage;
+    }
+
+    /// <summary>
+    /// CSKU 그리드에서 행 헤더로 전체 행을 선택해 Delete 키를 눌러도 삭제 대상 표시는 이미
+    /// 가능하지만(AllowUserToDeleteRows), 발견하기 어렵다는 지적이 있어 명시적 버튼으로 추가.
+    /// 이 버튼을 눌러도 즉시 DB에서 지워지지 않고 다른 행과 동일하게 그리드에서 삭제 표시만
+    /// 되며(백업/취소 가능), '변경내역 저장'을 눌러야 실제로 반영된다. 삭제하려는 CSKU를 참조하는
+    /// 매핑 규칙이 있으면(하단 패널과 동일한 기준으로 조회) 규칙은 함께 지워지지 않는다는 것을
+    /// 미리 경고한다.
+    /// </summary>
+    private void OnDeleteCskuRowsClick(TableTabContext context)
+    {
+        var selectedRows = context.Grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as DataRowView)
+            .Where(v => v != null).Cast<DataRowView>().ToList();
+        if (selectedRows.Count == 0 && context.Grid.CurrentRow?.DataBoundItem is DataRowView current)
+        {
+            selectedRows.Add(current);
+        }
+        if (selectedRows.Count == 0)
+        {
+            MessageBox.Show("삭제할 CSKU 행을 먼저 선택하세요(행 머리글을 클릭해 전체 행을 선택할 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var cskuCodes = selectedRows.Select(v => v.Row["CskuCode"]?.ToString() ?? "").Where(c => c != "").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var referencingRuleCount = cskuCodes.Sum(CountReferencingRules);
+
+        var warning = referencingRuleCount > 0
+            ? $"\n\n⚠ 선택한 CSKU를 참조하는 매핑 규칙이 {referencingRuleCount}건 있습니다. CSKU만 삭제되고 그 규칙들은 그대로 남아(연결 대상 없이) 유지되니, 필요하면 하단 '이 CSKU를 참조하는 매핑 규칙' 패널에서 먼저 정리하세요."
+            : "";
+        var confirm = MessageBox.Show(
+            $"선택한 CSKU {selectedRows.Count}건을 삭제 대상으로 표시하시겠습니까?\n(실제 DB 반영은 '변경내역 저장'을 눌러야 합니다){warning}",
+            "CSKU 삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes) return;
+
+        foreach (var rowView in selectedRows) rowView.Row.Delete();
+        UpdateTabStatus(context);
+        _statusLabel.Text = $"CSKU {selectedRows.Count}건을 삭제 대상으로 표시했습니다. '변경내역 저장'을 눌러야 실제로 반영됩니다.";
+    }
+
+    private int CountReferencingRules(string cskuCode)
+    {
+        var count = 0;
+        foreach (var ruleType in new[] { MappingRuleType.Exact, MappingRuleType.Temp, MappingRuleType.Exception })
+        {
+            count += _mappingRepository.GetAllRules(ruleType).Count(r => string.Equals(r.TargetSku, cskuCode, StringComparison.OrdinalIgnoreCase));
+        }
+        count += _mappingRepository.GetAllConditionRulesWithDetails().Count(x => string.Equals(x.Rule.TargetSku, cskuCode, StringComparison.OrdinalIgnoreCase));
+        return count;
+    }
+
+    // ===================== 매입SKU 탭 (매입가 이력 패널 포함) — B2B 견적관리(M2) =====================
+
+    private TabPage CreatePurchaseSkuTabWithHistory()
+    {
+        var adapter = new PurchaseSkuManagedTable();
+        var context = new TableTabContext(adapter);
+        _tableTabs.Add(context);
+
+        var tabPage = new TabPage(adapter.DisplayName);
+
+        var splitContainer = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterDistance = 350,
+        };
+
+        // ── 상단: 매입SKU 그리드 (CreateTableTab과 동일) ──
+        var topLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+
+        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        var btnExport = new Button { Text = "엑셀 내보내기", Size = new Size(110, 30) };
+        var btnImport = new Button { Text = "엑셀 불러오기", Size = new Size(110, 30) };
+        var btnSave = new Button { Text = "변경내역 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
+        var btnDiscard = new Button { Text = "변경내역 취소", Size = new Size(110, 30) };
+        var btnReload = new Button { Text = "새로고침", Size = new Size(90, 30) };
+
+        btnExport.Click += (s, e) => OnExportClick(context);
+        btnImport.Click += (s, e) => OnImportClick(context);
+        btnSave.Click += (s, e) => OnSaveChangesClick(context);
+        btnDiscard.Click += (s, e) => OnDiscardChangesClick(context);
+        btnReload.Click += (s, e) => OnDiscardChangesClick(context);
+
+        context.SearchBox.TextChanged += (s, e) =>
+        {
+            context.Table.DefaultView.RowFilter = BuildRowFilter(context.Table, context.SearchBox.Text.Trim());
+        };
+
+        toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnImport);
+        toolStrip.Controls.Add(btnSave);
+        toolStrip.Controls.Add(btnDiscard);
+        toolStrip.Controls.Add(btnReload);
+        toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Margin = new Padding(10, 8, 2, 0) });
+        toolStrip.Controls.Add(context.SearchBox);
+
+        context.Grid.DataSource = context.Table.DefaultView;
+        context.Grid.DataError += (s, e) => { e.ThrowException = false; };
+
+        topLayout.Controls.Add(toolStrip, 0, 0);
+        topLayout.Controls.Add(context.Grid, 0, 1);
+        topLayout.Controls.Add(context.StatusLabel, 0, 2);
+        splitContainer.Panel1.Controls.Add(topLayout);
+
+        // ── 하단: 선택한 매입SKU의 매입가 변경 이력(§M2 "매입가 이력") ──
+        var historyGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            AutoGenerateColumns = false,
+            RowHeadersVisible = false,
+        };
+        historyGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "변경일시", DataPropertyName = "ChangedAt", DefaultCellStyle = new DataGridViewCellStyle { Format = "yyyy-MM-dd HH:mm:ss" }, Width = 140 },
+            new DataGridViewTextBoxColumn { HeaderText = "이전 매입가", DataPropertyName = "OldPrice", DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight }, Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "새 매입가", DataPropertyName = "NewPrice", DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight }, Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "사유", DataPropertyName = "Reason", Width = 150 },
+            new DataGridViewTextBoxColumn { HeaderText = "비고", DataPropertyName = "Note", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var historyHeaderLabel = new Label { Text = "선택한 매입SKU의 매입가 변경 이력", AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(5, 4, 0, 0) };
+        bottomLayout.Controls.Add(historyHeaderLabel, 0, 0);
+        bottomLayout.Controls.Add(historyGrid, 0, 1);
+        splitContainer.Panel2.Controls.Add(bottomLayout);
+
+        // 매입SKU 선택 → 이력 갱신
+        context.Grid.SelectionChanged += (s, e) =>
+        {
+            if (context.Grid.CurrentRow?.DataBoundItem is not DataRowView rowView) { historyGrid.DataSource = null; return; }
+            var channelCode = rowView.Row["ChannelCode"]?.ToString();
+            var msku = rowView.Row["Msku"]?.ToString();
+            if (string.IsNullOrEmpty(channelCode) || string.IsNullOrEmpty(msku)) { historyGrid.DataSource = null; return; }
+
+            historyGrid.DataSource = _purchaseSkuRepository.GetPriceHistory(channelCode, msku);
         };
 
         tabPage.Controls.Add(splitContainer);

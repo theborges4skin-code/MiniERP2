@@ -44,12 +44,22 @@ public class OfsOrderItem
     public string? InvoiceLabel { get; set; }
 
     /// <summary>
-    /// 이 줄이 속한 "묶음(송장 1건 단위)"을 명시적으로 지정합니다. 비어있으면 같은 주문번호끼리
-    /// 자동으로 한 묶음이 됩니다(기본값). 사용자가 OFS 그리드 컨텍스트 메뉴로 분리배송/합포장을
+    /// 이 줄이 속한 "묶음(송장 1건 단위)"을 명시적으로 지정합니다. 비어있으면 줄마다 별도 송장으로
+    /// 취급됩니다(기본값 — 합포장은 택배사 프로그램이 다운스트림에서 주소 기준으로 자동 처리하므로
+    /// MiniERP2가 임의로 합치지 않습니다). 사용자가 OFS 그리드 컨텍스트 메뉴로 분리배송/합포장을
     /// 지정하면 여기에 실제 값이 채워져 기본값을 덮어씁니다. 실제 유효 그룹 키 계산은
     /// <see cref="Utils.ShipmentGrouping.GetEffectiveGroupId"/>를 사용하세요.
     /// </summary>
     public string? ShipmentGroupId { get; set; }
+
+    /// <summary>
+    /// 이 줄이 발주 파일의 어느 행에서 왔는지 나타내는 안정 식별자입니다(<see cref="DataLoaders.OrderLoader"/>가
+    /// "파일명#엑셀행번호"로 채움). 같은 파일을 다시 로드해도 같은 값이 나오므로, 출고이력에 저장할 때
+    /// 객체 인스턴스 해시 대신 이 값으로 결정적인 <see cref="Utils.ShipmentGrouping.GetEffectiveGroupId"/>
+    /// 키를 만들어 재로드 후 재저장 시에도 같은 발주 줄이 같은 이력 레코드로 매칭되게 한다. 수동 추가된
+    /// 행처럼 파일에서 오지 않은 항목은 null로 남아 객체 해시 방식으로 폴백한다.
+    /// </summary>
+    public string? SourceRowKey { get; set; }
 
     /// <summary>
     /// 택배사 양식에 매핑된 OfsOrderItem 속성이 없는 헤더(예: 박스타입/내품수량/운임/선착불유무

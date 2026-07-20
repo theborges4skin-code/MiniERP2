@@ -49,8 +49,14 @@ public class MappingForm : Form
         public string Key { get; set; } = string.Empty;
         public string TargetSku { get; set; } = string.Empty;
         public string Detail { get; set; } = string.Empty;
+
+        // 아래 4개는 TargetSku(CSKU 코드)로 조회한 ChannelSkuTable 정보로, 여기서 직접 편집하면
+        // ChannelSkuRepository.Upsert를 통해 실제 DB에 반영된다(OnUnifiedRulesGridCellEndEdit 참고).
+        public string CskuMsku { get; set; } = string.Empty;
         public string CskuInvoiceDisplayName { get; set; } = string.Empty;
-        public string CskuSupplyPrice { get; set; } = string.Empty;
+        public decimal? CskuSupplyPrice { get; set; }
+        public string CskuNote { get; set; } = string.Empty;
+        public DateTime? CskuUpdatedAt { get; set; }
     }
 
     // 조건부 매핑(상세) 탭 — 다중 AND/OR 조건 전용 편집기. 기존 "조건부 매핑" 단순 그리드(SaveRules)와
@@ -970,15 +976,29 @@ public class MappingForm : Form
             new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널", DataPropertyName = "ChannelCode", Width = 90, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키", DataPropertyName = "Key", Width = 200, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU(CSKU)", DataPropertyName = "TargetSku", Width = 130, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "CskuInvoiceDisplayName", HeaderText = "CSKU 송장표시명", DataPropertyName = "CskuInvoiceDisplayName", Width = 140, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "CskuSupplyPrice", HeaderText = "CSKU 납품가", DataPropertyName = "CskuSupplyPrice", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "CskuMsku", HeaderText = "매칭된 마스터SKU", DataPropertyName = "CskuMsku", Width = 120 },
+            new DataGridViewTextBoxColumn { Name = "CskuInvoiceDisplayName", HeaderText = "CSKU 송장표시명", DataPropertyName = "CskuInvoiceDisplayName", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "CskuSupplyPrice", HeaderText = "CSKU 납품가", DataPropertyName = "CskuSupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { Name = "CskuNote", HeaderText = "CSKU 비고", DataPropertyName = "CskuNote", Width = 140 },
+            new DataGridViewTextBoxColumn { Name = "CskuUpdatedAt", HeaderText = "CSKU 마지막 수정", DataPropertyName = "CskuUpdatedAt", Width = 120, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "yyyy-MM-dd HH:mm" } },
             new DataGridViewTextBoxColumn { Name = "Detail", HeaderText = "상세(조건부 매핑 조건 등)", DataPropertyName = "Detail", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true }
         );
+        _unifiedRulesGrid.CellEndEdit += OnUnifiedRulesGridCellEndEdit;
+        _unifiedRulesGrid.DataError += (s, e) => { e.ThrowException = false; };
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("이 규칙 수정하기(해당 탭으로 이동)", null, (s, e) => OnEditSelectedUnifiedRuleClick());
+        menu.Items.Add("CSKU 변경 이력 보기", null, (s, e) => OnViewSelectedCskuHistoryClick());
         _unifiedRulesGrid.ContextMenuStrip = menu;
-        _unifiedRulesGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) OnEditSelectedUnifiedRuleClick(); };
+        // CSKU 정보 열(마스터SKU/송장표시명/납품가/비고)은 이제 직접 편집 가능해졌으므로, 그 열을
+        // 더블클릭하면 편집만 시작하고 "규칙 수정 탭으로 이동"은 그 외 열(타입/채널/키/대상SKU/상세)
+        // 더블클릭 때만 동작하게 한다.
+        _unifiedRulesGrid.CellDoubleClick += (s, e) =>
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (IsCskuEditableColumn(_unifiedRulesGrid.Columns[e.ColumnIndex].Name)) return;
+            OnEditSelectedUnifiedRuleClick();
+        };
 
         var bottomPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 28) };
@@ -986,7 +1006,8 @@ public class MappingForm : Form
         bottomPanel.Controls.Add(btnDelete);
         bottomPanel.Controls.Add(new Label
         {
-            Text = "체크박스로 여러 건을 선택해 한꺼번에 삭제할 수 있습니다. 더블클릭(또는 우클릭 → 수정하기)하면 해당 규칙의 원래 탭으로 이동합니다.",
+            Text = "체크박스로 여러 건을 선택해 한꺼번에 삭제할 수 있습니다. 마스터SKU/송장표시명/납품가/비고는 직접 수정하면 바로 저장됩니다. " +
+                   "그 외 열을 더블클릭(또는 우클릭 → 수정하기)하면 해당 규칙의 원래 탭으로 이동합니다.",
             AutoSize = true,
             Padding = new Padding(10, 6, 0, 0),
             ForeColor = Color.DimGray,
@@ -1032,8 +1053,11 @@ public class MappingForm : Form
                     Key = rule.Key,
                     TargetSku = rule.TargetSku,
                     Detail = "-",
+                    CskuMsku = csku?.Msku ?? string.Empty,
                     CskuInvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty,
-                    CskuSupplyPrice = csku != null ? csku.SupplyPrice.ToString("N0") : string.Empty,
+                    CskuSupplyPrice = csku?.SupplyPrice,
+                    CskuNote = csku?.Note ?? string.Empty,
+                    CskuUpdatedAt = csku?.UpdatedAt,
                 });
             }
         }
@@ -1055,8 +1079,11 @@ public class MappingForm : Form
                 Key = rule.Key,
                 TargetSku = rule.TargetSku,
                 Detail = string.IsNullOrEmpty(detailText) ? "(조건 없음)" : detailText,
+                CskuMsku = csku?.Msku ?? string.Empty,
                 CskuInvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty,
-                CskuSupplyPrice = csku != null ? csku.SupplyPrice.ToString("N0") : string.Empty,
+                CskuSupplyPrice = csku?.SupplyPrice,
+                CskuNote = csku?.Note ?? string.Empty,
+                CskuUpdatedAt = csku?.UpdatedAt,
             });
         }
 
@@ -1100,6 +1127,89 @@ public class MappingForm : Form
             "상세" => Has(row.Detail),
             _ => Has(row.TypeLabel) || Has(row.ChannelCode) || Has(row.Key) || Has(row.TargetSku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
         };
+    }
+
+    private static readonly HashSet<string> CskuEditableColumnNames =
+        ["CskuMsku", "CskuInvoiceDisplayName", "CskuSupplyPrice", "CskuNote"];
+
+    private static bool IsCskuEditableColumn(string columnName) => CskuEditableColumnNames.Contains(columnName);
+
+    /// <summary>
+    /// "전체 규칙 관리" 탭에서 마스터SKU/송장표시명/납품가/비고를 직접 고치면 그 규칙이 가리키는
+    /// CSKU(ChannelSkuTable) 레코드에 바로 반영한다. 같은 CSKU를 가리키는 다른 규칙 행이 있을 수
+    /// 있고(예: 1:1 매핑 + 예외처리가 같은 CSKU를 공유) 마지막 수정일도 새로 반영해야 하므로,
+    /// 저장 성공/실패 여부와 무관하게 항상 LoadUnifiedRules()로 전체를 다시 읽어 화면을 DB 상태와
+    /// 맞춘다(편집을 취소/되돌리는 효과도 겸함).
+    /// </summary>
+    private void OnUnifiedRulesGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        if (!IsCskuEditableColumn(_unifiedRulesGrid.Columns[e.ColumnIndex].Name)) return;
+        if (_unifiedRulesGrid.Rows[e.RowIndex].DataBoundItem is not UnifiedRuleRow row) return;
+
+        try
+        {
+            if (string.IsNullOrEmpty(row.TargetSku) || row.TargetSku == SkuMapper.ExcludedTargetSku)
+            {
+                _globalStatusLabel.ForeColor = Color.Red;
+                _globalStatusLabel.Text = "이 항목은 CSKU가 연결되어 있지 않아 여기서 수정할 수 없습니다.";
+                return;
+            }
+
+            var existing = _channelSkuRepository.GetByChannelAndCskuCode(row.ChannelCode, row.TargetSku);
+            if (existing == null)
+            {
+                _globalStatusLabel.ForeColor = Color.Red;
+                _globalStatusLabel.Text = $"'{row.TargetSku}'은(는) 등록된 CSKU가 아니라(마스터SKU 코드를 직접 매핑에 사용 중) 여기서 수정할 수 없습니다.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(row.CskuMsku))
+            {
+                _globalStatusLabel.ForeColor = Color.Red;
+                _globalStatusLabel.Text = "마스터SKU는 비워둘 수 없습니다.";
+                return;
+            }
+
+            _channelSkuRepository.Upsert(new ChannelSkuModel
+            {
+                ChannelCode = row.ChannelCode,
+                CskuCode = row.TargetSku,
+                Msku = row.CskuMsku.Trim(),
+                SupplyPrice = row.CskuSupplyPrice ?? 0m,
+                InvoiceDisplayName = string.IsNullOrWhiteSpace(row.CskuInvoiceDisplayName) ? null : row.CskuInvoiceDisplayName.Trim(),
+                Note = string.IsNullOrWhiteSpace(row.CskuNote) ? null : row.CskuNote.Trim(),
+            });
+
+            _globalStatusLabel.ForeColor = Color.DarkGreen;
+            _globalStatusLabel.Text = $"CSKU '{row.TargetSku}' 정보가 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        catch (Exception ex)
+        {
+            _globalStatusLabel.ForeColor = Color.Red;
+            _globalStatusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
+        }
+        finally
+        {
+            LoadUnifiedRules();
+        }
+    }
+
+    /// <summary>선택된 행의 CSKU 변경 이력(마스터SKU/송장표시명/비고/납품가)을 보여준다.</summary>
+    private void OnViewSelectedCskuHistoryClick()
+    {
+        if (_unifiedRulesGrid.CurrentRow?.DataBoundItem is not UnifiedRuleRow row) return;
+
+        if (string.IsNullOrEmpty(row.TargetSku) || row.TargetSku == SkuMapper.ExcludedTargetSku ||
+            _channelSkuRepository.GetByChannelAndCskuCode(row.ChannelCode, row.TargetSku) == null)
+        {
+            MessageBox.Show("이 항목은 등록된 CSKU가 없어 변경 이력을 조회할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var historyForm = new ChannelSkuHistoryForm(row.ChannelCode, row.TargetSku);
+        FormManager.ApplyBoundsTracking(historyForm);
+        historyForm.ShowDialog(this);
     }
 
     /// <summary>

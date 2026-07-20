@@ -1,6 +1,7 @@
 using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -166,7 +167,10 @@ public class ManualOrderDialog : Form
         };
         var btnClose = new Button { Text = "닫기", Width = 80 };
         btnClose.Click += (s, e) => Close();
+        var btnSkuSearch = new Button { Text = "SKU 검색", Width = 90 };
+        btnSkuSearch.Click += OnSkuSearchClick;
         btnPanel.Controls.Add(btnClose);
+        btnPanel.Controls.Add(btnSkuSearch);
         CancelButton = btnClose;
 
         // Controls are added in reverse order (DockStyle.Top stacks from bottom up)
@@ -230,6 +234,34 @@ public class ManualOrderDialog : Form
             _addItem(blankItem);
         };
         _quickPanel.Controls.Add(_btnBlank);
+    }
+
+    /// <summary>
+    /// 출고 이력이 없는 신규 품목은 "자주 사용한 품목" 목록에 나타나지 않아 전부 수기입력해야
+    /// 했다 — 전체 채널의 CSKU를 검색해 고를 수 있게 한다(다른 채널 품목을 이 채널 주문에 그대로
+    /// 가져다 쓰는 경우가 실제로 있어 제한하지 않음). 다만 현재 채널의 CSKU를 목록 맨 위로 올리고
+    /// 채널 콤보도 "(전체)"로 시작해 바로 다른 채널까지 훑어볼 수 있게 한다. 선택 후 처리는 기존
+    /// 빠른 버튼과 동일한 흐름(추가 모드: 수량 확인 팝업, 교체 모드: 즉시 교체)을 그대로 탄다.
+    /// </summary>
+    private void OnSkuSearchClick(object? sender, EventArgs e)
+    {
+        using var picker = new CskuPickerDialog(_channelCode, preselectChannelFilter: false);
+        if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
+
+        var cskuCode = picker.SelectedCskuCode;
+        var productName = picker.SelectedItemName ?? cskuCode;
+
+        // 다른 채널에서 고른 품목이면 그 CSKU 코드는 이 채널에 등록된 게 아니므로(CSKU는
+        // (채널, 코드) 복합키), 같은 마스터SKU/납품가/송장표시명으로 이 채널용 CSKU를 새로
+        // 등록해서 써야 매핑/출고 단계에서 정상적으로 해석된다.
+        if (!string.Equals(picker.SelectedChannelCode, _channelCode, StringComparison.OrdinalIgnoreCase))
+        {
+            var newCskuCode = CskuCodeGenerator.BuildDefault(_channelName, picker.SelectedMsku ?? cskuCode);
+            _channelSkuRepository.CreateIfNew(_channelCode, newCskuCode, picker.SelectedMsku ?? cskuCode, picker.SelectedUnitPrice, productName);
+            cskuCode = newCskuCode;
+        }
+
+        OnCskuButtonClick(cskuCode, productName);
     }
 
     private void OnCskuButtonClick(string cskuCode, string productName)

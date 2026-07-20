@@ -105,6 +105,16 @@ public class ExcelLikeDataGridView : DataGridView
         }
 
         foreach (DataGridViewColumn col in Columns) col.HeaderCell.SortGlyphDirection = SortOrder.None;
+
+        // AutoGenerateColumns가 bool 컬럼을 DataGridViewCheckBoxColumn으로 만들 때 SortMode를
+        // 자동으로 NotSortable로 고정해버린다(다른 타입 컬럼은 Automatic). 정렬 자체는 위
+        // GridSorter.TrySort로 이미 끝났으니, 화살표 표시만 가능하도록 Programmatic으로 승격한다.
+        // Button/Image 열은 SortMode 전환 자체가 막혀있으므로 그 경우만 화살표 표시를 생략한다.
+        if (column.SortMode == DataGridViewColumnSortMode.NotSortable)
+        {
+            try { column.SortMode = DataGridViewColumnSortMode.Programmatic; }
+            catch (InvalidOperationException) { Refresh(); return; }
+        }
         column.HeaderCell.SortGlyphDirection = ascending ? SortOrder.Ascending : SortOrder.Descending;
         Refresh();
     }

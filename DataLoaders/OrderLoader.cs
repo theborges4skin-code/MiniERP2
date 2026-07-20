@@ -92,6 +92,10 @@ public class OrderLoader
                 .Select(kv => kv.Value)
                 .ToList();
 
+            // 재로드해도 같은 줄을 같은 발주로 알아볼 수 있도록, 파일명+엑셀 행번호로 안정 식별자를
+            // 만든다(ShipmentGrouping.GetEffectiveGroupId가 이력 저장 키를 만들 때 사용).
+            var sourceFileName = Path.GetFileName(filePath);
+
             // 데이터 행을 순회하며 OfsOrderItem 객체를 생성합니다.
             for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
             {
@@ -105,6 +109,7 @@ public class OrderLoader
                 {
                     // 각 속성에 대해 매핑된 열 인덱스를 사용하여 값을 가져옵니다.
                     ChannelCode = channelConfig.ChannelCode,
+                    SourceRowKey = $"{sourceFileName}#{row}",
                     OrderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductNo),
                     ProductName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName),
                     OptionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName),

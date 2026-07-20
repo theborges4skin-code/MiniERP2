@@ -48,6 +48,7 @@ public class PartyManagerForm : Form
         _grid.Columns.Add("Tel", "전화");
         _grid.Columns.Add("ChannelName", "연결 채널");
         _grid.Columns.Add("IsDefaultSupplier", "기본 공급자");
+        _grid.Columns.Add("HasStamp", "기본 도장");
         _grid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) EditSelected(); };
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(6) };
@@ -79,7 +80,7 @@ public class PartyManagerForm : Form
             string channelLabel = string.IsNullOrWhiteSpace(p.ChannelCode)
                 ? ""
                 : (channelNames.TryGetValue(p.ChannelCode, out var name) ? name : p.ChannelCode);
-            _grid.Rows.Add(p.ProfileName, p.CompanyName, p.CeoName, p.RegNo, p.Tel, channelLabel, p.IsDefaultSupplier ? "✓" : "");
+            _grid.Rows.Add(p.ProfileName, p.CompanyName, p.CeoName, p.RegNo, p.Tel, channelLabel, p.IsDefaultSupplier ? "✓" : "", string.IsNullOrWhiteSpace(p.StampImagePath) ? "" : "✓");
         }
     }
 
@@ -133,6 +134,8 @@ internal class PartyEditDialog : Form
     private readonly int _id;
     private readonly string _channelCode;
     private readonly bool _isDefaultSupplier;
+    private string? _stampImagePath;
+    private readonly Label _stampLabel = new() { AutoSize = true, Padding = new Padding(6, 6, 0, 0) };
 
     private readonly TextBox _profileName = new() { Dock = DockStyle.Fill };
     private readonly TextBox _regNo = new() { Dock = DockStyle.Fill };
@@ -151,13 +154,13 @@ internal class PartyEditDialog : Form
         _isDefaultSupplier = existing?.IsDefaultSupplier ?? false;
 
         Text = existing == null ? "거래처 추가" : "거래처 수정";
-        Size = new Size(420, 420);
+        Size = new Size(420, 460);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
 
-        var tbl = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 9, Padding = new Padding(10) };
+        var tbl = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 10, Padding = new Padding(10) };
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
@@ -172,6 +175,18 @@ internal class PartyEditDialog : Form
         AddRow(tbl, 7, "전화", _tel);
         AddRow(tbl, 8, "이메일", _email);
 
+        // 여기서 지정한 도장은 문서관리 화면에서 이 거래처(주로 공급자)를 불러올 때 자동으로
+        // 채워진다. 문서관리 하단의 도장 업로드는 별개이며, 그쪽에서 직접 업로드하면 그 값이
+        // 우선 적용된다(이 값을 덮어쓸 뿐, 여기 저장된 기본값 자체는 바뀌지 않음).
+        tbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        var stampPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        var stampBtn = new Button { Text = "업로드", Size = new Size(70, 24) };
+        stampBtn.Click += OnStampUploadClick;
+        stampPanel.Controls.Add(stampBtn);
+        stampPanel.Controls.Add(_stampLabel);
+        tbl.Controls.Add(new Label { Text = "기본 도장", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 9);
+        tbl.Controls.Add(stampPanel, 1, 9);
+
         if (existing != null)
         {
             _profileName.Text = existing.ProfileName;
@@ -183,7 +198,9 @@ internal class PartyEditDialog : Form
             _bizItem.Text = existing.BizItem;
             _tel.Text = existing.Tel;
             _email.Text = existing.Email;
+            _stampImagePath = existing.StampImagePath;
         }
+        _stampLabel.Text = string.IsNullOrWhiteSpace(_stampImagePath) ? "(도장 없음)" : Path.GetFileName(_stampImagePath);
 
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10), Height = 46 };
         var btnOk = new Button { Text = "저장", DialogResult = DialogResult.OK, Size = new Size(80, 28) };
@@ -203,6 +220,14 @@ internal class PartyEditDialog : Form
         tbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         tbl.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, row);
         tbl.Controls.Add(input, 1, row);
+    }
+
+    private void OnStampUploadClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog { Filter = "이미지 (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png", Title = "기본 도장 이미지 선택" };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+        _stampImagePath = ofd.FileName;
+        _stampLabel.Text = Path.GetFileName(_stampImagePath);
     }
 
     private void OnOkClick(object? sender, EventArgs e)
@@ -228,6 +253,7 @@ internal class PartyEditDialog : Form
             Email = _email.Text.Trim(),
             ChannelCode = _channelCode,
             IsDefaultSupplier = _isDefaultSupplier,
+            StampImagePath = _stampImagePath,
         };
     }
 }

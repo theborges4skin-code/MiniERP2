@@ -12,6 +12,10 @@ public class CskuPickerDialog : Form
     public decimal SelectedUnitPrice { get; private set; }
     public decimal SelectedCostPrice { get; private set; }
     public string? SelectedMsku { get; private set; }
+    public string? SelectedCskuCode { get; private set; }
+    public string? SelectedChannelCode { get; private set; }
+    public string? SelectedUnit { get; private set; }
+    public string? SelectedPacking { get; private set; }
 
     private readonly ChannelSkuRepository _cskuRepo = new();
     private readonly ItemRepository _itemRepo = new();
@@ -23,10 +27,16 @@ public class CskuPickerDialog : Form
     private List<PickerRow> _allRows = new();
     private List<PickerRow> _filteredRows = new();
 
-    public CskuPickerDialog(string? defaultChannelCode = null)
+    /// <param name="priorityChannelCode">이 채널의 CSKU를 목록 맨 위로 올려서(그 외는 채널명순)
+    /// 보여준다. 다른 채널의 CSKU도 항상 함께 검색된다(제한하지 않음).</param>
+    /// <param name="preselectChannelFilter">true(기본값)면 채널 콤보의 초기 선택값을
+    /// priorityChannelCode로 맞춘다. false면 "(전체)"로 시작해 모든 채널의 CSKU가 바로 보이되,
+    /// 정렬 우선순위는 그대로 priorityChannelCode 적용(예: OFS 수동주문 — 다른 채널 CSKU도
+    /// 검색은 되어야 하지만 현재 채널 것을 먼저 보고 싶을 때).</param>
+    public CskuPickerDialog(string? priorityChannelCode = null, bool preselectChannelFilter = true)
     {
         InitializeComponent();
-        LoadData(defaultChannelCode);
+        LoadData(priorityChannelCode, preselectChannelFilter);
     }
 
     private void InitializeComponent()
@@ -83,7 +93,7 @@ public class CskuPickerDialog : Form
         CancelButton = btnCancel;
     }
 
-    private void LoadData(string? defaultChannelCode)
+    private void LoadData(string? priorityChannelCode, bool preselectChannelFilter)
     {
         var items = _itemRepo.GetAll().ToDictionary(i => i.Sku, i => i);
         var channels = _channelRepo.GetAll();
@@ -95,13 +105,16 @@ public class CskuPickerDialog : Form
             string itemName = !string.IsNullOrWhiteSpace(c.InvoiceDisplayName) ? c.InvoiceDisplayName! : (item?.ItemName ?? c.Msku);
             decimal cost = item?.CostPrice ?? 0m;
             string channelName = channelNames.TryGetValue(c.ChannelCode, out var name) ? name : c.ChannelCode;
-            return new PickerRow(c.ChannelCode, channelName, c.CskuCode, c.Msku, itemName, c.SupplyPrice, cost);
-        }).OrderBy(r => r.ChannelName).ThenBy(r => r.ItemName).ToList();
+            return new PickerRow(c.ChannelCode, channelName, c.CskuCode, c.Msku, itemName, c.SupplyPrice, cost, c.Unit, c.Packing);
+        })
+        // priorityChannelCode의 CSKU를 맨 위로, 그 다음은 기존처럼 채널명/품목명순.
+        .OrderByDescending(r => priorityChannelCode != null && r.ChannelCode.Equals(priorityChannelCode, StringComparison.OrdinalIgnoreCase))
+        .ThenBy(r => r.ChannelName).ThenBy(r => r.ItemName).ToList();
 
         _channelCombo.Items.Add("(전체)");
         foreach (var ch in channels.OrderBy(c => c.ChannelName)) _channelCombo.Items.Add(ch.ChannelName);
         _channelCombo.SelectedIndex = 0;
-        if (defaultChannelCode != null && channelNames.TryGetValue(defaultChannelCode, out var defaultName))
+        if (preselectChannelFilter && priorityChannelCode != null && channelNames.TryGetValue(priorityChannelCode, out var defaultName))
         {
             int idx = _channelCombo.Items.IndexOf(defaultName);
             if (idx >= 0) _channelCombo.SelectedIndex = idx;
@@ -141,10 +154,14 @@ public class CskuPickerDialog : Form
         SelectedUnitPrice = row.SupplyPrice;
         SelectedCostPrice = row.CostPrice;
         SelectedMsku = row.Msku;
+        SelectedCskuCode = row.CskuCode;
+        SelectedChannelCode = row.ChannelCode;
+        SelectedUnit = row.Unit;
+        SelectedPacking = row.Packing;
         DialogResult = DialogResult.OK;
         Close();
     }
 
     private sealed record PickerRow(string ChannelCode, string ChannelName, string CskuCode, string Msku,
-        string ItemName, decimal SupplyPrice, decimal CostPrice);
+        string ItemName, decimal SupplyPrice, decimal CostPrice, string Unit, string? Packing);
 }

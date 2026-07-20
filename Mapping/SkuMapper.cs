@@ -127,6 +127,13 @@ public class SkuMapper
         {
             // TargetSku(CSKU)가 있으면 우선, 없으면 TargetMsku(MSKU 직접) 사용(Settlement 전용 규칙)
             var resolved = !string.IsNullOrEmpty(rule.TargetSku) ? rule.TargetSku : rule.TargetMsku;
+            if (string.IsNullOrEmpty(resolved))
+            {
+                // 타겟이 비어있는 규칙(설정이 끝나지 않은 조건부 규칙 등)은 조건이 일치해도 매핑으로
+                // 치지 않는다 — 그대로 매칭시키면 "매핑(조건)" 상태로 위장돼 미매핑 감지(빨간 표시,
+                // 미매핑 카운트, 저장/택배사 출력 대상 필터)를 전부 빠져나가면서 MappedSku만 비게 된다.
+                continue;
+            }
             if (_conditionDetailsByRuleId.TryGetValue(rule.Id, out var details) && details.Count > 0)
             {
                 if (ConditionEvaluator.Matches(details, item))

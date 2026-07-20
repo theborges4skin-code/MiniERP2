@@ -22,6 +22,13 @@ public class DocParty
 
     public DateTime? CreatedAt { get; set; }
 
+    /// <summary>
+    /// 이 거래처(주로 공급자)를 불러올 때 자동으로 채울 기본 도장 이미지 경로입니다(거래처 관리
+    /// 창에서 지정). 문서관리 화면 하단의 도장 업로드는 이 값과 별개이며, 그쪽에서 직접 업로드하면
+    /// 그 값이 우선 적용됩니다(DocsForm.FillPartyFields 참고).
+    /// </summary>
+    public string? StampImagePath { get; set; }
+
     public DocParty Clone() => (DocParty)MemberwiseClone();
 
     public override string ToString() => string.IsNullOrWhiteSpace(CompanyName) ? "(이름 없음)" : CompanyName;
@@ -132,7 +139,9 @@ public class QuoteLineItem
     public decimal Qty { get; set; }       // 수량포함 버전에서만 사용
     public string Note { get; set; } = "";
 
-    public decimal Amount => Math.Round(Qty * UnitPrice, 0, MidpointRounding.AwayFromZero);
+    public decimal Amount => Math.Round(Qty * UnitPrice, 0, MidpointRounding.AwayFromZero);   // 공급가
+    public decimal Tax => Math.Round(Amount * 0.1m, 0, MidpointRounding.AwayFromZero);
+    public decimal LineTotal => Amount + Tax;                                                  // 합계금액
 }
 
 public class QuoteDoc
@@ -141,10 +150,10 @@ public class QuoteDoc
     public DocParty Supplier { get; set; } = new();
     public string RecipientName { get; set; } = "";   // 수신
     public string DocTitle { get; set; } = "견 적 서";
-    public string HeaderText { get; set; } = "";       // 인사문
-    public string PriceBasis { get; set; } = "VAT 포함"; // 가격기준 라벨
+    public string HeaderText { get; set; } = "";       // 인사문 — 줄바꿈으로 여러 줄 입력 가능(비우면 기본 문구 사용)
+    public string PriceBasis { get; set; } = "VAT 포함"; // 가격기준 라벨(기본형에서만 사용)
     public List<QuoteLineItem> Lines { get; set; } = new();
-    public string FooterNote { get; set; } = "";       // 기타 안내
+    public string FooterNote { get; set; } = "";       // "2. 기타" 비고 — 줄바꿈으로 구분, 최대 10줄까지 표시
     public DateTime IssueDate { get; set; } = DateTime.Today;
     public string? StampImagePath { get; set; }
 
@@ -169,6 +178,13 @@ public class PriceAdjLineItem
     public decimal PriceBefore { get; set; }
     public decimal PriceAfter { get; set; }
     public string Note { get; set; } = "";
+
+    /// <summary>
+    /// "CSKU 불러오기"로 채운 줄만 값이 있다(수기 입력 줄은 비어있음). 값이 있으면 "납품가 반영"
+    /// 버튼으로 이 줄의 PriceAfter를 실제 ChannelSkuTable.SupplyPrice에 반영할 수 있다.
+    /// </summary>
+    public string? ChannelCode { get; set; }
+    public string? CskuCode { get; set; }
 }
 
 public class PriceAdjDoc

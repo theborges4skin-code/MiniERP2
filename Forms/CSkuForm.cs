@@ -70,8 +70,12 @@ public class CSkuForm : Form
         _cskuGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널 코드", DataPropertyName = "ChannelCode", Width = 130 },
             new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 150 },
-            new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
-            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 100 }
+            new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", Width = 180 },
+            new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 100 },
+            new DataGridViewTextBoxColumn { Name = "Unit", HeaderText = "단위", DataPropertyName = "Unit", Width = 60 },
+            new DataGridViewTextBoxColumn { Name = "Packing", HeaderText = "포장단위", DataPropertyName = "Packing", Width = 110 },
+            new DataGridViewTextBoxColumn { Name = "Note", HeaderText = "비고", DataPropertyName = "Note", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            new DataGridViewTextBoxColumn { Name = "UpdatedAt", HeaderText = "마지막 수정", DataPropertyName = "UpdatedAt", Width = 130, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "yyyy-MM-dd HH:mm" } }
         );
 
         // 같은 채널 안에서도 옵션별로 CSKU 코드를 다르게 해야 할 수 있으므로, 채널 코드를 입력/수정하면
@@ -91,7 +95,7 @@ public class CSkuForm : Form
 
     private void SetupContextMenu()
     {
-        var historyMenuItem = new ToolStripMenuItem("가격 변경 이력 보기(&H)");
+        var historyMenuItem = new ToolStripMenuItem("변경 이력 보기(&H)");
         historyMenuItem.Click += OnHistoryMenuItemClick;
 
         _cskuGrid.ContextMenuStrip!.Items.Add(new ToolStripSeparator());
@@ -119,7 +123,7 @@ public class CSkuForm : Form
         }
 
         // Open the history form as a dialog.
-        using var historyForm = new ChannelSkuPriceHistoryForm(csku.ChannelCode, csku.CskuCode);
+        using var historyForm = new ChannelSkuHistoryForm(csku.ChannelCode, csku.CskuCode);
         FormManager.ApplyBoundsTracking(historyForm);
         historyForm.ShowDialog(this);
     }

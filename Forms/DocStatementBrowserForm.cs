@@ -53,43 +53,15 @@ public class DocStatementBrowserForm : Form
         _partyComboBox.DisplayMember = "CompanyName";
         _partyComboBox.ValueMember = "Id";
 
-        // 시작시점을 특정할 수 없는 이관 데이터 특성상, 기본 기간은 "전체"로 넓게 잡는다.
-        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = new DateTime(2000, 1, 1), Width = 100 };
-        _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Value = DateTime.Today, Width = 100 };
-
-        var btnQuickDate = new Button { Text = "빠른 선택 ▾", Size = new Size(90, 30) };
-        var quickDateMenu = new ContextMenuStrip();
-        quickDateMenu.Items.Add("전체기간", null, (_, _) =>
+        _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
+        _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
+        var btnQuickDate = DateRangeQuickSelect.CreateButton(_fromDatePicker, _toDatePicker);
+        // 이관된 과거 문서는 시작시점을 특정할 수 없어, 표준 6종 외에 "전체기간"을 추가로 제공한다.
+        DateRangeQuickSelect.AddExtraItem(btnQuickDate, "전체기간", (_, _) =>
         {
             _fromDatePicker.Value = new DateTime(2000, 1, 1);
             _toDatePicker.Value = DateTime.Today;
         });
-        quickDateMenu.Items.Add("이번달", null, (_, _) =>
-        {
-            _fromDatePicker.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
-            _toDatePicker.Value = DateTime.Today;
-        });
-        quickDateMenu.Items.Add("저번달", null, (_, _) =>
-        {
-            var prev = DateTime.Today.AddMonths(-1);
-            _fromDatePicker.Value = new DateTime(prev.Year, prev.Month, 1);
-            _toDatePicker.Value = new DateTime(prev.Year, prev.Month, DateTime.DaysInMonth(prev.Year, prev.Month));
-        });
-        quickDateMenu.Items.Add("이번 분기", null, (_, _) =>
-        {
-            var t = DateTime.Today;
-            _fromDatePicker.Value = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
-            _toDatePicker.Value = t;
-        });
-        quickDateMenu.Items.Add("지난 분기", null, (_, _) =>
-        {
-            var t = DateTime.Today;
-            var qStart = new DateTime(t.Year, ((t.Month - 1) / 3) * 3 + 1, 1);
-            _fromDatePicker.Value = qStart.AddMonths(-3);
-            _toDatePicker.Value = qStart.AddDays(-1);
-        });
-        btnQuickDate.ContextMenuStrip = quickDateMenu;
-        btnQuickDate.Click += (s, e) => quickDateMenu.Show(btnQuickDate, new Point(0, btnQuickDate.Height));
 
         var btnLoad = new Button { Text = "조회", Size = new Size(80, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };

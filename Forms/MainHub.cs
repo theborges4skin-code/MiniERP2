@@ -1,4 +1,4 @@
-﻿using MiniERP2.Database;
+using MiniERP2.Database;
 using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
@@ -19,104 +19,175 @@ public class MainHub : Form
     private void InitializeComponent()
     {
         Text = "MiniERP2 - Main Hub";
-        Size = new Size(1024, 768);
+        Size = new Size(1200, 800);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var mainLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            ColumnStyles = { new ColumnStyle(SizeType.Absolute, 200), new ColumnStyle(SizeType.Percent, 100) }
-        };
+        var groups = BuildMenuGroups();
+        var contentPanel = CreateContentPanel(groups);
+        var menuStrip = BuildMenuStrip(groups);
 
-        var sidebar = CreateSidebar();
-        var contentPanel = CreateContentPanel();
-
-        mainLayout.Controls.Add(sidebar, 0, 0);
-        mainLayout.Controls.Add(contentPanel, 1, 0);
-
-        Controls.Add(mainLayout);
+        // Dock 처리 순서상 Fill 패널을 먼저 추가하고 Top 메뉴스트립을 나중에 추가해야
+        // 메뉴스트립이 상단을 온전히 차지하고 나머지 공간을 Fill 패널이 채운다.
+        Controls.Add(contentPanel);
+        Controls.Add(menuStrip);
+        MainMenuStrip = menuStrip;
 
         Activated += (s, e) => RefreshSummary();
     }
 
-    private Control CreateSidebar()
+    /// <summary>
+    /// 화면 목록을 업무 흐름 기준 6개 그룹으로 묶는다. 상단 메뉴(그룹명 → 드롭다운)와 중앙부
+    /// 버튼 배치(그룹명 → 그룹박스)가 이 목록 하나를 공유해서 만들어지므로, 화면이 추가/이동되면
+    /// 여기 한 곳만 고치면 된다. 단축키(Shortcut)는 Ctrl+1~8 / Ctrl+F1~F8 범위 안에서 배정하며,
+    /// ToolStripMenuItem.ShortcutKeys에 등록하는 것만으로 전역 단축키로 동작한다(별도 키 후킹 불필요).
+    /// "레거시 데이터 가져오기"는 사용 빈도가 낮아 단축키를 배정하지 않았다(null).
+    /// </summary>
+    private List<(string GroupTitle, List<(string Text, EventHandler Handler, Keys? Shortcut)> Actions)> BuildMenuGroups() => new()
     {
-        var sidebarPanel = new FlowLayoutPanel
+        ("발주/배송", new()
+        {
+            ("OFS (발주처리)", (s, e) => FormManager.Show<OfsForm>(), Keys.Control | Keys.D3),
+            ("발주/출고 이력", (s, e) => FormManager.Show<OutboundHistoryForm>(), Keys.Control | Keys.D4),
+            ("풀필먼트 발주 처리", (s, e) => FormManager.Show<FboOrderForm>(), Keys.Control | Keys.D6),
+            ("풀필먼트 발주 이력", (s, e) => FormManager.Show<FboHistoryForm>(), Keys.Control | Keys.D7),
+        }),
+        ("기준정보", new()
+        {
+            ("마스터SKU 관리", (s, e) => FormManager.Show<MasterSkuForm>(), Keys.Control | Keys.D1),
+            ("매핑 관리", (s, e) => FormManager.Show<MappingForm>(), Keys.Control | Keys.D5),
+            ("채널 설정", (s, e) => FormManager.Show<ChannelConfigForm>(), Keys.Control | Keys.D2),
+        }),
+        ("정산", new()
+        {
+            ("마감/이익분석", (s, e) => FormManager.Show<SettlementForm>(), Keys.Control | Keys.F1),
+            ("광고비 분석", (s, e) => FormManager.Show<AdMappingForm>(), Keys.Control | Keys.F2),
+            ("월별 마감 자동화", (s, e) => FormManager.Show<MonthlyClosingForm>(), Keys.Control | Keys.F3),
+        }),
+        ("보고서", new()
+        {
+            ("종합보고서", (s, e) => FormManager.Show<ReportForm>(), Keys.Control | Keys.F4),
+            ("수출요약보고서", (s, e) => FormManager.Show<ExportSummaryForm>(), Keys.Control | Keys.F8),
+        }),
+        ("문서관리", new()
+        {
+            ("기타/문서관리", (s, e) => FormManager.Show<DocsForm>(), Keys.Control | Keys.F5),
+            ("거래명세표 조회/내보내기", (s, e) => FormManager.Show<DocStatementBrowserForm>(), Keys.Control | Keys.F6),
+        }),
+        ("데이터관리", new()
+        {
+            ("데이터 관리", (s, e) => FormManager.Show<DataManagementForm>(), Keys.Control | Keys.D8),
+            ("레거시 데이터 가져오기", OnLegacyImportClick, null),
+        }),
+    };
+
+    private MenuStrip BuildMenuStrip(List<(string GroupTitle, List<(string Text, EventHandler Handler, Keys? Shortcut)> Actions)> groups)
+    {
+        var menuStrip = new MenuStrip { Dock = DockStyle.Top };
+        foreach (var (groupTitle, actions) in groups)
+        {
+            var topItem = new ToolStripMenuItem(groupTitle);
+            foreach (var (text, handler, shortcut) in actions)
+            {
+                var item = new ToolStripMenuItem(text);
+                item.Click += handler;
+                if (shortcut.HasValue) item.ShortcutKeys = shortcut.Value;
+                topItem.DropDownItems.Add(item);
+            }
+            menuStrip.Items.Add(topItem);
+        }
+        return menuStrip;
+    }
+
+    private Control CreateContentPanel(List<(string GroupTitle, List<(string Text, EventHandler Handler, Keys? Shortcut)> Actions)> groups)
+    {
+        var outer = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            RowCount = 2,
+            ColumnCount = 1,
+            Padding = new Padding(20),
+        };
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));
+        outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        _summaryLabel = new Label
+        {
+            Font = new Font(Font.FontFamily, 11),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.TopLeft,
+        };
+
+        var groupsFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            AutoScroll = true,
+        };
+        foreach (var (groupTitle, actions) in groups)
+            groupsFlow.Controls.Add(BuildGroupBox(groupTitle, actions));
+
+        outer.Controls.Add(_summaryLabel, 0, 0);
+        outer.Controls.Add(groupsFlow, 0, 1);
+
+        RefreshSummary();
+        return outer;
+    }
+
+    private Control BuildGroupBox(string title, List<(string Text, EventHandler Handler, Keys? Shortcut)> actions)
+    {
+        var box = new GroupBox
+        {
+            Text = title,
+            Size = new Size(240, 46 + actions.Count * 50),
+            Margin = new Padding(10),
+            Padding = new Padding(8, 4, 8, 8),
+        };
+
+        var flow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
-            Padding = new Padding(10)
+            WrapContents = false,
         };
+        foreach (var (text, handler, shortcut) in actions)
+            flow.Controls.Add(BuildButtonRow(text, handler, shortcut));
 
-        var titleLabel = new Label
+        box.Controls.Add(flow);
+        return box;
+    }
+
+    /// <summary>버튼 줄 바깥 왼쪽에 단축키 표시 라벨을 붙인 한 줄([단축키][버튼])을 만든다.</summary>
+    private Control BuildButtonRow(string text, EventHandler onClick, Keys? shortcut)
+    {
+        var row = new FlowLayoutPanel
         {
-            Text = "MiniERP2",
-            Font = new Font(Font.FontFamily, 16, FontStyle.Bold),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
             AutoSize = true,
-            Margin = new Padding(0, 0, 0, 20)
+            Margin = new Padding(0),
         };
 
-        sidebarPanel.Controls.Add(titleLabel);
+        var shortcutLabel = new Label
+        {
+            Text = shortcut.HasValue ? FormatShortcut(shortcut.Value) : "",
+            Size = new Size(58, 40),
+            TextAlign = ContentAlignment.MiddleRight,
+            ForeColor = SystemColors.GrayText,
+            Font = new Font(Font.FontFamily, 8),
+            Margin = new Padding(0, 5, 2, 5),
+        };
 
-        // 기획서 0절의 화면 목록에 따라 메뉴 버튼 생성
-        var ofsButton = CreateMenuButton("OFS (발주처리)", (s, e) => { FormManager.Show<OfsForm>(); });
-        ofsButton.Enabled = true;
-        sidebarPanel.Controls.Add(ofsButton);
+        row.Controls.Add(shortcutLabel);
+        row.Controls.Add(CreateMenuButton(text, onClick));
+        return row;
+    }
 
-        var masterSkuButton = CreateMenuButton("마스터SKU 관리", (s, e) => { FormManager.Show<MasterSkuForm>(); });
-        masterSkuButton.Enabled = true; // 버튼 활성화
-        sidebarPanel.Controls.Add(masterSkuButton);
-
-        var mappingButton = CreateMenuButton("매핑 관리", (s, e) => { FormManager.Show<MappingForm>(); });
-        mappingButton.Enabled = true;
-        sidebarPanel.Controls.Add(mappingButton);
-
-        var channelConfigButton = CreateMenuButton("채널 설정", (s, e) => { FormManager.Show<ChannelConfigForm>(); });
-        channelConfigButton.Enabled = true;
-        sidebarPanel.Controls.Add(channelConfigButton);
-
-        var settlementButton = CreateMenuButton("마감/이익분석", (s, e) => { FormManager.Show<SettlementForm>(); });
-        settlementButton.Enabled = true;
-        sidebarPanel.Controls.Add(settlementButton);
-
-        var adAnalysisButton = CreateMenuButton("광고비 분석", (s, e) => { FormManager.Show<AdMappingForm>(); });
-        adAnalysisButton.Enabled = true;
-        sidebarPanel.Controls.Add(adAnalysisButton);
-
-        var reportButton = CreateMenuButton("종합보고서", (s, e) => { FormManager.Show<ReportForm>(); });
-        reportButton.Enabled = true;
-        sidebarPanel.Controls.Add(reportButton);
-
-        var monthlyClosingButton = CreateMenuButton("월별 마감 자동화", (s, e) => { FormManager.Show<MonthlyClosingForm>(); });
-        monthlyClosingButton.Enabled = true;
-        sidebarPanel.Controls.Add(monthlyClosingButton);
-
-        var outboundHistoryButton = CreateMenuButton("발주/출고 이력", (s, e) => { FormManager.Show<OutboundHistoryForm>(); });
-        outboundHistoryButton.Enabled = true;
-        sidebarPanel.Controls.Add(outboundHistoryButton);
-
-        var exportSummaryButton = CreateMenuButton("수출요약보고서", (s, e) => { FormManager.Show<ExportSummaryForm>(); });
-        exportSummaryButton.Enabled = true;
-        sidebarPanel.Controls.Add(exportSummaryButton);
-
-        var docsButton = CreateMenuButton("기타/문서관리", (s, e) => { FormManager.Show<DocsForm>(); });
-        docsButton.Enabled = true;
-        sidebarPanel.Controls.Add(docsButton);
-
-        var docStatementBrowserButton = CreateMenuButton("거래명세표 조회/내보내기", (s, e) => { FormManager.Show<DocStatementBrowserForm>(); });
-        docStatementBrowserButton.Enabled = true;
-        sidebarPanel.Controls.Add(docStatementBrowserButton);
-
-        var legacyImportButton = CreateMenuButton("레거시 데이터 가져오기", OnLegacyImportClick);
-        legacyImportButton.Enabled = true;
-        sidebarPanel.Controls.Add(legacyImportButton);
-
-        var dataManagementButton = CreateMenuButton("데이터 관리", (s, e) => { FormManager.Show<DataManagementForm>(); });
-        dataManagementButton.Enabled = true;
-        sidebarPanel.Controls.Add(dataManagementButton);
-
-        return sidebarPanel;
+    private static string FormatShortcut(Keys shortcut)
+    {
+        var key = shortcut & Keys.KeyCode;
+        var keyLabel = key is >= Keys.D0 and <= Keys.D9 ? ((int)(key - Keys.D0)).ToString() : key.ToString();
+        return $"Ctrl+{keyLabel}";
     }
 
     private Button CreateMenuButton(string text, EventHandler onClick)
@@ -127,33 +198,11 @@ public class MainHub : Form
             Size = new Size(160, 40),
             TextAlign = ContentAlignment.MiddleLeft,
             FlatStyle = FlatStyle.Flat,
-            Margin = new Padding(5)
+            Margin = new Padding(5),
         };
         button.FlatAppearance.BorderSize = 0;
         button.Click += onClick;
-        // TODO: 각 기능별 폼이 만들어지면 주석을 해제합니다.
-        button.Enabled = false;
         return button;
-    }
-
-    private Control CreateContentPanel()
-    {
-        var contentPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(20)
-        };
-
-        _summaryLabel = new Label
-        {
-            Font = new Font(Font.FontFamily, 12),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.TopLeft,
-        };
-
-        contentPanel.Controls.Add(_summaryLabel);
-        RefreshSummary();
-        return contentPanel;
     }
 
     /// <summary>
@@ -169,7 +218,7 @@ public class MainHub : Form
             .Count(c => _settlementRepository.GetByChannel(c.ChannelCode).Count > 0);
 
         _summaryLabel.Text =
-            "메인 허브에 오신 것을 환영합니다.\n왼쪽 메뉴에서 작업을 선택하세요.\n\n" +
+            "메인 허브에 오신 것을 환영합니다.\n상단 메뉴 또는 아래 버튼에서 작업을 선택하세요.\n\n" +
             "── 마스터 데이터 현황 ──\n" +
             $"등록된 채널: {channelCount}개\n" +
             $"등록된 마스터SKU: {itemCount}개\n" +

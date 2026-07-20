@@ -29,11 +29,19 @@ public class OfsForm : Form
     private readonly ItemRepository _itemRepository = new();
 
     private ExcelLikeDataGridView _ordersGrid = new();
-    private DataGridView _previewGrid = new();
+    private ExcelLikeDataGridView _previewGrid = new();
     private StatusStrip _statusStrip = new();
     private ToolStripStatusLabel _statusLabel = new();
     private BindingList<OfsOrderItem> _orders = new();
     private string? _lastChannelCode;
+
+    /// <summary>
+    /// 지금까지 불러온 발주 파일의 원본 행(엑셀) 개수 누적치. _orders.Clear() 시 함께 초기화되며,
+    /// 저장(발주확정) 시 실제 발주확정된 건수와 비교해 보여주는 용도로만 쓴다(품절 등으로 일부
+    /// 품목이 발주확정되지 않는 경우가 있어 완전히 같을 필요는 없음 — 사용자가 한 번 더 확인하도록
+    /// 숫자만 나란히 보여주는 게 목적).
+    /// </summary>
+    private int _totalLoadedRowCount;
     private MappingForm? _subscribedMappingForm;
 
     private TableLayoutPanel _mainLayout = new();
@@ -48,6 +56,13 @@ public class OfsForm : Form
     // 그건 사용자 편집이 아니라 화면을 갱신하는 중이라 모델에 다시 쓰면 안 된다(무한 루프/오염 방지).
     private bool _isRefreshingPreview;
     private const string LastPreviewCourierSettingKey = "OfsPreviewCourier";
+
+    /// <summary>
+    /// 미리보기 그리드의 컬럼폭이 현재 어느 택배사 기준으로 저장되어 있는지(_previewGrid.PersistenceKey에
+    /// 반영된 택배사명). 택배사마다 헤더 구성이 달라 폭 설정도 택배사별로 따로 기억해야 하므로,
+    /// 콤보에서 택배사가 바뀔 때만 이전 택배사의 폭을 저장하고 새 택배사의 저장된 폭을 불러온다.
+    /// </summary>
+    private string? _previewGridCourierKey;
 
     // 택배사 출력 미리보기에서 직접 편집/합포장/분리배송/복사한 내용을 최근 5건까지 실행취소할 수
     // 있게 보관한다. 각 항목은 그 조작 직전의 _orders 전체 스냅샷(복제본)이다.
@@ -197,7 +212,7 @@ public class OfsForm : Form
 
         Controls.Add(mainLayout);
 
-        FormClosing += (s, e) => _ordersGrid.SaveLayout();
+        FormClosing += (s, e) => { _ordersGrid.SaveLayout(); _previewGrid.SaveLayout(); };
     }
 
     private async void OnLoadOrdersClick(object? sender, EventArgs e)
@@ -249,7 +264,7 @@ public class OfsForm : Form
             if (_orders.Count > 0)
             {
                 var result = MessageBox.Show("기존에 로드된 주문이 있습니다. 새로 불러오시겠습니까?\n'아니오'를 누르면 기존 목록에 추가됩니다.", "확인", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-                if (result == DialogResult.Yes) _orders.Clear();
+                if (result == DialogResult.Yes) { _orders.Clear(); _totalLoadedRowCount = 0; }
                 else if (result == DialogResult.Cancel) return;
             }
 
@@ -266,6 +281,10 @@ public class OfsForm : Form
                         "헤더 행이 비어있거나 셀이 병합되어 있을 수 있습니다. 채널설정에서 헤더 행 번호를 확인해주세요.\n\n확인을 누르면 일단 파일은 그대로 불러옵니다.",
                         "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
+
+                // 발주확정 시 "불러온 발주건수 대비 발주확정 건수" 비교에 쓸 원본 엑셀 행 개수 —
+                // 누적발주서 창에서 일부만 골라도(아래) 이 수치는 실제 엑셀에 있던 행 수 그대로 유지한다.
+                _totalLoadedRowCount += loadedItems.Count;
 
                 allLoadedItems.AddRange(loadedItems);
             }
@@ -288,7 +307,13 @@ public class OfsForm : Form
                     return;
                 }
 
-                using var picker = new CumulativeOrderSelectionDialog(recentItems, windowDays);
+                var recentOrderNos = recentItems.Select(o => o.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
+                var alreadyShippedOrderNos = _outboundRepository.FindByOrderNos(recentOrderNos!)
+                    .Where(d => d.Status == "출고확정")
+                    .Select(d => d.OrderNo)
+                    .ToHashSet();
+
+                using var picker = new CumulativeOrderSelectionDialog(recentItems, windowDays, alreadyShippedOrderNos);
                 if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedItems.Count == 0)
                 {
                     _statusLabel.Text = "선택한 항목이 없어 추가되지 않았습니다.";
@@ -550,6 +575,7 @@ public class OfsForm : Form
         {
             var outboundDetails = new List<OutboundDetail>();
             var failedOrders = new List<OfsOrderItem>();
+            var saveConflicts = new List<OutboundSaveConflict>();
 
             await Task.Run(() =>
             {
@@ -582,9 +608,22 @@ public class OfsForm : Form
 
                 if (outboundDetails.Any())
                 {
-                    _outboundRepository.SaveOutbound(outboundDetails);
+                    saveConflicts = _outboundRepository.SaveOutbound(outboundDetails);
                 }
             });
+
+            if (saveConflicts.Count > 0)
+            {
+                // (ShipmentGroupKey, MskuCode) 충돌로 다른 주문의 이력을 덮어썼을 수 있음을 알린다
+                // (조용한 덮어쓰기 방지 — 원인 규명은 발주/출고 이력 관리창에서 직접 확인).
+                var preview = string.Join("\n", saveConflicts.Take(5).Select(c =>
+                    $"- 품목 {c.MskuCode}: 기존 주문 '{c.ExistingOrderNo}' → 새 주문 '{c.NewOrderNo}'"));
+                var more = saveConflicts.Count > 5 ? $"\n... 외 {saveConflicts.Count - 5}건" : string.Empty;
+                MessageBox.Show(
+                    $"{saveConflicts.Count}건의 이력이 다른 주문과 같은 키로 겹쳐 기존 이력을 덮어썼습니다.\n" +
+                    $"발주/출고 이력 관리창에서 확인하세요.\n\n{preview}{more}",
+                    "이력 덮어쓰기 경고", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
 
             // 저장 성공/실패에 따라 UI 업데이트
             UpdateOrderStatusAfterSave(outboundDetails, failedOrders);
@@ -625,7 +664,19 @@ public class OfsForm : Form
 
         var successCount = savedDetails.Count;
         var failCount = failedOrders.Count;
-        _statusLabel.Text = $"저장 완료: {successCount}건 성공, {failCount}건 실패 (납품가 없음)";
+        var confirmedCount = _orders.Count(o => o.Status is "발주확정" or "출고확정");
+        _statusLabel.Text = $"저장 완료: {successCount}건 성공, {failCount}건 실패 (납품가 없음)  |  불러온 주문 {_totalLoadedRowCount}건 중 발주확정 {confirmedCount}건";
+
+        // 엑셀에서 불러온 행 수와 실제 발주확정된 건수를 나란히 보여줘 사용자가 한 번 더 확인하게
+        // 한다. 품절 등으로 일부 품목을 의도적으로 발주확정하지 않을 수 있어 항상 같을 필요는
+        // 없으므로 숫자만 보여주고 막지는 않는다(차이가 있으면 다른 이유는 없는지 확인하라는 안내만).
+        var diff = _totalLoadedRowCount - confirmedCount;
+        var diffNote = diff == 0
+            ? "숫자가 일치합니다."
+            : $"{diff}건 차이가 있습니다. 품절 등으로 의도한 제외가 맞는지 한 번 확인해주세요.";
+        MessageBox.Show(
+            $"불러온 발주건수(엑셀 행 기준): {_totalLoadedRowCount}건\n발주확정 건수: {confirmedCount}건\n\n{diffNote}",
+            "발주확정 결과 확인", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void OnOrdersGridEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
@@ -1039,11 +1090,13 @@ public class OfsForm : Form
             }
 
             ClearStaleInvoiceLabelOverrides(selected);
-            var baseId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
-            var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+            // "분리배송"은 선택한 줄들을 하나로 묶는 게 아니라 각 줄을 서로 다른 송장으로 떼어내는
+            // 기능이다(합포장의 반대). 예전엔 선택 전체에 같은 newGroupId 하나를 부여해 오히려
+            // 여러 줄이 한 그룹으로 합쳐지는 버그가 있었다 — 줄마다 개별 고유 groupId를 부여한다.
             foreach (var item in selected)
             {
-                item.ShipmentGroupId = newGroupId;
+                var baseId = ShipmentGrouping.GetEffectiveGroupId(item);
+                item.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
             }
             _ordersGrid.Invalidate();
             RefreshExportPreview();
@@ -1408,6 +1461,8 @@ public class OfsForm : Form
 
         if (courier == null)
         {
+            if (!string.IsNullOrEmpty(_previewGrid.PersistenceKey)) _previewGrid.SaveLayout();
+            _previewGridCourierKey = null;
             _previewHeaderEntries = [];
             _previewGrid.Columns.Clear();
             _previewGrid.DataSource = null;
@@ -1426,6 +1481,16 @@ public class OfsForm : Form
         if (headersChanged || _previewGrid.Columns.Count == 0)
         {
             RebuildPreviewColumns(entries);
+        }
+
+        // 택배사마다 컬럼 구성(헤더)이 달라 폭 설정도 택배사별로 따로 기억한다: 택배사가 바뀌면
+        // 이전 택배사의 현재 폭을 먼저 저장하고, 새 택배사의 저장된 폭을 불러온다(PersistenceKey
+        // setter가 LoadLayout()을 자동 호출 — ExcelLikeDataGridView 참고).
+        if (_previewGridCourierKey != courier.CourierName)
+        {
+            if (!string.IsNullOrEmpty(_previewGrid.PersistenceKey)) _previewGrid.SaveLayout();
+            _previewGrid.PersistenceKey = $"OfsForm.PreviewGrid.{courier.CourierName}";
+            _previewGridCourierKey = courier.CourierName;
         }
 
         var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
@@ -1507,7 +1572,10 @@ public class OfsForm : Form
                 // 값을 적용해야 의미가 맞는 칸(수취인/연락처/주소/배송메세지/운송장번호/품목)만
                 // 직접 고칠 수 있게 한다. 나머지(매핑된 SKU 등 계산된 값)는 읽기전용.
                 ReadOnly = !CourierFieldResolver.IsEditable(entry.PropertyName),
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                // 예전엔 Fill 모드로 항상 폭을 균등 분배했지만, 사용자가 조절한 폭을 기억하려면
+                // 고정폭이어야 한다(LoadLayout이 저장된 폭을 그대로 적용 — PersistenceKey 설정
+                // 지점 참고). 최초 1회(저장된 값이 없을 때)는 이 기본폭으로 보여준다.
+                Width = 120,
                 MinimumWidth = 80,
             });
         }

@@ -20,8 +20,15 @@ public static class ShipmentGrouping
         if (!string.IsNullOrWhiteSpace(item.ShipmentGroupId)) return item.ShipmentGroupId;
 
         // 명시적으로 합포장을 지정하지 않았으면 항상 그 줄 단독으로 취급한다(기본값 = 그룹화 없음).
-        // 내보내기 1회성 그룹 키일 뿐이라 영속성은 필요 없지만, 같은 인스턴스에 대해서는 항상 같은
-        // 값을 반환해야 한다(객체 식별 해시는 GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다).
+        // 이 키는 OutboundDetailTable에 ShipmentGroupKey로 영속 저장되므로(발주/출고 이력), 발주서를
+        // 재로드해 다시 저장해도 같은 발주 줄이면 같은 값이 나와야 한다. 파일에서 로드된 줄은
+        // SourceRowKey(파일명#엑셀행번호)가 있으므로 그걸 채널코드와 묶어 결정적 키로 쓴다.
+        if (!string.IsNullOrWhiteSpace(item.SourceRowKey))
+            return $"{item.ChannelCode}|{item.SourceRowKey}";
+
+        // 수동 추가 등 SourceRowKey가 없는 항목은 객체 식별 해시로 폴백한다(같은 인스턴스에 대해서는
+        // 항상 같은 값 — GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다). 이 경우 재로드 개념이
+        // 없으므로(그 세션에서 새로 만든 행) 영속 키가 세션을 넘어 안정적이지 않을 수 있다.
         return $"__row_{RuntimeHelpers.GetHashCode(item)}";
     }
 
@@ -78,6 +85,16 @@ public static class ShipmentGrouping
     private static string FormatQuantityTag(string? template, int quantity)
     {
         var effective = string.IsNullOrEmpty(template) ? DefaultQuantityFormat : template;
+
+        // 수량이 2개 이상이면 작업자가 한눈에 다건임을 알아볼 수 있도록, 수량만큼 '*'를 대괄호
+        // 바로 앞에 붙인다(예: "▶[##개]" + 수량 2 → "▶**[2개]", 수량 5 → "▶*****[5개]"). 대괄호가
+        // 없는 형식(기본형식 등)은 대상이 아니다(기존 표시 유지).
+        if (quantity >= 2)
+        {
+            var insertAt = effective.IndexOf('[');
+            if (insertAt >= 0) effective = effective.Insert(insertAt, new string('*', quantity));
+        }
+
         return effective.Replace("##", quantity.ToString());
     }
 }

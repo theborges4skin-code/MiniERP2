@@ -57,16 +57,22 @@ public class MasterSkuForm : Form
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
         var btnImport = new Button { Text = "엑셀 가져오기", Size = new Size(110, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
+        var btnViewCsku = new Button { Text = "해당 CSKU 보기", Size = new Size(110, 30) };
+        var btnOverview = new Button { Text = "매입·납품 통합 조회", Size = new Size(140, 30) };
 
         btnRefresh.Click += OnRefreshClick;
         btnSave.Click += OnSaveClick;
         btnImport.Click += OnImportClick;
         btnExport.Click += OnExportClick;
+        btnViewCsku.Click += (s, e) => OpenCskuFormForSelectedRow();
+        btnOverview.Click += (s, e) => OpenOverviewFormForSelectedRow();
 
         toolStrip.Controls.Add(btnRefresh);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnImport);
         toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnViewCsku);
+        toolStrip.Controls.Add(btnOverview);
         _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
         toolStrip.Controls.Add(_statusLabel);
 
@@ -122,13 +128,23 @@ public class MasterSkuForm : Form
         var historyMenuItem = new ToolStripMenuItem("원가 변경 이력 보기(&H)");
         historyMenuItem.Click += OnHistoryMenuItemClick;
 
+        var viewCskuMenuItem = new ToolStripMenuItem("해당 CSKU 보기(&C)");
+        viewCskuMenuItem.Click += (s, e) => OpenCskuFormForSelectedRow();
+
+        var overviewMenuItem = new ToolStripMenuItem("매입·납품 통합 조회(&O)");
+        overviewMenuItem.Click += (s, e) => OpenOverviewFormForSelectedRow();
+
         _itemsGrid.ContextMenuStrip!.Items.Add(new ToolStripSeparator());
         _itemsGrid.ContextMenuStrip.Items.Add(historyMenuItem);
+        _itemsGrid.ContextMenuStrip.Items.Add(viewCskuMenuItem);
+        _itemsGrid.ContextMenuStrip.Items.Add(overviewMenuItem);
 
-        // 메뉴가 열릴 때, 선택된 행이 1개일 때만 '이력 보기' 메뉴 활성화
+        // 메뉴가 열릴 때, 선택된 행이 1개일 때만 '이력 보기'/'CSKU 보기'/'통합 조회' 메뉴 활성화
         _itemsGrid.ContextMenuStrip.Opening += (s, e) =>
         {
             historyMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
+            viewCskuMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
+            overviewMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
         };
     }
 
@@ -159,16 +175,53 @@ public class MasterSkuForm : Form
         // 'Sku' 열을 더블클릭했는지 확인
         if (_itemsGrid.Columns[e.ColumnIndex].Name == "Sku")
         {
-            var sku = _itemsGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value as string;
-
-            if (!string.IsNullOrWhiteSpace(sku))
-            {
-                // CSKU 관리창을 모달 다이얼로그로 엽니다.
-                using var cskuForm = new CSkuForm(sku);
-                FormManager.ApplyBoundsTracking(cskuForm);
-                cskuForm.ShowDialog(this);
-            }
+            OpenCskuFormForRow(e.RowIndex);
         }
+    }
+
+    /// <summary>현재 선택된 행의 SKU 기준으로 CSKU 관리창을 연다(툴바 버튼/우클릭 메뉴 공용).</summary>
+    private void OpenCskuFormForSelectedRow()
+    {
+        if (_itemsGrid.SelectedRows.Count != 1) return;
+        OpenCskuFormForRow(_itemsGrid.SelectedRows[0].Index);
+    }
+
+    private void OpenCskuFormForRow(int rowIndex)
+    {
+        if (rowIndex < 0 || rowIndex >= _itemsGrid.Rows.Count) return;
+        if (_itemsGrid.Rows[rowIndex].IsNewRow) return;
+
+        var sku = _itemsGrid.Rows[rowIndex].Cells["Sku"].Value as string;
+        if (string.IsNullOrWhiteSpace(sku))
+        {
+            MessageBox.Show("SKU가 없는 품목은 CSKU를 조회할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // CSKU 관리창을 모달 다이얼로그로 엽니다.
+        using var cskuForm = new CSkuForm(sku);
+        FormManager.ApplyBoundsTracking(cskuForm);
+        cskuForm.ShowDialog(this);
+        LoadData(); // CSKU 추가/삭제로 "연결 CSKU" 요약이 바뀌었을 수 있으므로 새로고침.
+    }
+
+    /// <summary>선택된 행의 SKU 기준으로 매입·납품 통합 조회창(§M4)을 연다.</summary>
+    private void OpenOverviewFormForSelectedRow()
+    {
+        if (_itemsGrid.SelectedRows.Count != 1) return;
+        var row = _itemsGrid.SelectedRows[0];
+        if (row.IsNewRow) return;
+
+        var sku = row.Cells["Sku"].Value as string;
+        if (string.IsNullOrWhiteSpace(sku))
+        {
+            MessageBox.Show("SKU가 없는 품목은 조회할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var overviewForm = new PurchaseSalesOverviewForm(sku);
+        FormManager.ApplyBoundsTracking(overviewForm);
+        overviewForm.ShowDialog(this);
     }
 
     private void LoadData()

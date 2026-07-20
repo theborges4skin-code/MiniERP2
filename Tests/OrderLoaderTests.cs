@@ -73,6 +73,37 @@ public class OrderLoaderTests
     }
 
     [TestMethod]
+    public async Task LoadFromFileAsync_PopulatesSourceRowKey_StableAcrossReload()
+    {
+        // 버그2(발주처 이력 충돌) 근본원인 수정 검증: 같은 파일을 두 번 로드해도(=재로드 시나리오)
+        // 같은 엑셀 행에서 온 항목은 SourceRowKey가 같아야 ShipmentGroupKey도 일치해 재저장 시
+        // 같은 이력 레코드로 매칭된다.
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "주문번호";
+            sheet.Cells[1, 2].Value = "상품명";
+            sheet.Cells[2, 1].Value = "";
+            sheet.Cells[2, 2].Value = "상품A";
+            sheet.Cells[3, 1].Value = "";
+            sheet.Cells[3, 2].Value = "상품B";
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-A");
+        var firstLoad = await new OrderLoader().LoadFromFileAsync(skuMapper, BuildChannelConfig(), _excelFilePath);
+        var reloaded = await new OrderLoader().LoadFromFileAsync(skuMapper, BuildChannelConfig(), _excelFilePath);
+
+        Assert.HasCount(2, firstLoad);
+        Assert.AreEqual($"{Path.GetFileName(_excelFilePath)}#2", firstLoad[0].SourceRowKey);
+        Assert.AreEqual($"{Path.GetFileName(_excelFilePath)}#3", firstLoad[1].SourceRowKey);
+        Assert.AreEqual(firstLoad[0].SourceRowKey, reloaded[0].SourceRowKey);
+        Assert.AreEqual(firstLoad[1].SourceRowKey, reloaded[1].SourceRowKey);
+        Assert.AreNotEqual(firstLoad[0].SourceRowKey, firstLoad[1].SourceRowKey);
+    }
+
+    [TestMethod]
     public async Task LoadFromFileAsync_TextFormattedDateCell_ParsesOrderDate()
     {
         ExcelLicense.Ensure();

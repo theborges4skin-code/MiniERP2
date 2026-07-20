@@ -49,6 +49,37 @@ public class ShipmentGroupingTests
     }
 
     [TestMethod]
+    public void GetEffectiveGroupId_WithSourceRowKey_IsDeterministicAcrossDifferentInstances()
+    {
+        // 발주서를 재로드하면 새 OfsOrderItem 인스턴스가 생기지만(객체 해시는 바뀜), 같은 파일의
+        // 같은 행이면 SourceRowKey가 같으므로 그룹 키도 같아야 한다(재저장 시 같은 이력 레코드로
+        // 매칭되게 하기 위함 — 버그2 근본원인 수정).
+        var firstLoad = new OfsOrderItem { ChannelCode = "CH005", SourceRowKey = "order.xlsx#7" };
+        var reloaded = new OfsOrderItem { ChannelCode = "CH005", SourceRowKey = "order.xlsx#7" };
+
+        Assert.AreEqual(ShipmentGrouping.GetEffectiveGroupId(firstLoad), ShipmentGrouping.GetEffectiveGroupId(reloaded));
+    }
+
+    [TestMethod]
+    public void GetEffectiveGroupId_WithSourceRowKey_DiffersAcrossDifferentRows()
+    {
+        var row7 = new OfsOrderItem { ChannelCode = "CH005", SourceRowKey = "order.xlsx#7" };
+        var row8 = new OfsOrderItem { ChannelCode = "CH005", SourceRowKey = "order.xlsx#8" };
+
+        Assert.AreNotEqual(ShipmentGrouping.GetEffectiveGroupId(row7), ShipmentGrouping.GetEffectiveGroupId(row8));
+    }
+
+    [TestMethod]
+    public void GetEffectiveGroupId_WithoutSourceRowKey_FallsBackToObjectHash()
+    {
+        // 수동 추가 등 SourceRowKey가 없는 항목은 기존처럼 객체 식별 해시로 폴백해야 한다.
+        var manual1 = new OfsOrderItem { ChannelCode = "CH005" };
+        var manual2 = new OfsOrderItem { ChannelCode = "CH005" };
+
+        Assert.AreNotEqual(ShipmentGrouping.GetEffectiveGroupId(manual1), ShipmentGrouping.GetEffectiveGroupId(manual2));
+    }
+
+    [TestMethod]
     public void BuildCombinedItemDescription_SingleLine_ReturnsPlainTextWithoutBrackets()
     {
         var items = new[] { new OfsOrderItem { ProductName = "A품목", Quantity = 2 } };
@@ -77,7 +108,27 @@ public class ShipmentGroupingTests
 
         var result = ShipmentGrouping.BuildCombinedItemDescription(items, "   ▶[##개]");
 
-        Assert.AreEqual("A상품   ▶[2개]", result);
+        Assert.AreEqual("A상품   ▶**[2개]", result);
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_QuantityOfOne_NoStarsAdded()
+    {
+        var items = new[] { new OfsOrderItem { ProductName = "A상품", Quantity = 1 } };
+
+        var result = ShipmentGrouping.BuildCombinedItemDescription(items, "   ▶[##개]");
+
+        Assert.AreEqual("A상품   ▶[1개]", result);
+    }
+
+    [TestMethod]
+    public void BuildCombinedItemDescription_QuantityOfFive_AddsFiveStarsBeforeBracket()
+    {
+        var items = new[] { new OfsOrderItem { ProductName = "A상품", Quantity = 5 } };
+
+        var result = ShipmentGrouping.BuildCombinedItemDescription(items, "▶[##개]");
+
+        Assert.AreEqual("A상품▶*****[5개]", result);
     }
 
     [TestMethod]
@@ -91,7 +142,7 @@ public class ShipmentGroupingTests
 
         var result = ShipmentGrouping.BuildCombinedItemDescription(items, "▶[##개]");
 
-        Assert.AreEqual("((A상품xx▶[2개]xx))   +   ((B상품xx▶[1개]xx))", result);
+        Assert.AreEqual("((A상품xx▶**[2개]xx))   +   ((B상품xx▶[1개]xx))", result);
     }
 
     [TestMethod]

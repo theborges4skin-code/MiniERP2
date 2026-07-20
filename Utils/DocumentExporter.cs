@@ -472,8 +472,18 @@ public static class DocumentExporter
         string.IsNullOrWhiteSpace(l.ItemName) && l.Qty == 0 && l.UnitPrice == 0;
 
     // ════════════════════════════════════════════════════════════════════
-    //  견적서 (기본 / 수량포함)
+    //  견적서 (기본 / 수량포함) — 샘플 양식(견적서 기본/수량포함 시트) 디자인을 그대로 재현.
+    //  품목 줄 수·비고 줄 수가 가변적이라 고정 행 수 없이 실제 내용만큼만 쓰고, 마지막에
+    //  인쇄영역을 다시 계산한다. SetPrintSettings의 FitToHeight=0 덕분에(폭만 1페이지에 맞추고
+    //  높이는 그대로 흘림) A4 한 페이지를 넘는 분량은 엑셀이 자동으로 다음 페이지로 넘겨준다.
     // ════════════════════════════════════════════════════════════════════
+
+    /// <summary>비어있으면 이 기본 문구를 쓴다(샘플 "견적서 기본" 시트의 인사문 그대로).</summary>
+    private static readonly string[] DefaultQuoteGreetingLines =
+    [
+        "1. 귀사의 무궁한 발전과 번영을 기원합니다.",
+        "2. 다음과 같이 문의하신 제품에 대한 견적을 제출합니다.",
+    ];
 
     public static void ExportQuote(QuoteDoc doc, string filePath)
     {
@@ -488,14 +498,27 @@ public static class DocumentExporter
         SetPrintSettings(ws);
 
         int row = 1;
-        row = WriteQuoteTitle(ws, row, doc, totalCols);
-        row = WriteQuoteSupplierHeader(ws, row, doc, totalCols);
+        row = WriteQuoteHeaderTop(ws, row, doc, totalCols);
+        row = WriteQuoteGreetingLines(ws, row, doc, totalCols);
+        row++;
+        row = WriteQuoteDivider(ws, row, totalCols);
+        row++;
+        row = WriteQuotePriceBasisLine(ws, row, doc, totalCols, withQty);
+
+        int headerRow = row;
         row = WriteQuoteDataHeader(ws, row, withQty);
-        int dataStart = row;
         row = WriteQuoteDataRows(ws, row, doc, withQty);
         if (withQty) row = WriteQuoteTotalRow(ws, row, doc, totalCols);
-        if (!string.IsNullOrWhiteSpace(doc.FooterNote)) row = WriteFooterNote(ws, row, doc.FooterNote, totalCols);
+        row++;
+
+        row = WriteQuoteNotesSection(ws, row, doc, totalCols);
+        row += 2;
         row = WriteQuoteSupplierFooter(ws, row, doc, totalCols);
+
+        // 품목/비고가 몇 줄이든 실제로 쓴 범위까지만 인쇄영역으로 잡고, 표 헤더는 다음 페이지에도
+        // 반복 출력되게 한다(품목이 많아 페이지가 넘어가도 헤더를 다시 볼 수 있도록).
+        ws.PrinterSettings.PrintArea = ws.Cells[1, 1, row - 1, totalCols];
+        ws.PrinterSettings.RepeatRows = ws.Cells[headerRow, 1, headerRow, totalCols];
 
         if (doc.StampImagePath != null && File.Exists(doc.StampImagePath))
             InsertStamp(ws, doc.StampImagePath);
@@ -505,66 +528,89 @@ public static class DocumentExporter
 
     private static void SetQuoteColumnWidths(ExcelWorksheet ws, bool withQty)
     {
-        // 기본: 품목(1) / 단위(2) / 패킹(3) / 단가(4) / 비고(5)
-        ws.Column(1).Width = 24;
-        ws.Column(2).Width = 8;
-        ws.Column(3).Width = 12;
-        ws.Column(4).Width = 12;
-        ws.Column(5).Width = withQty ? 8 : 16;
+        ws.Column(1).Width = 3; // 여백/불릿 열(샘플의 B열에 해당)
         if (withQty)
         {
-            ws.Column(6).Width = 11;   // 금액
-            ws.Column(7).Width = 11;   // 세액 (합계 행에서만 값)
-            ws.Column(8).Width = 11;   // 합계금액
-            ws.Column(9).Width = 14;   // 비고
-        }
-    }
-
-    private static int WriteQuoteTitle(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
-    {
-        // 제목 행
-        Merge(ws, row, 1, row, totalCols, doc.DocTitle);
-        var titleCell = ws.Cells[row, 1];
-        titleCell.Style.Font.Size = 18;
-        titleCell.Style.Font.Bold = true;
-        titleCell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
-        titleCell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
-        ws.Row(row).Height = 36;
-        ApplyOuterBorder(titleCell);
-        row++;
-
-        // 발행일 + 수량포함용 단위 라벨
-        if (!doc.IsBasic)
-        {
-            ws.Cells[row, 1].Value = $"발행일: {doc.IssueDate:yyyy년 M월 d일}";
-            ws.Cells[row, 1].Style.Font.Size = 10;
-            Merge(ws, row, totalCols - 1, row, totalCols, "(단위: 원)");
-            ws.Cells[row, totalCols - 1].Style.Font.Size = 9;
-            ws.Cells[row, totalCols - 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+            ws.Column(2).Width = 22;  // 제품명
+            ws.Column(3).Width = 7;   // 단위
+            ws.Column(4).Width = 10;  // 단가
+            ws.Column(5).Width = 7;   // 수량
+            ws.Column(6).Width = 10;  // 공급가
+            ws.Column(7).Width = 10;  // 세액
+            ws.Column(8).Width = 11;  // 합계금액
+            ws.Column(9).Width = 12;  // 비고
         }
         else
         {
-            ws.Cells[row, 1].Value = $"발행일: {doc.IssueDate:yyyy년 M월 d일}";
-            ws.Cells[row, 1].Style.Font.Size = 10;
+            ws.Column(2).Width = 28;  // 제품명
+            ws.Column(3).Width = 9;   // 단위
+            ws.Column(4).Width = 14;  // 판매가
+            ws.Column(5).Width = 22;  // 비고
         }
-        ws.Row(row).Height = 16;
+    }
+
+    private static int WriteQuoteHeaderTop(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
+    {
+        Merge(ws, row, 1, row, totalCols, $"수  신 : {doc.RecipientName}");
+        StyleQuoteBigLine(ws.Cells[row, 1]);
+        ws.Row(row).Height = 26;
         row++;
 
-        // 수신 / 제목 / 인사문 / 가격기준
-        WriteQuoteInfoRow(ws, row++, totalCols, "수     신", doc.RecipientName);
-        WriteQuoteInfoRow(ws, row++, totalCols, "제     목", doc.DocTitle == "견 적 서" ? "견 적 의 건" : doc.DocTitle);
+        var subject = doc.DocTitle == "견 적 서" ? "견적의뢰" : doc.DocTitle;
+        Merge(ws, row, 1, row, totalCols, $"제  목 : {subject}");
+        StyleQuoteBigLine(ws.Cells[row, 1]);
+        ws.Row(row).Height = 20;
+        row++;
 
-        if (!string.IsNullOrWhiteSpace(doc.HeaderText))
+        row++; // 여백
+        return row;
+    }
+
+    private static void StyleQuoteBigLine(ExcelRangeBase cell)
+    {
+        cell.Style.Font.Size = 16;
+        cell.Style.Font.Bold = true;
+        cell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+    }
+
+    /// <summary>인사문(HeaderText)을 줄바꿈 기준으로 나눠 한 줄씩 쓴다. 비어있으면 기본 문구 사용.</summary>
+    private static int WriteQuoteGreetingLines(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
+    {
+        var lines = SplitLines(doc.HeaderText);
+        if (lines.Count == 0) lines = DefaultQuoteGreetingLines.ToList();
+
+        foreach (var line in lines)
         {
-            Merge(ws, row, 1, row, totalCols, doc.HeaderText);
-            ws.Cells[row, 1].Style.WrapText = true;
-            ws.Cells[row, 1].Style.Font.Size = 9;
-            ws.Row(row).Height = 40;
+            Merge(ws, row, 1, row, totalCols, line);
+            ws.Cells[row, 1].Style.Font.Size = 11;
+            ws.Row(row).Height = 16.5;
             row++;
         }
-
-        WriteQuoteInfoRow(ws, row++, totalCols, "가격기준", $"({doc.PriceBasis}) 단가 기준");
         return row;
+    }
+
+    private static int WriteQuoteDivider(ExcelWorksheet ws, int row, int totalCols)
+    {
+        Merge(ws, row, 1, row, totalCols, " - 다    음 -");
+        ws.Cells[row, 1].Style.Font.Size = 11;
+        ws.Cells[row, 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+        ws.Row(row).Height = 16.5;
+        return row + 1;
+    }
+
+    private static int WriteQuotePriceBasisLine(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols, bool withQty)
+    {
+        ws.Cells[row, 1].Value = "1. 가격 기준";
+        ws.Cells[row, 1].Style.Font.Size = 11;
+
+        // 수량포함형은 세액/합계금액 열이 있어 VAT 포함여부를 굳이 밝히지 않고 통화 단위만 표기한다.
+        string corner = withQty ? "(단위: 원)" : $"({doc.PriceBasis})";
+        Merge(ws, row, totalCols - 1, row, totalCols, corner);
+        ws.Cells[row, totalCols - 1].Style.Font.Size = 9;
+        ws.Cells[row, totalCols - 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+
+        ws.Row(row).Height = 20;
+        return row + 1;
     }
 
     private static void WriteQuoteInfoRow(ExcelWorksheet ws, int row, int totalCols, string label, string value)
@@ -577,109 +623,153 @@ public static class DocumentExporter
         ws.Row(row).Height = 16;
     }
 
-    private static int WriteQuoteSupplierHeader(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
-    {
-        // 공급자 라벨 행
-        Merge(ws, row, 1, row, totalCols, "■ 공  급  자");
-        StyleLabel(ws.Cells[row, 1], bold: true);
-        ws.Row(row).Height = 15;
-        row++;
-
-        // 공급자 정보 (한 행에 압축)
-        var supInfo = $"{doc.Supplier.CompanyName}  |  대표: {doc.Supplier.CeoName}  |  {doc.Supplier.Address}  |  Tel: {doc.Supplier.Tel}";
-        Merge(ws, row, 1, row, totalCols, supInfo);
-        ws.Cells[row, 1].Style.Font.Size = 9;
-        ApplyOuterBorder(ws.Cells[row, 1, row, totalCols]);
-        ws.Row(row).Height = 15;
-        row++;
-        return row;
-    }
-
     private static int WriteQuoteDataHeader(ExcelWorksheet ws, int row, bool withQty)
     {
         string[] headers = withQty
-            ? new[] { "품     목", "단위", "패  킹", "단  가", "수량", "금  액", "세  액", "합계금액", "비  고" }
-            : new[] { "품     목", "단위", "패  킹", "단  가", "비  고" };
+            ? new[] { "제품명", "단위", "단가", "수량", "공급가", "세액", "합계금액", "비고" }
+            : new[] { "제품명", "단위", "판매가", "비고" };
 
-        for (int c = 1; c <= headers.Length; c++)
+        for (int i = 0; i < headers.Length; i++)
         {
-            var cell = ws.Cells[row, c];
-            cell.Value = headers[c - 1];
+            var cell = ws.Cells[row, i + 2]; // 1열은 여백열
+            cell.Value = headers[i];
             cell.Style.Font.Bold = true;
             cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+            cell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
             cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
             cell.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(230, 230, 230));
             ApplyCellBorder(cell);
         }
-        ws.Row(row).Height = 18;
+        ws.Row(row).Height = 20;
         return row + 1;
     }
 
     private static int WriteQuoteDataRows(ExcelWorksheet ws, int row, QuoteDoc doc, bool withQty)
     {
         var lines = doc.Lines.Where(l => !string.IsNullOrWhiteSpace(l.ItemName) || l.UnitPrice != 0).ToList();
-        int noteCol = withQty ? 9 : 5;
 
         foreach (var line in lines)
         {
-            ws.Cells[row, 1].Value = line.ItemName;
-            ws.Cells[row, 2].Value = line.Unit;
-            ws.Cells[row, 3].Value = line.Packing;
-            ws.Row(row).Height = 15;
+            ws.Cells[row, 2].Value = line.ItemName;
+            ws.Cells[row, 2].Style.WrapText = true;
+            ws.Cells[row, 3].Value = line.Unit;
+            ws.Row(row).Height = 20;
 
-            SetNum(ws, row, 4, line.UnitPrice);
+            SetNum(ws, row, 4, line.UnitPrice); // 판매가(기본형) / 단가(수량포함형) — 두 레이아웃 모두 4열
+
+            int noteCol;
             if (withQty)
             {
                 SetNum(ws, row, 5, line.Qty);
                 SetNum(ws, row, 6, line.Amount);
-                // 세액: 합계 행에서만 (라인별 비워둠)
-                SetNum(ws, row, 8, line.Amount); // 합계금액 = 금액(세액 없이) for line — actual total in total row
+                SetNum(ws, row, 7, line.Tax);
+                SetNum(ws, row, 8, line.LineTotal);
+                noteCol = 9;
             }
-            ws.Cells[row, noteCol].Value = line.Note;
+            else
+            {
+                noteCol = 5;
+            }
 
-            for (int c = 1; c <= noteCol; c++) ApplyCellBorder(ws.Cells[row, c]);
+            // 샘플에서는 패킹 정보를 비고에 함께 적어 넣는 방식이라(예: "24개/박스"), 별도 열 없이
+            // 비고 뒤에 괄호로 덧붙인다.
+            ws.Cells[row, noteCol].Value = CombineNote(line.Note, line.Packing);
+            ws.Cells[row, noteCol].Style.WrapText = true;
+
+            for (int c = 2; c <= noteCol; c++) ApplyCellBorder(ws.Cells[row, c]);
             row++;
         }
         return row;
     }
 
+    private static string CombineNote(string note, string packing)
+    {
+        if (string.IsNullOrWhiteSpace(packing)) return note;
+        if (string.IsNullOrWhiteSpace(note)) return packing;
+        return $"{note} ({packing})";
+    }
+
     private static int WriteQuoteTotalRow(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
     {
-        Merge(ws, row, 1, row, 4, "계");
-        StyleLabel(ws.Cells[row, 1], bold: true, center: true);
+        Merge(ws, row, 2, row, 4, "계");
+        StyleLabel(ws.Cells[row, 2], bold: true, center: true);
 
         SetNum(ws, row, 5, doc.TotalQty);
         SetNum(ws, row, 6, doc.TotalAmount);
         SetNum(ws, row, 7, doc.TotalTax);
         SetNum(ws, row, 8, doc.GrandTotal);
 
-        for (int c = 1; c <= totalCols; c++)
+        for (int c = 2; c <= totalCols; c++)
         {
             ApplyCellBorder(ws.Cells[row, c]);
             ws.Cells[row, c].Style.Font.Bold = true;
         }
-        ws.Cells[row, 1].Style.Fill.PatternType = ExcelFillStyle.Solid;
-        ws.Cells[row, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(230, 230, 230));
-        ws.Row(row).Height = 16;
+        ws.Cells[row, 2].Style.Fill.PatternType = ExcelFillStyle.Solid;
+        ws.Cells[row, 2].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(230, 230, 230));
+        ws.Row(row).Height = 20;
         return row + 1;
+    }
+
+    /// <summary>
+    /// "2. 기타" 비고 섹션. FooterNote를 줄바꿈 기준으로 나눠 한 줄에 하나씩 "-" 불릿으로 쓴다
+    /// (문서관리 화면의 "비고" 입력창에 줄마다 하나씩 입력 — 비고1/비고2/... 방식). 0~10줄까지
+    /// 가변적으로 들어갈 수 있고, 내용이 없으면 섹션 자체를 생략한다.
+    /// </summary>
+    private static int WriteQuoteNotesSection(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
+    {
+        var lines = SplitLines(doc.FooterNote).Take(10).ToList();
+        if (lines.Count == 0) return row;
+
+        ws.Cells[row, 1].Value = "2. 기타";
+        ws.Cells[row, 1].Style.Font.Size = 11;
+        ws.Row(row).Height = 16.5;
+        row++;
+
+        foreach (var line in lines)
+        {
+            ws.Cells[row, 1].Value = "-";
+            ws.Cells[row, 1].Style.Font.Size = 11;
+            Merge(ws, row, 2, row, totalCols, line);
+            ws.Cells[row, 2].Style.Font.Size = 11;
+            ws.Row(row).Height = 16.5;
+            row++;
+        }
+        return row;
     }
 
     private static int WriteQuoteSupplierFooter(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
     {
-        ws.Row(row).Height = 22;
-        var dateStr = $"{doc.IssueDate:yyyy년 M월 d일}";
-        Merge(ws, row, 1, row, totalCols, dateStr);
+        Merge(ws, row, 1, row, totalCols, $"{doc.IssueDate:yyyy년 M월 d일}");
         ws.Cells[row, 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
-        ws.Cells[row, 1].Style.Font.Size = 10;
+        ws.Cells[row, 1].Style.Font.Size = 12;
+        ws.Row(row).Height = 22;
         row++;
 
-        var supLine = $"상호: {doc.Supplier.CompanyName}   대표자: {doc.Supplier.CeoName}   {doc.Supplier.Address}";
-        Merge(ws, row, 1, row, totalCols, supLine);
-        ws.Cells[row, 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
-        ws.Cells[row, 1].Style.Font.Size = 10;
-        ws.Row(row).Height = 20;
-        return row + 1;
+        Merge(ws, row, 1, row, totalCols, doc.Supplier.Address);
+        StyleQuoteFooterLine(ws.Cells[row, 1]);
+        row++;
+
+        Merge(ws, row, 1, row, totalCols, $"{doc.Supplier.CompanyName}  대표 {doc.Supplier.CeoName}");
+        StyleQuoteFooterLine(ws.Cells[row, 1]);
+        row++;
+
+        return row;
     }
+
+    private static void StyleQuoteFooterLine(ExcelRangeBase cell)
+    {
+        cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+        cell.Style.Font.Size = 14;
+        cell.Style.Font.Bold = true;
+        cell.Worksheet.Row(cell.Start.Row).Height = 22;
+    }
+
+    /// <summary>줄바꿈으로 구분된 텍스트를 빈 줄을 제외한 줄 목록으로 나눈다(인사문/비고 공용).</summary>
+    private static List<string> SplitLines(string? text) =>
+        (text ?? "").Replace("\r\n", "\n").Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
 
     // ════════════════════════════════════════════════════════════════════
     //  가격조정에 관한 건

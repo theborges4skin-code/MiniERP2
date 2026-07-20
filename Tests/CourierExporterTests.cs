@@ -240,7 +240,7 @@ public class CourierExporterTests
         ExcelLicense.Ensure();
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["Sheet1"];
-        Assert.AreEqual("A상품   ▶[2개]", sheet.Cells[2, 1].Value);
+        Assert.AreEqual("A상품   ▶**[2개]", sheet.Cells[2, 1].Value);
     }
 
     [TestMethod]

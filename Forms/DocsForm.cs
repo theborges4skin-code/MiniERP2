@@ -15,8 +15,10 @@ public class DocsForm : Form
     private readonly DocPartyRepository _partyRepo = new();
     private readonly DocFavoritePhraseRepository _phraseRepo = new();
     private readonly SalesChannelRepository _channelRepo = new();
+    private readonly ChannelConfigService _channelConfigService = new();
     private readonly SettingsService _settingsService = new();
     private readonly DocHistoryRepository _historyRepo = new();
+    private readonly ChannelSkuRepository _channelSkuRepository = new();
 
     /// <summary>공급받는자를 채널에서 불러왔을 때, 어느 채널인지 기억해 CSKU 불러오기 필터 기본값으로 쓴다.</summary>
     private string? _currentBuyerChannelCode;
@@ -246,23 +248,30 @@ public class DocsForm : Form
         var group = new GroupBox { Text = "수신 및 문서 정보", Dock = DockStyle.Fill };
         var tbl = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4, Padding = new Padding(4)
+            Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Padding = new Padding(4)
         };
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 55));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        for (int i = 0; i < 4; i++) tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        tbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        tbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _quoteRecipient = TB(); _quoteRecipient.PlaceholderText = "수신처명";
         _quoteTitle = TB(); _quoteTitle.Text = "견 적 서";
-        _quoteHeaderText = TB(); _quoteHeaderText.PlaceholderText = "인사문 (생략 가능)";
         _quotePriceBasis = TB(); _quotePriceBasis.Text = "VAT 포함";
+        _quoteHeaderText = new TextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical,
+            PlaceholderText = "인사문 — 한 줄에 하나씩 입력(생략 시 기본 문구 사용)"
+        };
 
         tbl.Controls.Add(Lbl("수신"), 0, 0);       tbl.Controls.Add(_quoteRecipient, 1, 0);
         tbl.Controls.Add(Lbl("문서제목"), 2, 0);    tbl.Controls.Add(_quoteTitle, 3, 0);
-        tbl.Controls.Add(Lbl("인사문"), 0, 1);      tbl.Controls.Add(_quoteHeaderText, 1, 1);
-        tbl.Controls.Add(Lbl("가격기준"), 2, 1);    tbl.Controls.Add(_quotePriceBasis, 3, 1);
+        tbl.Controls.Add(Lbl("가격기준"), 0, 1);    tbl.Controls.Add(_quotePriceBasis, 1, 1);
+        tbl.Controls.Add(Lbl("인사문"), 0, 2);      tbl.Controls.Add(_quoteHeaderText, 1, 2);
+        tbl.SetColumnSpan(_quoteHeaderText, 3);
 
         group.Controls.Add(tbl);
         var wrapper = new Panel { Dock = DockStyle.Fill };
@@ -358,7 +367,11 @@ public class DocsForm : Form
     {
         var flow = new FlowLayoutPanel { Dock = DockStyle.Fill };
         var btnCsku = Btn("CSKU 불러오기", 110, OnLoadCskuClick);
+        var btnOutboundHistory = Btn("출고이력 불러오기", 130, OnLoadOutboundHistoryClick);
+        var btnApplyPriceAdj = Btn("납품가 반영", 100, OnApplyPriceAdjustmentClick);
         flow.Controls.Add(btnCsku);
+        flow.Controls.Add(btnOutboundHistory);
+        flow.Controls.Add(btnApplyPriceAdj);
         return flow;
     }
 
@@ -472,6 +485,11 @@ public class DocsForm : Form
         _lineGrid.EndEdit();
         RebuildGridColumns(_currentType);
         _statusLabel.Text = "";
+
+        // 견적서는 "비고" 칸이 줄마다 하나씩(비고1/비고2/...) "2. 기타" 항목으로 출력되므로 안내를 바꿔준다.
+        _footerNoteBox.PlaceholderText = isQuote
+            ? "기타 안내사항 — 한 줄에 하나씩 입력하세요(최대 10줄, 각 줄이 비고1/비고2/...로 출력됨)"
+            : "하단 비고";
     }
 
     private void RebuildGridColumns(DocType type)
@@ -524,7 +542,11 @@ public class DocsForm : Form
                     GCol("Unit",          "단위",    65),
                     GCol("PriceBefore",   "조정 전", 100),
                     GCol("PriceAfter",    "조정 후", 100),
-                    GCol("Note",          "비고",   130)
+                    GCol("Note",          "비고",   130),
+                    // "CSKU 불러오기"로 채운 줄만 값이 있다 — "납품가 반영" 버튼이 이 값으로 실제
+                    // CSKU를 찾는다. 화면에는 안 보이지만 그리드에 함께 저장/이동되는 값이라 열로 둔다.
+                    new DataGridViewTextBoxColumn { Name = "ChannelCode", Visible = false },
+                    new DataGridViewTextBoxColumn { Name = "CskuCode", Visible = false }
                 );
                 break;
 
@@ -773,9 +795,11 @@ public class DocsForm : Form
             if (row.IsNewRow) continue;
             var line = new PriceAdjLineItem
             {
-                ItemName = row.Cells["ItemName"].Value?.ToString() ?? "",
-                Unit     = row.Cells["Unit"].Value?.ToString() ?? "",
-                Note     = row.Cells["Note"].Value?.ToString() ?? "",
+                ItemName    = row.Cells["ItemName"].Value?.ToString() ?? "",
+                Unit        = row.Cells["Unit"].Value?.ToString() ?? "",
+                Note        = row.Cells["Note"].Value?.ToString() ?? "",
+                ChannelCode = row.Cells["ChannelCode"].Value?.ToString(),
+                CskuCode    = row.Cells["CskuCode"].Value?.ToString(),
             };
             int.TryParse(row.Cells["No"].Value?.ToString(), out var no); line.No = no > 0 ? no : seq;
             decimal.TryParse(row.Cells["PriceBefore"].Value?.ToString(), out var pb); line.PriceBefore = pb;
@@ -867,17 +891,43 @@ public class DocsForm : Form
 
     private void OnLoadPartyFromChannelClick(object? sender, EventArgs e)
     {
-        var linked = _partyRepo.GetChannelLinkedAll();
-        if (linked.Count == 0)
+        var channelTypes = _channelConfigService.Load().ToDictionary(c => c.ChannelCode, c => c.ChannelType);
+        var partyByChannel = _partyRepo.GetChannelLinkedAll().ToDictionary(p => p.ChannelCode);
+
+        var options = _channelRepo.GetAll()
+            .Where(c => !(channelTypes.TryGetValue(c.ChannelCode, out var type) ? type : ChannelType.General).IsMarketplace())
+            .Select(c => new ChannelPartyOption(c, partyByChannel.TryGetValue(c.ChannelCode, out var p) ? p : null))
+            .ToList();
+
+        if (options.Count == 0)
         {
-            MessageBox.Show("채널에 연결된 공급받는자 정보가 없습니다.\n채널 설정 > 거래처 정보 탭에서 등록하세요.", "알림");
+            MessageBox.Show("등록된 거래처(온라인 채널 제외) 목록이 없습니다.\n채널 설정 창에서 거래처 채널을 먼저 추가하세요.", "알림");
             return;
         }
-        var channelNames = _channelRepo.GetAll().ToDictionary(c => c.ChannelCode, c => c.ChannelName);
-        using var dlg = new ChannelPartySelectDialog(linked, channelNames);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Selected == null) return;
+
+        using var dlg = new ChannelPartySelectDialog(options);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        if (dlg.NeedsChannelSetup != null)
+        {
+            var configForm = Application.OpenForms.OfType<ChannelConfigForm>().FirstOrDefault() ?? new ChannelConfigForm();
+            if (!configForm.Visible) configForm.Show();
+            configForm.BringToFront();
+            configForm.SelectChannelPartyTab(dlg.NeedsChannelSetup);
+            return;
+        }
+
+        if (dlg.Selected == null) return;
         FillPartyFields(dlg.Selected, supplier: false);
         _currentBuyerChannelCode = dlg.Selected.ChannelCode;
+
+        // B2B 거래처 견적서는 VAT별도가 기본이다(§D5) — 채널유형이 확인되는 시점(채널에서 불러오기)에만
+        // 자동으로 바꿔주고, 수기로 입력한 값은 건드리지 않는다.
+        var channelType = channelTypes.TryGetValue(_currentBuyerChannelCode, out var t) ? t : ChannelType.General;
+        if (channelType == ChannelType.B2B && _currentType is DocType.QuoteBasic or DocType.QuoteWithQty)
+        {
+            _quotePriceBasis.Text = "VAT 별도";
+        }
     }
 
     private void LoadPartyFromDb(bool supplier)
@@ -937,6 +987,16 @@ public class DocsForm : Form
         (supplier ? _supBizItem : _buyBizItem).Text = p.BizItem;
         (supplier ? _supTel : _buyTel).Text = p.Tel;
         (supplier ? _supEmail : _buyEmail).Text = p.Email;
+
+        // 공급자(발행자) 쪽만 도장이 의미가 있다 — 문서에 찍히는 도장은 항상 공급자의 것이다.
+        // 거래처 관리 창에서 이 거래처에 지정해둔 기본 도장이 있으면 자동으로 불러오되, 이미
+        // 하단 도장 업로드로 이번 문서에만 다른 도장을 지정해뒀다면 그걸 덮어쓰지 않는다.
+        if (supplier && string.IsNullOrWhiteSpace(_stampImagePath) &&
+            !string.IsNullOrWhiteSpace(p.StampImagePath) && File.Exists(p.StampImagePath))
+        {
+            _stampImagePath = p.StampImagePath;
+            _stampLabel.Text = Path.GetFileName(_stampImagePath);
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -984,22 +1044,119 @@ public class DocsForm : Form
 
     private void OnLoadCskuClick(object? sender, EventArgs e)
     {
-        if (_currentType == DocType.PriceAdjustment)
-        {
-            MessageBox.Show("가격조정 공문에서는 CSKU 불러오기를 사용할 수 없습니다.", "알림");
-            return;
-        }
-
         using var dlg = new CskuPickerDialog(_currentBuyerChannelCode);
         if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedItemName == null) return;
 
         _lineGrid.EndEdit();
         var row = TargetLineRow();
         row.Cells["ItemName"].Value = dlg.SelectedItemName;
+        if (_lineGrid.Columns.Contains("Unit"))
+            row.Cells["Unit"].Value = dlg.SelectedUnit;
+        if (_lineGrid.Columns.Contains("Packing"))
+            row.Cells["Packing"].Value = dlg.SelectedPacking;
+
+        // 가격조정 공문은 "현재 납품가"를 조정 전 가격으로 채우고, CSKU 연결 정보를 함께 저장해둔다
+        // — "납품가 반영" 버튼이 이 값으로 실제 CSKU를 찾아 조정 후 가격을 반영할 수 있게 하기 위함.
+        if (_currentType == DocType.PriceAdjustment)
+        {
+            row.Cells["PriceBefore"].Value = dlg.SelectedUnitPrice;
+            row.Cells["ChannelCode"].Value = dlg.SelectedChannelCode;
+            row.Cells["CskuCode"].Value = dlg.SelectedCskuCode;
+            return;
+        }
+
         if (_lineGrid.Columns.Contains("UnitPrice"))
             row.Cells["UnitPrice"].Value = dlg.SelectedUnitPrice;
         if (_lineGrid.Columns.Contains("CostPrice"))
             row.Cells["CostPrice"].Value = dlg.SelectedCostPrice;
+    }
+
+    /// <summary>
+    /// B2B 가격조정 공문(§M6) — "CSKU 불러오기"로 채운 줄(ChannelCode/CskuCode가 있는 줄)만
+    /// PriceAfter를 실제 ChannelSkuTable.SupplyPrice에 반영하고, 그 변경을 ChannelSkuPriceHistory에
+    /// 사유(문서 제목)와 함께 남긴다. 수기로 입력한 줄(연결된 CSKU 없음)은 안내 문서일 뿐이므로 건너뛴다.
+    /// </summary>
+    private void OnApplyPriceAdjustmentClick(object? sender, EventArgs e)
+    {
+        if (_currentType != DocType.PriceAdjustment)
+        {
+            MessageBox.Show("가격조정 공문에서만 사용할 수 있습니다.", "알림");
+            return;
+        }
+
+        _lineGrid.EndEdit();
+        var applicable = new List<(DataGridViewRow Row, string ChannelCode, string CskuCode, decimal PriceAfter)>();
+        foreach (DataGridViewRow row in _lineGrid.Rows)
+        {
+            if (row.IsNewRow) continue;
+            var channelCode = row.Cells["ChannelCode"].Value?.ToString();
+            var cskuCode = row.Cells["CskuCode"].Value?.ToString();
+            if (string.IsNullOrEmpty(channelCode) || string.IsNullOrEmpty(cskuCode)) continue;
+            decimal.TryParse(row.Cells["PriceAfter"].Value?.ToString(), out var priceAfter);
+            applicable.Add((row, channelCode, cskuCode, priceAfter));
+        }
+
+        if (applicable.Count == 0)
+        {
+            MessageBox.Show(
+                "반영할 줄이 없습니다.\n\"CSKU 불러오기\"로 채운 줄만 납품가에 반영할 수 있습니다(수기 입력 줄은 안내문 전용).",
+                "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var skippedCount = _lineGrid.Rows.Cast<DataGridViewRow>().Count(r => !r.IsNewRow) - applicable.Count;
+        var reason = _adjTitle.Text.Trim().Length > 0 ? _adjTitle.Text.Trim() : "가격조정 공문";
+        var confirmMsg = $"{applicable.Count}건의 납품가를 아래와 같이 실제 반영합니다(되돌리려면 CSKU 관리 화면에서 직접 수정해야 합니다).\n\n"
+            + string.Join("\n", applicable.Take(5).Select(a => $"- {a.Row.Cells["ItemName"].Value}: {a.PriceAfter:N0}"))
+            + (applicable.Count > 5 ? $"\n... 외 {applicable.Count - 5}건" : "")
+            + (skippedCount > 0 ? $"\n\n(연결된 CSKU가 없는 {skippedCount}건은 제외됩니다.)" : "")
+            + "\n\n계속하시겠습니까?";
+        if (MessageBox.Show(confirmMsg, "납품가 반영 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        var appliedCount = 0;
+        foreach (var (row, channelCode, cskuCode, priceAfter) in applicable)
+        {
+            var csku = _channelSkuRepository.GetByChannelAndCskuCode(channelCode, cskuCode);
+            if (csku == null) continue;
+            csku.SupplyPrice = priceAfter;
+            _channelSkuRepository.Upsert(csku, reason);
+            appliedCount++;
+        }
+
+        _statusLabel.Text = $"납품가 {appliedCount}건을 반영했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 과거 출고이력(OutboundDetailTable, OFS 발주확정/출고확정 이력)을 채널·기간으로 조회해
+    /// 체크한 여러 건을 한 번에 그리드에 새 줄로 추가한다. 거래명세표/매출장은 실제 출고건이라
+    /// 발주일(연/월/일)까지 채우고, 견적서는 날짜 열이 없으므로 품목/단가만 채운다.
+    /// </summary>
+    private void OnLoadOutboundHistoryClick(object? sender, EventArgs e)
+    {
+        if (_currentType == DocType.PriceAdjustment)
+        {
+            MessageBox.Show("가격조정 공문에서는 출고이력 불러오기를 사용할 수 없습니다.", "알림");
+            return;
+        }
+
+        using var dlg = new OutboundHistoryPickerDialog(_currentBuyerChannelCode);
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedPicks.Count == 0) return;
+
+        _lineGrid.EndEdit();
+        foreach (var pick in dlg.SelectedPicks)
+        {
+            int idx = _lineGrid.Rows.Add();
+            var row = _lineGrid.Rows[idx];
+            var date = pick.Detail.CreatedAt;
+
+            if (_lineGrid.Columns.Contains("Year")) row.Cells["Year"].Value = date.Year;
+            if (_lineGrid.Columns.Contains("Month")) row.Cells["Month"].Value = date.Month;
+            if (_lineGrid.Columns.Contains("Day")) row.Cells["Day"].Value = date.Day;
+            row.Cells["ItemName"].Value = pick.ItemName;
+            if (_lineGrid.Columns.Contains("Qty")) row.Cells["Qty"].Value = pick.Detail.Qty;
+            if (_lineGrid.Columns.Contains("UnitPrice")) row.Cells["UnitPrice"].Value = pick.Detail.SupplyPrice;
+            if (_lineGrid.Columns.Contains("CostPrice")) row.Cells["CostPrice"].Value = pick.CostPrice;
+        }
     }
 
     private DataGridViewRow TargetLineRow()
@@ -1305,11 +1462,17 @@ internal class PartySelectDialog : Form
     }
 }
 
+/// <summary>채널 1건과 해당 채널에 저장된 공급받는자 정보(없으면 null)를 짝지은 선택 후보.</summary>
+internal sealed record ChannelPartyOption(SalesChannel Channel, DocParty? Party);
+
 internal class ChannelPartySelectDialog : Form
 {
     public DocParty? Selected { get; private set; }
 
-    public ChannelPartySelectDialog(List<DocParty> linkedParties, Dictionary<string, string> channelNames)
+    /// <summary>거래처 정보가 없는 채널을 선택했을 때, 채널 설정 창에서 등록해야 할 채널 코드.</summary>
+    public string? NeedsChannelSetup { get; private set; }
+
+    public ChannelPartySelectDialog(List<ChannelPartyOption> options)
     {
         Text = "채널 선택";
         Size = new Size(420, 320);
@@ -1318,28 +1481,32 @@ internal class ChannelPartySelectDialog : Form
         MaximizeBox = false;
 
         var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
-        foreach (var p in linkedParties)
+        foreach (var opt in options)
         {
-            string channelLabel = channelNames.TryGetValue(p.ChannelCode, out var name) ? name : p.ChannelCode;
-            list.Items.Add(new ChannelPartyItem($"{channelLabel} — {p.CompanyName}", p));
+            string label = opt.Party != null
+                ? $"{opt.Channel.ChannelName} — {opt.Party.CompanyName}"
+                : $"{opt.Channel.ChannelName} — (거래처 정보 없음, 선택 시 등록)";
+            list.Items.Add(new ChannelPartyItem(label, opt));
         }
 
         var ok = new Button { Text = "선택", Dock = DockStyle.Bottom, Height = 32, DialogResult = DialogResult.OK };
-        ok.Click += (s, e) =>
-        {
-            if (list.SelectedItem is ChannelPartyItem item) { Selected = item.Party; DialogResult = DialogResult.OK; }
-        };
-        list.DoubleClick += (s, e) =>
-        {
-            if (list.SelectedItem is ChannelPartyItem item) { Selected = item.Party; DialogResult = DialogResult.OK; Close(); }
-        };
+        ok.Click += (s, e) => Confirm(list);
+        list.DoubleClick += (s, e) => Confirm(list);
 
         Controls.Add(list);
         Controls.Add(ok);
         AcceptButton = ok;
     }
 
-    private sealed record ChannelPartyItem(string Label, DocParty Party)
+    private void Confirm(ListBox list)
+    {
+        if (list.SelectedItem is not ChannelPartyItem item) return;
+        if (item.Option.Party != null) Selected = item.Option.Party;
+        else NeedsChannelSetup = item.Option.Channel.ChannelCode;
+        DialogResult = DialogResult.OK;
+    }
+
+    private sealed record ChannelPartyItem(string Label, ChannelPartyOption Option)
     {
         public override string ToString() => Label;
     }

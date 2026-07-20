@@ -32,6 +32,11 @@ public class ChannelConfigForm : Form
     private Label _partyStatusLabel = new();
 
     private PropertyGrid _propertyGrid = new();
+    // B2B 견적관리(§2.1) — 한 채널이 매입·매출을 동시에 겸할 수 있어 SalesChannel에 별도 플래그로
+    // 둔다. ChannelConfig(PropertyGrid 대상)가 아니라 SalesChannel 소속이라 PropertyGrid 밖에 둔다.
+    private CheckBox _chkIsPurchase = new();
+    private CheckBox _chkIsSales = new();
+    private bool _suppressPurchaseSalesEvents;
     private Label _statusLabel = new();
     private TreeView _channelTreeView = new();
     /// <summary>
@@ -51,6 +56,8 @@ public class ChannelConfigForm : Form
     private AdFileLayout? _currentAdLayout;
     private CheckBox _cfsFeeEnabledCheckBox = new();
     private PropertyGrid _cfsFeePropertyGrid = new();
+    private TabControl _rightTabControl = new();
+    private TabPage _partyInfoTabPage = new();
 
     private static readonly StdField[] OrderMappingFields =
     [
@@ -179,24 +186,37 @@ public class ChannelConfigForm : Form
         leftPanel.Controls.Add(legacyImportPanel, 0, 3);
 
         // Right Panel (Tabs: 기본 정보 / 발주서 매핑 / 정산서 매핑)
-        var rightTabControl = new TabControl { Dock = DockStyle.Fill };
-        rightTabControl.TabPages.Add(CreateBasicInfoTab());
-        rightTabControl.TabPages.Add(CreatePartyInfoTab());
-        rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
-        rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
-        rightTabControl.TabPages.Add(CreateCourierOverrideTab());
-        rightTabControl.TabPages.Add(CreateAuxSourceTab());
-        rightTabControl.TabPages.Add(CreateAdFieldMappingTab());
-        rightTabControl.TabPages.Add(CreateCfsFeeTab());
+        _rightTabControl = new TabControl { Dock = DockStyle.Fill };
+        _partyInfoTabPage = CreatePartyInfoTab();
+        _rightTabControl.TabPages.Add(CreateBasicInfoTab());
+        _rightTabControl.TabPages.Add(_partyInfoTabPage);
+        _rightTabControl.TabPages.Add(CreateFieldMappingTab("발주서 매핑", _orderMappingGrid));
+        _rightTabControl.TabPages.Add(CreateFieldMappingTab("정산서 매핑", _settlementMappingGrid));
+        _rightTabControl.TabPages.Add(CreateCourierOverrideTab());
+        _rightTabControl.TabPages.Add(CreateAuxSourceTab());
+        _rightTabControl.TabPages.Add(CreateAdFieldMappingTab());
+        _rightTabControl.TabPages.Add(CreateCfsFeeTab());
 
         mainLayout.Controls.Add(leftPanel, 0, 0);
-        mainLayout.Controls.Add(rightTabControl, 1, 0);
+        mainLayout.Controls.Add(_rightTabControl, 1, 0);
         Controls.Add(mainLayout);
     }
 
     private TabPage CreateBasicInfoTab()
     {
         var tabPage = new TabPage("기본 정보");
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var flagsPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(6, 4, 0, 0) };
+        _chkIsPurchase = new CheckBox { Text = "매입처(이 채널에서 사입)", AutoSize = true, Padding = new Padding(0, 3, 0, 0) };
+        _chkIsSales = new CheckBox { Text = "판매처(이 채널에 납품/판매)", AutoSize = true, Padding = new Padding(16, 3, 0, 0) };
+        _chkIsPurchase.CheckedChanged += OnPurchaseSalesFlagChanged;
+        _chkIsSales.CheckedChanged += OnPurchaseSalesFlagChanged;
+        flagsPanel.Controls.Add(_chkIsPurchase);
+        flagsPanel.Controls.Add(_chkIsSales);
+
         _propertyGrid = new PropertyGrid
         {
             Dock = DockStyle.Fill,
@@ -205,8 +225,24 @@ public class ChannelConfigForm : Form
             PropertySort = PropertySort.Categorized,
         };
         _propertyGrid.PropertyValueChanged += OnConfigPropertyValueChanged;
-        tabPage.Controls.Add(_propertyGrid);
+
+        layout.Controls.Add(flagsPanel, 0, 0);
+        layout.Controls.Add(_propertyGrid, 0, 1);
+        tabPage.Controls.Add(layout);
         return tabPage;
+    }
+
+    /// <summary>매입처/판매처 체크박스는 즐겨찾기 토글과 같은 방식으로 바뀌는 즉시 저장한다.</summary>
+    private void OnPurchaseSalesFlagChanged(object? sender, EventArgs e)
+    {
+        if (_suppressPurchaseSalesEvents || _currentConfig == null) return;
+
+        var channel = _channels.FirstOrDefault(c => c.ChannelCode == _currentConfig.ChannelCode);
+        if (channel == null) return;
+
+        channel.IsPurchase = _chkIsPurchase.Checked;
+        channel.IsSales = _chkIsSales.Checked;
+        _salesChannelRepository.Upsert(channel);
     }
 
     /// <summary>
@@ -1288,6 +1324,10 @@ public class ChannelConfigForm : Form
         {
             _propertyGrid.SelectedObject = null;
             ClearFieldMappingGrids();
+            _suppressPurchaseSalesEvents = true;
+            _chkIsPurchase.Checked = false;
+            _chkIsSales.Checked = false;
+            _suppressPurchaseSalesEvents = false;
             return;
         }
 
@@ -1300,6 +1340,11 @@ public class ChannelConfigForm : Form
 
         _propertyGrid.SelectedObject = config;
         LoadFieldMappingGrids(config);
+
+        _suppressPurchaseSalesEvents = true;
+        _chkIsPurchase.Checked = selectedChannel.IsPurchase;
+        _chkIsSales.Checked = selectedChannel.IsSales;
+        _suppressPurchaseSalesEvents = false;
     }
 
     /// <summary>
@@ -1313,6 +1358,16 @@ public class ChannelConfigForm : Form
 
         _channelTreeView.SelectedNode = node;
         node.EnsureVisible();
+    }
+
+    /// <summary>
+    /// 지정된 채널을 선택하고 "거래처 정보(공급받는자)" 탭까지 바로 전환합니다. 문서관리
+    /// 화면에서 거래처 정보가 없는 채널을 클릭했을 때 바로 등록할 수 있도록 안내하는 용도입니다.
+    /// </summary>
+    public void SelectChannelPartyTab(string channelCode)
+    {
+        SelectChannelByCode(channelCode);
+        _rightTabControl.SelectedTab = _partyInfoTabPage;
     }
 
     private TreeNode? FindChannelNode(string channelCode)
@@ -1374,15 +1429,40 @@ public class ChannelConfigForm : Form
 
     private void OnAddClick(object? sender, EventArgs e)
     {
-        using var dialog = new AddChannelDialog();
+        using var dialog = new AddChannelDialog(_channels);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var newChannelCode = ChannelCodeGenerator.GenerateNext(_channels.Select(c => c.ChannelCode));
         var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = dialog.ChannelName };
         _salesChannelRepository.Upsert(newChannel);
 
+        if (dialog.SourceChannel != null)
+        {
+            CopyChannelConfig(dialog.SourceChannel.ChannelCode, newChannelCode, dialog.ChannelName);
+        }
+
         LoadData();
         SelectChannelByCode(newChannelCode);
+    }
+
+    /// <summary>
+    /// 기존 채널의 설정(발주서/정산서 매핑, 광고비 레이아웃, 보조 소스 등)을 그대로 복제해
+    /// 새 채널에 적용한다. JSON 직렬화 왕복으로 깊은 복사를 수행해 원본 채널의 컬렉션을 공유하지 않는다.
+    /// </summary>
+    private void CopyChannelConfig(string sourceChannelCode, string newChannelCode, string newChannelName)
+    {
+        var sourceConfig = _channelConfigs.FirstOrDefault(c => c.ChannelCode == sourceChannelCode);
+        if (sourceConfig == null) return;
+
+        var json = JsonSerializer.Serialize(sourceConfig);
+        var newConfig = JsonSerializer.Deserialize<ChannelConfig>(json);
+        if (newConfig == null) return;
+
+        newConfig.ChannelCode = newChannelCode;
+        newConfig.ChannelName = newChannelName;
+
+        _channelConfigs.Add(newConfig);
+        _channelConfigService.Save(_channelConfigs);
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)

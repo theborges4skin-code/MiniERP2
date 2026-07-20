@@ -20,11 +20,14 @@ public class CskuManagedTable : IManagedDataTable
         table.Columns.Add("Msku", typeof(string));
         table.Columns.Add("SupplyPrice", typeof(decimal));
         table.Columns.Add("InvoiceDisplayName", typeof(string));
+        table.Columns.Add("Unit", typeof(string));
+        table.Columns.Add("Packing", typeof(string));
+        table.Columns.Add("Note", typeof(string));
         table.PrimaryKey = [table.Columns["ChannelCode"]!, table.Columns["CskuCode"]!];
 
         foreach (var csku in _repository.GetAll())
         {
-            table.Rows.Add(csku.ChannelCode, csku.CskuCode, csku.Msku, csku.SupplyPrice, csku.InvoiceDisplayName);
+            table.Rows.Add(csku.ChannelCode, csku.CskuCode, csku.Msku, csku.SupplyPrice, csku.InvoiceDisplayName, csku.Unit, csku.Packing, csku.Note);
         }
         table.AcceptChanges();
         return table;
@@ -50,6 +53,9 @@ public class CskuManagedTable : IManagedDataTable
             Msku = row["Msku"] as string ?? string.Empty,
             SupplyPrice = row["SupplyPrice"] is DBNull ? 0m : Convert.ToDecimal(row["SupplyPrice"]),
             InvoiceDisplayName = row["InvoiceDisplayName"] as string,
+            Unit = row["Unit"] as string is { Length: > 0 } unit ? unit : "kg",
+            Packing = row["Packing"] as string,
+            Note = row["Note"] as string,
         });
     }
 }
