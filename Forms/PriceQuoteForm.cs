@@ -30,6 +30,13 @@ public class PriceQuoteForm : Form
     private ExcelLikeDataGridView _lineGrid = new();
     private BindingList<PriceQuoteLine> _lines = [];
     private Label _totalsLabel = new();
+    private Button _btnAddLine = new();
+    private Button _btnRemoveLine = new();
+
+    /// <summary>Applied 이후(Applied/Superseded/Rejected/Void)는 라인 수정을 막는다(§4.1 —
+    /// "Applied 이후 라인 수정 금지. 수정은 개정 견적으로"). 개정 견적(Step 9)이 아직 없어
+    /// 지금은 그냥 잠그기만 한다.</summary>
+    private static readonly string[] LockedLineStatuses = ["Applied", "Superseded", "Rejected", "Void"];
 
     // 헤더 편집 패널
     private TextBox _quoteNoText = new();
@@ -67,6 +74,7 @@ public class PriceQuoteForm : Form
         LoadChannels();
         RefreshList();
         NewQuote();
+        ScanAndPromoteScheduledQuotes();
     }
 
     private void InitializeComponent()
@@ -241,6 +249,7 @@ public class PriceQuoteForm : Form
         _autoApplyCheckBox = new CheckBox { Text = "적용일 되는 즉시 자동 반영", AutoSize = true, Dock = DockStyle.Fill };
         _statusCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
         _statusCombo.Items.AddRange(Statuses);
+        _statusCombo.SelectedIndexChanged += (s, e) => UpdateLineLockState();
 
         _deliveryMethodCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown };
         _deliveryMethodCombo.Items.AddRange(DeliveryMethods);
@@ -309,12 +318,12 @@ public class PriceQuoteForm : Form
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 2, 0, 0) };
         toolbar.Controls.Add(new Label { Text = "품목 라인", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(0, 6, 10, 0) });
-        var btnAddLine = new Button { Text = "CSKU 선택...", Size = new Size(100, 26) };
-        btnAddLine.Click += OnAddLineFromCskuClick;
-        var btnRemoveLine = new Button { Text = "행 삭제", Size = new Size(80, 26) };
-        btnRemoveLine.Click += OnRemoveLineClick;
-        toolbar.Controls.Add(btnAddLine);
-        toolbar.Controls.Add(btnRemoveLine);
+        _btnAddLine = new Button { Text = "CSKU 선택...", Size = new Size(100, 26) };
+        _btnAddLine.Click += OnAddLineFromCskuClick;
+        _btnRemoveLine = new Button { Text = "행 삭제", Size = new Size(80, 26) };
+        _btnRemoveLine.Click += OnRemoveLineClick;
+        toolbar.Controls.Add(_btnAddLine);
+        toolbar.Controls.Add(_btnRemoveLine);
         panel.Controls.Add(toolbar, 0, 0);
 
         panel.Controls.Add(CreateLineGrid(), 0, 1);
@@ -513,6 +522,7 @@ public class PriceQuoteForm : Form
         _noteText.Text = quote.Note;
 
         UpdateLineGridColumnVisibility();
+        UpdateLineLockState();
         RefreshTotals();
         _btnDelete.Enabled = quote.Id != 0;
     }
@@ -641,6 +651,16 @@ public class PriceQuoteForm : Form
         }
     }
 
+    /// <summary>Applied 이후 상태는 라인 수정을 잠근다(§4.1). 개정 견적(Step 9, 미착수)이 준비되기
+    /// 전까지는 "다음 단계에서 처리 예정"이라는 안내만 하고 실제 개정 흐름은 제공하지 않는다.</summary>
+    private void UpdateLineLockState()
+    {
+        var locked = LockedLineStatuses.Contains((string?)_statusCombo.SelectedItem);
+        _lineGrid.ReadOnly = locked;
+        _btnAddLine.Enabled = !locked;
+        _btnRemoveLine.Enabled = !locked;
+    }
+
     private void RefreshTotals()
     {
         if ((string?)_formTypeCombo.SelectedItem != "WithQty")
@@ -654,6 +674,77 @@ public class PriceQuoteForm : Form
         _totalsLabel.Text = $"공급가계 {supply:N0} · 세액계 {tax:N0} · 총합계 {total:N0}";
     }
 
+    /// <summary>
+    /// 상태 전이 규칙(§4.1)을 저장 직전에 확인한다. 전체 상태 그래프를 강제하진 않고(관리자가
+    /// 실수를 바로잡을 여지를 남김), 문서가 명시적으로 요구하는 3가지만 막는다: Sent는 전달기록
+    /// 필수, Scheduled는 자동반영+미래 적용일 필수, Superseded/OfsMapping Draft는 수동 전이 금지
+    /// (둘 다 시스템/승격 흐름 전용 — Step 9/10 미착수).
+    /// </summary>
+    private bool ValidateStatusTransition(out string? error)
+    {
+        error = null;
+        var newStatus = (string)_statusCombo.SelectedItem!;
+
+        if (_current!.Origin == "OfsMapping" && newStatus != "Draft")
+        {
+            error = "자동 생성된 Draft(OFS 매핑)는 승격 기능(다음 단계, 미착수)을 거치지 않고는 상태를 바꿀 수 없습니다(§7.2).";
+            return false;
+        }
+        if (newStatus == "Superseded")
+        {
+            error = "Superseded는 개정 견적을 발행할 때 시스템이 자동으로 설정합니다(다음 단계, 미착수) — 직접 선택할 수 없습니다.";
+            return false;
+        }
+        if (newStatus == "Sent" && (string.IsNullOrWhiteSpace(_deliveryMethodCombo.Text) || _notDeliveredCheckBox.Checked))
+        {
+            error = "Sent 상태로 저장하려면 전달방법과 전달일시를 입력해야 합니다(§4.1) — DB에만 보관하려면 Draft로 두세요.";
+            return false;
+        }
+        if (newStatus == "Scheduled")
+        {
+            if (!_autoApplyCheckBox.Checked)
+            {
+                error = "Scheduled 상태는 '적용일 되는 즉시 자동 반영'이 켜져 있어야 합니다(§4.1).";
+                return false;
+            }
+            if (_effectiveFromPicker.Value.Date <= DateTime.Today)
+            {
+                error = "Scheduled 상태는 적용일이 미래여야 합니다. 오늘이거나 이미 지났으면 Applied로 저장하세요.";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 화면을 열 때마다(§4.1 "프로그램 기동 시") 적용일이 된 Scheduled 견적을 찾아 사용자 확인 후
+    /// 일괄 Applied로 반영한다. 무통보 자동 UPDATE는 하지 않는다 — 확인 없이 조용히 바뀌면 언제
+    /// 단가가 바뀌었는지 추적이 안 된다.
+    /// </summary>
+    private void ScanAndPromoteScheduledQuotes()
+    {
+        var due = _quoteRepository.GetAll(latestOnly: true)
+            .Where(q => q.Status == "Scheduled" && q.AutoApply && q.EffectiveFrom is not null && q.EffectiveFrom.Value.Date <= DateTime.Today)
+            .ToList();
+        if (due.Count == 0) return;
+
+        var preview = string.Join("\n", due.Take(10).Select(q => $"- {q.QuoteNo} ({q.ChannelCode}) 적용일 {q.EffectiveFrom:yyyy-MM-dd}"));
+        var more = due.Count > 10 ? $"\n... 외 {due.Count - 10}건" : "";
+        var confirm = MessageBox.Show(
+            $"적용일이 되어 자동 반영 대상인 견적이 {due.Count}건 있습니다.\n\n{preview}{more}\n\n지금 Applied로 반영하시겠습니까?",
+            "적용 대기 견적 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        foreach (var quote in due)
+        {
+            var (_, lines) = _quoteRepository.GetQuote(quote.Id);
+            quote.Status = "Applied";
+            _quoteRepository.SaveQuote(quote, lines);
+        }
+        RefreshList();
+        _statusLabel.Text = $"적용일 도래 견적 {due.Count}건을 Applied로 반영했습니다.";
+    }
+
     private void OnSaveClick(object? sender, EventArgs e)
     {
         if (_current == null) return;
@@ -665,6 +756,11 @@ public class PriceQuoteForm : Form
         if (string.IsNullOrWhiteSpace(_titleText.Text))
         {
             MessageBox.Show("제목을 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (!ValidateStatusTransition(out var transitionError))
+        {
+            MessageBox.Show(transitionError, "저장 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
