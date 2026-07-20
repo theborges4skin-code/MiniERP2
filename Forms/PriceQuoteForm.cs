@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -221,6 +222,13 @@ public class PriceQuoteForm : Form
         _quoteNoText = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
         _channelCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
         _channelCombo.SelectedIndexChanged += (s, e) => UpdateChannelHint();
+        var channelPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
+        channelPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        channelPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        channelPanel.Controls.Add(_channelCombo, 0, 0);
+        var btnAddChannel = new Button { Text = "채널 추가...", Size = new Size(90, 24), Margin = new Padding(4, 0, 0, 0) };
+        btnAddChannel.Click += OnAddChannelClick;
+        channelPanel.Controls.Add(btnAddChannel, 1, 0);
 
         _priceKindCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
         _priceKindCombo.Items.AddRange(PriceKinds);
@@ -270,7 +278,7 @@ public class PriceQuoteForm : Form
         _noteText = new TextBox { Dock = DockStyle.Fill, Multiline = true, Height = 70, ScrollBars = ScrollBars.Vertical };
 
         AddRow(form, "견적번호", _quoteNoText);
-        AddRow(form, "채널", _channelCombo);
+        AddRow(form, "채널", channelPanel);
         AddRow(form, "구분", _priceKindCombo);
         AddRow(form, "견적양식", _formTypeCombo);
         AddRow(form, "출처", _originLabel);
@@ -439,6 +447,30 @@ public class PriceQuoteForm : Form
         // 채널 콤보가 비어있는(구분에 맞는 채널이 하나도 없는) 경우를 조용히 넘어가지 않도록 안내.
         if (_channelCombo.Items.Count == 0)
             _statusLabel.Text = "선택한 구분(납품/매입)에 해당하는 채널이 없습니다 — 채널설정에서 먼저 지정하세요.";
+    }
+
+    /// <summary>
+    /// 새 채널에 견적을 보낼 때 채널설정 화면을 따로 열지 않고 이 화면에서 바로 채널을 만들 수
+    /// 있게 한다(사용자 요청). 채널설정의 "채널 추가"와 같은 다이얼로그(AddChannelDialog)를
+    /// 재사용하되, 발주서/정산서 필드매핑 등 채널설정 전용 항목은 여기서 다루지 않는다 — 견적
+    /// 화면에 필요한 최소한(채널코드/이름 + 현재 구분에 맞는 IsPurchase/IsSales 플래그)만 만든다.
+    /// </summary>
+    private void OnAddChannelClick(object? sender, EventArgs e)
+    {
+        using var dialog = new AddChannelDialog(_channels);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var newChannelCode = ChannelCodeGenerator.GenerateNext(_channels.Select(c => c.ChannelCode));
+        var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = dialog.ChannelName };
+        // 매입 견적을 작성 중이었다면 매입처 플래그를 켜둬야 방금 만든 채널이 바로 후보에 뜬다
+        // (PopulateChannelCombo가 구분에 따라 IsPurchase/IsSales로 후보를 거르므로, §2.1).
+        if ((string?)_priceKindCombo.SelectedItem == "Purchase") newChannel.IsPurchase = true;
+        _channelRepository.Upsert(newChannel);
+
+        LoadChannels();
+        var match = _channels.FirstOrDefault(c => c.ChannelCode == newChannelCode);
+        if (match != null) _channelCombo.SelectedItem = match;
+        _statusLabel.Text = $"새 채널 '{dialog.ChannelName}'을(를) 추가하고 이 견적에 선택했습니다.";
     }
 
     private void RefreshList()
