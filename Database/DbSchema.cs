@@ -421,6 +421,65 @@ public static class DbSchema
             );
 
             CREATE INDEX IF NOT EXISTS IX_FboBox_MatchKey ON FboBox (MatchKey);
+
+            -- 견적/가격 기록 관리(견적기록관리_개발기획서_확정본.md §3.1~3.2): 견적 1건 = 1회 전달
+            -- 단위(헤더) + 품목별 라인. 기존 ChannelSkuPriceHistory/PurchaseSkuPriceHistory는 Upsert가
+            -- 만드는 감사로그라 "이번 달 단가표 1건 = N품목" 업무 단위를 담지 못해서 별도로 신설한다.
+            CREATE TABLE IF NOT EXISTS PriceQuoteTable (
+                Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                QuoteNo         TEXT NOT NULL DEFAULT '',
+                ChannelCode     TEXT NOT NULL,
+                PriceKind       TEXT NOT NULL DEFAULT 'Supply',
+                QuoteFormType   TEXT NOT NULL DEFAULT 'UnitOnly',
+                Origin          TEXT NOT NULL DEFAULT 'Manual',
+                Title           TEXT NOT NULL DEFAULT '',
+                QuoteDate       TEXT NOT NULL DEFAULT '',
+                EffectiveFrom   TEXT NOT NULL DEFAULT '',
+                EffectiveTo     TEXT,
+                AutoApply       INTEGER NOT NULL DEFAULT 0,
+                Status          TEXT NOT NULL DEFAULT 'Draft',
+                DeliveryMethod  TEXT NOT NULL DEFAULT '',
+                DeliveredAt     TEXT,
+                DeliveredTo     TEXT NOT NULL DEFAULT '',
+                Note            TEXT NOT NULL DEFAULT '',
+                PriceBasis      TEXT NOT NULL DEFAULT 'VatExcl',
+                RootQuoteId     INTEGER,
+                RevisionNo      INTEGER NOT NULL DEFAULT 0,
+                SupersededBy    INTEGER,
+                RevisionReason  TEXT NOT NULL DEFAULT '',
+                CreatedAt       TEXT NOT NULL DEFAULT '',
+                UpdatedAt       TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_PriceQuote_Channel_Eff ON PriceQuoteTable (ChannelCode, EffectiveFrom);
+            CREATE INDEX IF NOT EXISTS IX_PriceQuote_Revision ON PriceQuoteTable (RootQuoteId, RevisionNo);
+            CREATE INDEX IF NOT EXISTS IX_PriceQuote_Origin ON PriceQuoteTable (ChannelCode, Origin, Status);
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_PriceQuote_QuoteNo ON PriceQuoteTable (QuoteNo);
+
+            CREATE TABLE IF NOT EXISTS PriceQuoteLineTable (
+                Id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                QuoteId       INTEGER NOT NULL,
+                RowNo         INTEGER NOT NULL DEFAULT 0,
+                CskuCode      TEXT NOT NULL DEFAULT '',
+                Msku          TEXT NOT NULL DEFAULT '',
+                ItemNameSnap  TEXT NOT NULL DEFAULT '',
+                Spec          TEXT NOT NULL DEFAULT '',
+                Unit          TEXT NOT NULL DEFAULT 'EA',
+                Qty           REAL NOT NULL DEFAULT 0,
+                OldPrice      REAL,
+                NewPrice      REAL NOT NULL DEFAULT 0,
+                SupplyAmount  REAL NOT NULL DEFAULT 0,
+                Tax           REAL NOT NULL DEFAULT 0,
+                Total         REAL NOT NULL DEFAULT 0,
+                ChangeReason  TEXT NOT NULL DEFAULT '',
+                Note          TEXT NOT NULL DEFAULT '',
+                IsApplied     INTEGER NOT NULL DEFAULT 0,
+                PromotedFrom  INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Quote_Row ON PriceQuoteLineTable (QuoteId, RowNo);
+            CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Csku ON PriceQuoteLineTable (CskuCode);
+            CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Msku ON PriceQuoteLineTable (Msku);
             """;
         command.ExecuteNonQuery();
 
@@ -492,6 +551,16 @@ public static class DbSchema
         // 스냅샷을 갖는다.
         EnsureColumn(connection, "FboCskuMaster", "InvoiceDisplayName", "TEXT");
         EnsureColumn(connection, "FboBoxItem", "InvoiceDisplayName", "TEXT");
+
+        // 견적/가격 기록 관리(견적기록관리_개발기획서_확정본.md §3.3~3.4, Step 1).
+        EnsureColumn(connection, "ChannelSkuPriceHistory", "QuoteId", "INTEGER");
+        EnsureColumn(connection, "PurchaseSkuTable", "IsPrimary", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "PurchaseSkuPriceHistory", "QuoteId", "INTEGER");
+        EnsureColumn(connection, "SalesChannelTable", "AutoQuoteDraft", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "DocHistoryTable", "SourceQuoteId", "INTEGER");
+        // OutboundDetailTable.CskuCode(G9 해소) — MskuCode는 이름과 달리 이미 CSKU 코드를 저장하고
+        // 있어(§7.0) 당장 필수는 아니지만, §7.1 실적 조회에서 CSKU 기준 명시적 조회가 필요해 추가한다.
+        EnsureColumn(connection, "OutboundDetailTable", "CskuCode", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

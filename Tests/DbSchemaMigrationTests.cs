@@ -194,4 +194,53 @@ public class DbSchemaMigrationTests
         Assert.IsNotNull(migrated);
         Assert.AreEqual("kg", migrated.Unit);
     }
+
+    /// <summary>견적기록관리_개발기획서_확정본.md Step 1 — 신규 PriceQuoteTable/PriceQuoteLineTable이 만들어지는지 검증한다.</summary>
+    [TestMethod]
+    public void EnsureCreated_CreatesPriceQuoteTablesWithExpectedColumns()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+
+        Assert.IsTrue(TableExists(connection, "PriceQuoteTable"));
+        Assert.IsTrue(TableExists(connection, "PriceQuoteLineTable"));
+        Assert.IsTrue(HasColumn(connection, "PriceQuoteTable", "QuoteNo"));
+        Assert.IsTrue(HasColumn(connection, "PriceQuoteTable", "RootQuoteId"));
+        Assert.IsTrue(HasColumn(connection, "PriceQuoteTable", "SupersededBy"));
+        Assert.IsTrue(HasColumn(connection, "PriceQuoteLineTable", "CskuCode"));
+        Assert.IsTrue(HasColumn(connection, "PriceQuoteLineTable", "PromotedFrom"));
+    }
+
+    /// <summary>견적기록관리_개발기획서_확정본.md §3.3/§3.4 — 기존 테이블에 견적 연계 컬럼 4건이 보강되는지 검증한다.</summary>
+    [TestMethod]
+    public void EnsureCreated_AddsPriceQuoteRelatedColumnsToExistingTables()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+
+        Assert.IsTrue(HasColumn(connection, "ChannelSkuPriceHistory", "QuoteId"));
+        Assert.IsTrue(HasColumn(connection, "PurchaseSkuTable", "IsPrimary"));
+        Assert.IsTrue(HasColumn(connection, "PurchaseSkuPriceHistory", "QuoteId"));
+        Assert.IsTrue(HasColumn(connection, "SalesChannelTable", "AutoQuoteDraft"));
+        Assert.IsTrue(HasColumn(connection, "DocHistoryTable", "SourceQuoteId"));
+        Assert.IsTrue(HasColumn(connection, "OutboundDetailTable", "CskuCode"));
+    }
+
+    private static bool TableExists(SqliteConnection connection, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name=$name";
+        command.Parameters.AddWithValue("$name", tableName);
+        return command.ExecuteScalar() != null;
+    }
+
+    private static bool HasColumn(SqliteConnection connection, string tableName, string columnName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName})";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
 }

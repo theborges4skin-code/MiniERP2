@@ -401,9 +401,10 @@ public class OutboundHistoryForm : Form
             return;
         }
 
+        var lockedPriceCount = 0;
         foreach (var detail in _dirtyDetails)
         {
-            _outboundRepository.UpdateDetail(detail);
+            if (_outboundRepository.UpdateDetail(detail)) lockedPriceCount++;
         }
 
         foreach (var shipmentKey in _dirtyShipmentKeys)
@@ -419,9 +420,16 @@ public class OutboundHistoryForm : Form
         var savedShipmentCount = _dirtyShipmentKeys.Count;
         _dirtyDetails.Clear();
         _dirtyShipmentKeys.Clear();
-        _statusLabel.Text = savedShipmentCount > 0
+        OnLoadClick(sender, e);
+        // 출고확정 건은 납품가가 잠겨있어(P3 — 견적기록관리_개발기획서_확정본.md §7.3) 요청한 값이
+        // 조용히 무시될 수 있다. 그리드를 다시 로드해 실제 저장된 값을 보여주는 것과 별개로, 사용자가
+        // "입력했는데 왜 안 바뀌었지"로 헷갈리지 않도록 몇 건이 잠겼는지 명시적으로 안내한다.
+        var lockedNote = lockedPriceCount > 0
+            ? $" (출고확정 건 {lockedPriceCount}건은 납품가 변경이 적용되지 않았습니다 — 확정 후 단가는 잠깁니다)"
+            : "";
+        _statusLabel.Text = (savedShipmentCount > 0
             ? $"이력 {savedCount}건, 운임 {savedShipmentCount}건의 변경사항을 저장했습니다."
-            : $"{savedCount}건의 변경사항을 저장했습니다.";
+            : $"{savedCount}건의 변경사항을 저장했습니다.") + lockedNote;
     }
 
     /// <summary>

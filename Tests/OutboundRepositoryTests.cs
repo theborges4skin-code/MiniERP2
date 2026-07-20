@@ -38,6 +38,7 @@ public class OutboundRepositoryTests
         });
 
         // 같은 주문/SKU를 다시 저장(예: 같은 발주서를 중복 처리) — 중복 적재가 아니라 갱신되어야 한다.
+        // 단, 이미 출고확정이므로(P1) SupplyPrice는 그대로 유지되고 나머지 필드만 갱신된다.
         repository.SaveOutbound(new[]
         {
             new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-1", TrackingNo = "T002", MskuCode = "SKU-1", Qty = 2, SupplyPrice = 1500m },
@@ -49,7 +50,52 @@ public class OutboundRepositoryTests
         Assert.HasCount(1, results);
         Assert.AreEqual("T002", results[0].TrackingNo);
         Assert.AreEqual(2, results[0].Qty);
-        Assert.AreEqual(1500m, results[0].SupplyPrice);
+        Assert.AreEqual(1000m, results[0].SupplyPrice);
+    }
+
+    [TestMethod]
+    public void SaveOutbound_AlreadyShipped_LocksSupplyPrice()
+    {
+        // 견적기록관리_개발기획서_확정본.md P1: 이미 출고확정된 건을 같은 키로 재저장해도(가격조정
+        // 등 무관한 이유로 재실행되는 경우 포함) 단가가 조용히 최신값으로 덮이면 안 된다.
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.Now.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P1", TrackingNo = "T900", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P1", TrackingNo = "T900", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 2000m },
+        });
+
+        var result = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual(1000m, result.SupplyPrice);
+    }
+
+    [TestMethod]
+    public void SaveOutbound_NotYetShipped_StillAllowsSupplyPriceChange()
+    {
+        // 발주확정 상태(아직 운송장번호 없음)에서는 P1 가드가 적용되지 않고 자유롭게 갱신되어야 한다.
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.Now.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P1B", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P1B", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1200m },
+        });
+
+        var result = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual(1200m, result.SupplyPrice);
     }
 
     [TestMethod]
@@ -269,6 +315,53 @@ public class OutboundRepositoryTests
         Assert.AreEqual("VENDOR_A", updated.PurchaseChannelCode);
         Assert.AreEqual(700m, updated.PurchasePrice);
         Assert.AreEqual(12.5m, updated.WeightKg);
+    }
+
+    [TestMethod]
+    public void UpdateDetail_AlreadyShipped_LocksSupplyPriceAndReturnsTrue()
+    {
+        // 견적기록관리_개발기획서_확정본.md P3: 이미 출고확정인 행의 납품가를 발주/출고 이력 관리창
+        // 인라인 편집으로 바꿔도 반영되지 않아야 한다(§4.2 소급 경로로만 허용). 반환값(true)으로
+        // 호출 측이 "잠겨서 반영 안 됨"을 사용자에게 안내할 수 있어야 한다.
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.Now.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P3", TrackingNo = "T600", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual("출고확정", saved.Status);
+
+        saved.SupplyPrice = 5000m;
+        var wasLocked = repository.UpdateDetail(saved);
+
+        Assert.IsTrue(wasLocked);
+        var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual(1000m, updated.SupplyPrice);
+    }
+
+    [TestMethod]
+    public void UpdateDetail_NotYetShipped_AllowsSupplyPriceChangeAndReturnsFalse()
+    {
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH";
+        var from = DateTime.Now.AddMinutes(-5);
+
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, OrderNo = "ORDER-P3B", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m },
+        });
+        var saved = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual("발주확정", saved.Status);
+
+        saved.SupplyPrice = 1300m;
+        var wasLocked = repository.UpdateDetail(saved);
+
+        Assert.IsFalse(wasLocked);
+        var updated = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
+        Assert.AreEqual(1300m, updated.SupplyPrice);
     }
 
     [TestMethod]

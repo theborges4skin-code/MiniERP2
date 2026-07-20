@@ -61,7 +61,9 @@ public class OutboundRepository
                 OrderNo = excluded.OrderNo,
                 TrackingNo = excluded.TrackingNo,
                 Qty = excluded.Qty,
-                SupplyPrice = excluded.SupplyPrice,
+                -- 견적기록관리_개발기획서_확정본.md P1: 이미 출고확정된 건을 같은 키로 재저장해도
+                -- (가격조정 등 무관한 이유로 흔히 발생) 단가가 조용히 최신값으로 덮이지 않게 한다.
+                SupplyPrice = CASE WHEN OutboundDetailTable.Status = '출고확정' THEN OutboundDetailTable.SupplyPrice ELSE excluded.SupplyPrice END,
                 Recipient = excluded.Recipient,
                 Address = excluded.Address,
                 ProductName = excluded.ProductName,
@@ -141,15 +143,35 @@ public class OutboundRepository
 
     /// <summary>
     /// 발주/출고 이력 관리창에서 수정한 내용(수량/납품가/운송장번호/상태 + B2B 매입처/원가/중량)을
-    /// Id 기준으로 저장합니다.
+    /// Id 기준으로 저장합니다. 이미 "출고확정" 상태인 행은 납품가(SupplyPrice)를 잠급니다(P3 —
+    /// 견적기록관리_개발기획서_확정본.md §7.3) — 확정 이후 단가 변경은 §4.2 ② 소급 경로(미착수)로만
+    /// 허용해야 마감 대조 데이터가 흔들리지 않습니다. 반환값은 그 잠김 때문에 요청한 납품가가 실제로는
+    /// 반영되지 않았는지를 알려줘, 호출 측(OutboundHistoryForm)이 사용자에게 안내할 수 있게 합니다.
     /// </summary>
-    public void UpdateDetail(OutboundDetail detail)
+    public bool UpdateDetail(OutboundDetail detail)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
+
+        string? existingStatus = null;
+        decimal existingSupplyPrice = 0m;
+        using (var checkCommand = connection.CreateCommand())
+        {
+            checkCommand.CommandText = "SELECT Status, SupplyPrice FROM OutboundDetailTable WHERE Id = $id";
+            checkCommand.Parameters.AddWithValue("$id", detail.Id);
+            using var reader = checkCommand.ExecuteReader();
+            if (reader.Read())
+            {
+                existingStatus = reader.GetString(0);
+                existingSupplyPrice = reader.GetDecimal(1);
+            }
+        }
+
         using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE OutboundDetailTable
-            SET Qty = $qty, SupplyPrice = $supplyPrice, TrackingNo = $trackingNo, Status = $status,
+            SET Qty = $qty,
+                SupplyPrice = CASE WHEN Status = '출고확정' THEN SupplyPrice ELSE $supplyPrice END,
+                TrackingNo = $trackingNo, Status = $status,
                 ConfirmedAt = $confirmedAt, PurchaseChannelCode = $purchaseChannelCode,
                 PurchasePrice = $purchasePrice, WeightKg = $weightKg
             WHERE Id = $id
@@ -164,6 +186,8 @@ public class OutboundRepository
         command.Parameters.AddWithValue("$confirmedAt", (object?)detail.ConfirmedAt ?? DBNull.Value);
         command.Parameters.AddWithValue("$id", detail.Id);
         command.ExecuteNonQuery();
+
+        return existingStatus == "출고확정" && existingSupplyPrice != detail.SupplyPrice;
     }
 
     /// <summary>
