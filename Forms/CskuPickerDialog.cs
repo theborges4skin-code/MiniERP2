@@ -82,9 +82,12 @@ public class CskuPickerDialog : Form
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(6) };
         var btnOk = new Button { Text = "선택", Width = 90 };
         var btnCancel = new Button { Text = "취소", Width = 90, DialogResult = DialogResult.Cancel };
+        var btnNewCsku = new Button { Text = "새 CSKU 등록...", Width = 120 };
         btnOk.Click += (s, e) => Confirm();
+        btnNewCsku.Click += OnNewCskuClick;
         btnPanel.Controls.Add(btnCancel);
         btnPanel.Controls.Add(btnOk);
+        btnPanel.Controls.Add(btnNewCsku);
 
         layout.Controls.Add(searchBar, 0, 0);
         layout.Controls.Add(_grid, 0, 1);
@@ -158,6 +161,34 @@ public class CskuPickerDialog : Form
         SelectedChannelCode = row.ChannelCode;
         SelectedUnit = row.Unit;
         SelectedPacking = row.Packing;
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    /// <summary>
+    /// 원하는 CSKU가 목록에 없을 때 바로 등록한다(사용자 요청). 새로 등록한 CSKU를 방금 목록에서
+    /// 고른 것처럼 그대로 반환해, 다시 검색해서 찾을 필요 없이 이 창을 그대로 닫는다.
+    /// </summary>
+    private void OnNewCskuClick(object? sender, EventArgs e)
+    {
+        string? channelCode = null;
+        if (_channelCombo.SelectedIndex > 0)
+        {
+            var name = _channelCombo.SelectedItem!.ToString();
+            channelCode = _channelRepo.GetAll().FirstOrDefault(c => c.ChannelName == name)?.ChannelCode;
+        }
+
+        using var dialog = new NewCskuRegistrationDialog(channelCode, _searchBox.Text.Trim());
+        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.ResultCskuCode == null) return;
+
+        SelectedItemName = dialog.ResultItemName;
+        SelectedUnitPrice = dialog.ResultUnitPrice;
+        SelectedCostPrice = dialog.ResultCostPrice;
+        SelectedMsku = dialog.ResultMsku;
+        SelectedCskuCode = dialog.ResultCskuCode;
+        SelectedChannelCode = dialog.ResultChannelCode;
+        SelectedUnit = dialog.ResultUnit;
+        SelectedPacking = dialog.ResultPacking;
         DialogResult = DialogResult.OK;
         Close();
     }
