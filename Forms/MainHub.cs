@@ -56,6 +56,7 @@ public class MainHub : Form
             ("마스터SKU 관리", (s, e) => FormManager.Show<MasterSkuForm>(), Keys.Control | Keys.D1),
             ("매핑 관리", (s, e) => FormManager.Show<MappingForm>(), Keys.Control | Keys.D5),
             ("채널 설정", (s, e) => FormManager.Show<ChannelConfigForm>(), Keys.Control | Keys.D2),
+            ("견적·단가 관리", (s, e) => FormManager.Show<PriceQuoteForm>(), Keys.Control | Keys.F7),
         }),
         ("정산", new()
         {
