@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
@@ -6,10 +7,10 @@ using MiniERP2.Models;
 namespace MiniERP2.Forms;
 
 /// <summary>
-/// 견적/가격 기록 관리 화면(견적기록관리_개발기획서_확정본.md §6.1, Step 4 — 골격만 구현).
-/// "견적 기준" 탭: 견적 헤더 목록/필터/편집(라인 그리드는 Step 5, 리비전·단가반영·승격·문서출력은
-/// Step 7/9/10/14). "실적 기준" 탭(§6.2/§7.1)은 OutboundDetailTable.CskuCode 백필(Step 8) 이후
-/// 구현 예정이라 지금은 안내 문구만 표시한다.
+/// 견적/가격 기록 관리 화면(견적기록관리_개발기획서_확정본.md §6.1, Step 4~5 구현).
+/// "견적 기준" 탭: 견적 헤더 목록/필터/편집 + 품목 라인 그리드(리비전·단가반영·승격·문서출력은
+/// Step 7/9/10/14, 아직 미착수). "실적 기준" 탭(§6.2/§7.1)은 OutboundDetailTable.CskuCode
+/// 백필(Step 8) 이후 구현 예정이라 지금은 안내 문구만 표시한다.
 /// </summary>
 public class PriceQuoteForm : Form
 {
@@ -24,6 +25,11 @@ public class PriceQuoteForm : Form
     private ExcelLikeDataGridView _listGrid = new();
     private BindingList<PriceQuote> _quotes = [];
     private Label _statusLabel = new();
+
+    // 라인 그리드(Step 5)
+    private ExcelLikeDataGridView _lineGrid = new();
+    private BindingList<PriceQuoteLine> _lines = [];
+    private Label _totalsLabel = new();
 
     // 헤더 편집 패널
     private TextBox _quoteNoText = new();
@@ -66,7 +72,8 @@ public class PriceQuoteForm : Form
     private void InitializeComponent()
     {
         Text = "견적·단가 관리";
-        Size = new Size(1180, 720);
+        Size = new Size(1180, 880);
+        MinimumSize = new Size(980, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
         var tabControl = new TabControl { Dock = DockStyle.Fill };
@@ -95,9 +102,12 @@ public class PriceQuoteForm : Form
         split.Panel1.Controls.Add(CreateListGrid());
         split.Panel2.Controls.Add(CreateDetailPanel());
         // 생성 시점엔 아직 Dock=Fill로 실제 크기가 정해지기 전이라, SplitterDistance를 그 자리에서
-        // 바로 주면 컨트롤의 기본(작은) 크기 기준 비율로 계산돼 나중에 실제 폭으로 늘어날 때
-        // 크게 어긋난다(PersistentSplitContainer가 저장된 값에 쓰는 것과 같은 BeginInvoke 지연 필요).
-        split.HandleCreated += (s, e) => split.BeginInvoke(new Action(() => split.SplitterDistance = 520));
+        // 바로 주면 컨트롤의 기본(작은) 크기 기준 비율로 계산돼 나중에 실제 폭으로 늘어날 때 크게
+        // 어긋난다(PersistentSplitContainer가 저장된 값에 쓰는 것과 같은 BeginInvoke 지연 필요).
+        // 단, 사용자가 이미 조절해 저장해둔 값이 있으면 그걸 우선해야 하므로 여기서는 저장된 값이
+        // 없을 때만 기본값을 준다(그렇지 않으면 PersistentSplitContainer의 "기억" 기능이 매번
+        // 이 기본값에 덮어써져 무의미해진다).
+        split.HandleCreated += (s, e) => ApplyDefaultSplitterDistance(split, "PriceQuoteForm.MainSplit", 520);
         mainLayout.Controls.Add(split, 0, 1);
 
         _statusLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0) };
@@ -210,6 +220,7 @@ public class PriceQuoteForm : Form
 
         _formTypeCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
         _formTypeCombo.Items.AddRange(FormTypes);
+        _formTypeCombo.SelectedIndexChanged += (s, e) => { UpdateLineGridColumnVisibility(); RecalculateAllLines(); };
 
         _originLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SystemColors.GrayText };
         _titleText = new TextBox { Dock = DockStyle.Fill };
@@ -246,6 +257,7 @@ public class PriceQuoteForm : Form
         _deliveredToText = new TextBox { Dock = DockStyle.Fill };
         _priceBasisCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
         _priceBasisCombo.Items.AddRange(PriceBases);
+        _priceBasisCombo.SelectedIndexChanged += (s, e) => RecalculateAllLines();
         _noteText = new TextBox { Dock = DockStyle.Fill, Multiline = true, Height = 70, ScrollBars = ScrollBars.Vertical };
 
         AddRow(form, "견적번호", _quoteNoText);
@@ -262,9 +274,19 @@ public class PriceQuoteForm : Form
         AddRow(form, "전달일시", deliveredPanel);
         AddRow(form, "전달받는사람", _deliveredToText);
         AddRow(form, "단가기준", _priceBasisCombo);
-        AddRow(form, "메모", _noteText, height: 90);
+        AddRow(form, "메모", _noteText, height: 55);
 
-        outer.Controls.Add(form, 0, 0);
+        // 헤더 폼은 필드 개수가 고정돼 있어 내용 높이가 이미 정확히 계산 가능하다(14행×27 + 메모
+        // 55 = 433). 사용자가 굳이 조절할 이유가 없는 영역이라 SplitContainer 대신 고정
+        // Absolute/Percent 행의 TableLayoutPanel로 나눈다 — SplitContainer의 SplitterDistance는
+        // "생성 시점엔 아직 최종 크기가 아님" 문제 때문에 중첩 상황에서 타이밍이 계속 어긋났는데,
+        // TableLayoutPanel의 Absolute/Percent 행 계산은 그런 타이밍 문제 자체가 없다.
+        var detailLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        detailLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 440));
+        detailLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        detailLayout.Controls.Add(form, 0, 0);
+        detailLayout.Controls.Add(CreateLineSection(), 0, 1);
+        outer.Controls.Add(detailLayout, 0, 0);
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         _btnSave = new Button { Text = "저장", Size = new Size(90, 30), Font = new Font(Font, FontStyle.Bold) };
@@ -278,7 +300,90 @@ public class PriceQuoteForm : Form
         return outer;
     }
 
-    private static void AddRow(TableLayoutPanel form, string label, Control control, int height = 32)
+    private Control CreateLineSection()
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 2, 0, 0) };
+        toolbar.Controls.Add(new Label { Text = "품목 라인", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(0, 6, 10, 0) });
+        var btnAddLine = new Button { Text = "CSKU 선택...", Size = new Size(100, 26) };
+        btnAddLine.Click += OnAddLineFromCskuClick;
+        var btnRemoveLine = new Button { Text = "행 삭제", Size = new Size(80, 26) };
+        btnRemoveLine.Click += OnRemoveLineClick;
+        toolbar.Controls.Add(btnAddLine);
+        toolbar.Controls.Add(btnRemoveLine);
+        panel.Controls.Add(toolbar, 0, 0);
+
+        panel.Controls.Add(CreateLineGrid(), 0, 1);
+
+        _totalsLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 6, 0), Font = new Font(Font, FontStyle.Bold) };
+        panel.Controls.Add(_totalsLabel, 0, 2);
+
+        return panel;
+    }
+
+    private Control CreateLineGrid()
+    {
+        _lineGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            PersistenceKey = "PriceQuoteForm.LineGrid",
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+        };
+        var moneyStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight };
+        _lineGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU", DataPropertyName = "CskuCode", Width = 110, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "ItemNameSnap", HeaderText = "품명", DataPropertyName = "ItemNameSnap", Width = 160 },
+            new DataGridViewTextBoxColumn { Name = "Spec", HeaderText = "규격", DataPropertyName = "Spec", Width = 80 },
+            new DataGridViewTextBoxColumn { Name = "Unit", HeaderText = "단위", DataPropertyName = "Unit", Width = 55 },
+            new DataGridViewTextBoxColumn { Name = "Qty", HeaderText = "수량", DataPropertyName = "Qty", Width = 60, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { Name = "OldPrice", HeaderText = "직전가", DataPropertyName = "OldPrice", Width = 85, ReadOnly = true, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { Name = "NewPrice", HeaderText = "신규가", DataPropertyName = "NewPrice", Width = 85, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { Name = "IncreasePct", HeaderText = "증가%", Width = 65, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { Name = "SupplyAmount", HeaderText = "공급가", DataPropertyName = "SupplyAmount", Width = 90, ReadOnly = true, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { Name = "Tax", HeaderText = "세액", DataPropertyName = "Tax", Width = 80, ReadOnly = true, DefaultCellStyle = moneyStyle },
+            new DataGridViewTextBoxColumn { Name = "Total", HeaderText = "합계", DataPropertyName = "Total", Width = 90, ReadOnly = true, DefaultCellStyle = moneyStyle },
+            // 자유 텍스트로 둔다 — DataGridViewComboBoxColumn은 목록에 없는 기존 값이 들어오면
+            // DataError를 던지는 게 이 코드베이스에서 이미 겪은 함정이라(ChannelConfigForm 보조소스
+            // 탭 참고) 굳이 콤보로 만들지 않는다. 원가상승/환율/물동조정/신규 등을 자유 입력.
+            new DataGridViewTextBoxColumn { Name = "ChangeReason", HeaderText = "사유", DataPropertyName = "ChangeReason", Width = 90 },
+            new DataGridViewTextBoxColumn { Name = "Note", HeaderText = "비고", DataPropertyName = "Note", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill }
+        );
+        _lineGrid.CellFormatting += OnLineGridCellFormatting;
+        _lineGrid.CellEndEdit += OnLineGridCellEndEdit;
+        return _lineGrid;
+    }
+
+    /// <summary>
+    /// PersistenceKey에 저장된 값이 없을 때만 기본 분할 위치를 적용한다. 호출 시점(HandleCreated
+    /// 직후)엔 아직 TableLayoutPanel/Dock 레이아웃이 최종 크기로 정착하지 않아 SplitterDistance가
+    /// 유효 범위를 벗어나 ArgumentOutOfRangeException이 날 수 있으므로, PersistentSplitContainer
+    /// 자신의 재시도 로직과 동일하게 BeginInvoke로 몇 차례 다시 시도한다.
+    /// </summary>
+    private static void ApplyDefaultSplitterDistance(PersistentSplitContainer split, string persistenceKey, int defaultDistance, int attempt = 0)
+    {
+        if (attempt == 0 && new SplitterSettingsService().LoadDistance(persistenceKey) is not null) return;
+
+        split.BeginInvoke(new Action(() =>
+        {
+            if (split.IsDisposed) return;
+            try
+            {
+                split.SplitterDistance = defaultDistance;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                if (attempt < 10) ApplyDefaultSplitterDistance(split, persistenceKey, defaultDistance, attempt + 1);
+            }
+        }));
+    }
+
+    private static void AddRow(TableLayoutPanel form, string label, Control control, int height = 27)
     {
         var row = form.RowCount++;
         form.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
@@ -372,6 +477,12 @@ public class PriceQuoteForm : Form
     {
         _current = quote;
 
+        // 콤보 값을 세팅하면서 발생하는 SelectedIndexChanged(양식/단가기준)가 RecalculateAllLines를
+        // 트리거할 수 있으므로, 그 전에 이번 견적의 실제 라인으로 먼저 바꿔둔다.
+        var lines = quote.Id != 0 ? _quoteRepository.GetQuote(quote.Id).Lines : [];
+        _lines = new BindingList<PriceQuoteLine>(lines);
+        _lineGrid.DataSource = _lines;
+
         _quoteNoText.Text = quote.QuoteNo;
         _priceKindCombo.SelectedItem = quote.PriceKind;
         PopulateChannelCombo();
@@ -401,7 +512,146 @@ public class PriceQuoteForm : Form
         _priceBasisCombo.SelectedItem = quote.PriceBasis;
         _noteText.Text = quote.Note;
 
+        UpdateLineGridColumnVisibility();
+        RefreshTotals();
         _btnDelete.Enabled = quote.Id != 0;
+    }
+
+    private void OnAddLineFromCskuClick(object? sender, EventArgs e)
+    {
+        if (_current == null) return;
+        // _current.PriceKind는 마지막 저장 시점 값이라, 저장 전에 콤보만 바꾼 상태에서는 낡은
+        // 값이다 — 지금 화면에 보이는 콤보 선택값을 기준으로 판단해야 한다.
+        if ((string)_priceKindCombo.SelectedItem! != "Supply")
+        {
+            // 매입 견적은 CSKU 개념이 없다(§6.1 — "Msku 피커 + 매입채널" 전용 조합이 필요하나
+            // 아직 없음). 지금은 빈 행을 추가해 Msku/단가를 직접 입력하게 한다.
+            _lines.Add(new PriceQuoteLine { Unit = "kg" });
+            return;
+        }
+        if (_channelCombo.SelectedItem is not SalesChannel channel)
+        {
+            MessageBox.Show("채널을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var picker = new CskuPickerDialog(channel.ChannelCode);
+        if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
+
+        var line = new PriceQuoteLine
+        {
+            CskuCode = picker.SelectedCskuCode,
+            Msku = picker.SelectedMsku ?? string.Empty,
+            ItemNameSnap = picker.SelectedItemName ?? string.Empty,
+            Unit = picker.SelectedUnit ?? "EA",
+            OldPrice = picker.SelectedUnitPrice,
+            NewPrice = picker.SelectedUnitPrice,
+            Qty = (string)_formTypeCombo.SelectedItem! == "WithQty" ? 1 : 0,
+        };
+        RecalculateLine(line);
+        _lines.Add(line);
+        RefreshTotals();
+    }
+
+    private void OnRemoveLineClick(object? sender, EventArgs e)
+    {
+        var selected = _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as PriceQuoteLine)
+            .Where(l => l != null)
+            .Cast<PriceQuoteLine>()
+            .ToList();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("삭제할 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        foreach (var line in selected) _lines.Remove(line);
+        RefreshTotals();
+    }
+
+    private void OnLineGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (_lineGrid.Columns[e.ColumnIndex].Name != "IncreasePct") return;
+        if (e.RowIndex < 0 || e.RowIndex >= _lines.Count) return;
+        var line = _lines[e.RowIndex];
+        if (line.OldPrice is null || line.OldPrice.Value == 0)
+        {
+            e.Value = string.Empty;
+        }
+        else
+        {
+            var pct = (line.NewPrice - line.OldPrice.Value) / line.OldPrice.Value * 100m;
+            e.Value = $"{pct:+0.0;-0.0;0.0}%";
+        }
+        e.FormattingApplied = true;
+    }
+
+    private void OnLineGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _lines.Count) return;
+        var columnName = _lineGrid.Columns[e.ColumnIndex].Name;
+        if (columnName is not ("Qty" or "NewPrice")) return;
+
+        RecalculateLine(_lines[e.RowIndex]);
+        _lineGrid.InvalidateRow(e.RowIndex);
+        RefreshTotals();
+    }
+
+    /// <summary>양식(UnitOnly/WithQty)·단가기준(VatExcl/VatIncl)에 따라 라인의 파생값을 다시
+    /// 계산한다(§5). UnitOnly는 수량/공급가/세액/합계를 전부 0으로 비운다(양식 자체가 단가만
+    /// 다루므로).</summary>
+    private void RecalculateLine(PriceQuoteLine line)
+    {
+        if ((string)_formTypeCombo.SelectedItem! != "WithQty")
+        {
+            line.Qty = 0;
+            line.SupplyAmount = 0;
+            line.Tax = 0;
+            line.Total = 0;
+            return;
+        }
+
+        if ((string)_priceBasisCombo.SelectedItem! == "VatIncl")
+        {
+            line.Total = Math.Round(line.Qty * line.NewPrice, MidpointRounding.AwayFromZero);
+            line.SupplyAmount = Math.Round(line.Total / 1.1m, MidpointRounding.AwayFromZero);
+            line.Tax = line.Total - line.SupplyAmount;
+        }
+        else
+        {
+            line.SupplyAmount = Math.Round(line.Qty * line.NewPrice, MidpointRounding.AwayFromZero);
+            line.Tax = Math.Round(line.SupplyAmount * 0.1m, MidpointRounding.AwayFromZero);
+            line.Total = line.SupplyAmount + line.Tax;
+        }
+    }
+
+    private void RecalculateAllLines()
+    {
+        foreach (var line in _lines) RecalculateLine(line);
+        _lineGrid.Refresh();
+        RefreshTotals();
+    }
+
+    private void UpdateLineGridColumnVisibility()
+    {
+        var isWithQty = (string?)_formTypeCombo.SelectedItem == "WithQty";
+        foreach (var name in new[] { "Qty", "SupplyAmount", "Tax", "Total" })
+        {
+            if (_lineGrid.Columns.Contains(name)) _lineGrid.Columns[name]!.Visible = isWithQty;
+        }
+    }
+
+    private void RefreshTotals()
+    {
+        if ((string?)_formTypeCombo.SelectedItem != "WithQty")
+        {
+            _totalsLabel.Text = string.Empty;
+            return;
+        }
+        var supply = _lines.Sum(l => l.SupplyAmount);
+        var tax = _lines.Sum(l => l.Tax);
+        var total = _lines.Sum(l => l.Total);
+        _totalsLabel.Text = $"공급가계 {supply:N0} · 세액계 {tax:N0} · 총합계 {total:N0}";
     }
 
     private void OnSaveClick(object? sender, EventArgs e)
@@ -434,20 +684,21 @@ public class PriceQuoteForm : Form
         _current.PriceBasis = (string)_priceBasisCombo.SelectedItem!;
         _current.Note = _noteText.Text.Trim();
 
-        // Step 5(라인 그리드) 전까지는 라인 없이 헤더만 저장한다 — 기존 라인이 있는 견적을 다시
-        // 저장하면 지금은 라인이 전부 사라지므로, 라인이 이미 있는 견적의 저장은 막는다.
-        var (_, existingLines) = _current.Id != 0 ? _quoteRepository.GetQuote(_current.Id) : (null, []);
-        if (existingLines.Count > 0)
+        var formType = (string)_formTypeCombo.SelectedItem!;
+        if (formType == "WithQty" && _lines.Any(l => l.Qty <= 0))
         {
-            MessageBox.Show(
-                "이 견적에는 이미 품목 라인이 있습니다. 라인 편집 화면(다음 단계)이 준비되기 전까지는 헤더만 저장하면 라인이 사라지므로 저장을 막았습니다.",
-                "저장 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("상세형(WithQty) 견적은 모든 라인의 수량을 1 이상 입력해야 합니다(D5).", "저장 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (_current.PriceKind == "Supply" && _lines.Any(l => string.IsNullOrWhiteSpace(l.CskuCode)))
+        {
+            MessageBox.Show("납품(Supply) 견적의 모든 라인에는 CSKU가 필요합니다 — 'CSKU 선택...'으로 채워주세요(§3.2).", "저장 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        _quoteRepository.SaveQuote(_current, []);
+        _quoteRepository.SaveQuote(_current, _lines.ToList());
         RefreshList();
-        _statusLabel.Text = $"'{_current.QuoteNo}' 저장 완료.";
+        _statusLabel.Text = $"'{_current.QuoteNo}' 저장 완료 (라인 {_lines.Count}건).";
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)
@@ -455,13 +706,23 @@ public class PriceQuoteForm : Form
         if (_current == null || _current.Id == 0) return;
 
         var (_, lines) = _quoteRepository.GetQuote(_current.Id);
-        if (lines.Count > 0)
+        // 라인의 채널+CSKU+적용기간에 해당하는 출고확정 이력이 하나라도 있으면 삭제를 막는다(D4/§4.3).
+        // 개정 견적(Step 9, 미착수)이 준비되기 전까지는 이 조건에 걸리면 그냥 되돌릴 방법이 없다는
+        // 뜻이므로, 안내 문구로 분명히 알린다.
+        var blockedLines = lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.CskuCode))
+            .Where(l => _quoteRepository.HasOutboundHistory(_current.ChannelCode, l.CskuCode, l.CskuCode, _current.EffectiveFrom ?? DateTime.MinValue, _current.EffectiveTo))
+            .ToList();
+        if (blockedLines.Count > 0)
         {
-            MessageBox.Show("품목 라인이 있는 견적은 라인 편집 화면(다음 단계)에서 출고 이력을 확인한 뒤 삭제해야 합니다.", "삭제 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(
+                $"출고 이력이 있는 라인이 {blockedLines.Count}건 있어 삭제할 수 없습니다(D4).\n" +
+                "개정 견적 기능(다음 단계, 미착수)이 준비되면 그쪽으로 처리해야 합니다.",
+                "삭제 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        var confirm = MessageBox.Show($"'{_current.QuoteNo}' 견적을 삭제하시겠습니까?", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        var confirm = MessageBox.Show($"'{_current.QuoteNo}' 견적을 삭제하시겠습니까? (라인 {lines.Count}건 포함)", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (confirm != DialogResult.Yes) return;
 
         _quoteRepository.Delete(_current.Id);
