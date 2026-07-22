@@ -17,6 +17,13 @@ public class OfsOrderItem
     public string? DeliveryMessage { get; set; }
 
     /// <summary>
+    /// 비고(내부관리용 참고 메모). 배송메시지와 달리 택배 송장에는 실리지 않는다. 주로 "자동발주(표준)"
+    /// 채널의 "비고" 열에서 채워지며, OFS 그리드에는 유무만 표시되고(우클릭 "메모 보기"로 전체 확인),
+    /// 발주확정 시 <see cref="OutboundDetail.Remark"/>로 이력에 스냅샷된다.
+    /// </summary>
+    public string? Remark { get; set; }
+
+    /// <summary>
     /// 발주일(채널 설정에서 "발주일" 헤더를 매핑한 경우만 채워짐). 누적발주서 채널(과거 이력까지
     /// 누적해서 담긴 발주서 파일)에서 발주 파일을 불러올 때 "최근 N일 이내" 항목만 골라 보여주는
     /// 선택창(Forms.CumulativeOrderSelectionDialog)에 쓰인다.

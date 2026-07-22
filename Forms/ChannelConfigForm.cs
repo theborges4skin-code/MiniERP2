@@ -63,6 +63,7 @@ public class ChannelConfigForm : Form
     [
         StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
         StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
+        StdField.Remark,
     ];
 
     /// <summary>
@@ -826,6 +827,7 @@ public class ChannelConfigForm : Form
         StdField.Address => "주소",
         StdField.DeliveryMessage => "배송메세지",
         StdField.OrderDate => "발주일(누적발주서용)",
+        StdField.Remark => "비고(내부관리용)",
         StdField.Revenue => "매출액",
         StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
         _ => field.ToString(),

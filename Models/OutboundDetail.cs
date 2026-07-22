@@ -33,6 +33,12 @@ public class OutboundDetail
     public string ProductName { get; set; } = string.Empty;
 
     /// <summary>
+    /// 비고(내부관리용 참고 메모). 발주확정 당시 <see cref="OfsOrderItem.Remark"/> 스냅샷 —
+    /// 주로 자동발주(표준) 채널에서 채워지며, 발주/출고 이력 관리창에서 조회할 수 있다.
+    /// </summary>
+    public string Remark { get; set; } = string.Empty;
+
+    /// <summary>
     /// 발주이력 추적 상태입니다("발주확정"/"출고확정"). 실무에서 출고확정은 운송장번호가 있어야
     /// 성립하므로, 저장(발주확정) 시점에 운송장번호가 이미 있으면 "출고확정"으로 저장되고, 없으면
     /// "발주확정"으로 시작해 이후 운송장번호 업로드나 수동 발송확인 처리로 "출고확정"으로 바뀝니다.

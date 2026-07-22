@@ -39,4 +39,11 @@ public enum StdField
     /// Transfer(입금) 행 제거 등 채널별 후처리 필터에서 사용한다.
     /// </summary>
     EventType,
+
+    /// <summary>
+    /// 비고(내부관리용 참고 메모). 배송메시지(DeliveryMessage)와 달리 택배 송장에는 실리지 않고,
+    /// OFS 그리드에는 유무만 표시되며 발주확정 시 OutboundDetail.Remark로 이력에 남는다.
+    /// 자동발주(표준) 채널 프리셋의 "비고" 열에서 주로 쓰인다.
+    /// </summary>
+    Remark,
 }

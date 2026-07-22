@@ -54,8 +54,8 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg)
-            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $purchaseChannelCode, $purchasePrice, $weightKg)
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg)
             ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
                 OrderNo = excluded.OrderNo,
@@ -67,6 +67,7 @@ public class OutboundRepository
                 Recipient = excluded.Recipient,
                 Address = excluded.Address,
                 ProductName = excluded.ProductName,
+                Remark = excluded.Remark,
                 PurchaseChannelCode = excluded.PurchaseChannelCode,
                 PurchasePrice = excluded.PurchasePrice,
                 WeightKg = excluded.WeightKg,
@@ -93,6 +94,7 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$recipient", detail.Recipient);
             command.Parameters.AddWithValue("$address", detail.Address);
             command.Parameters.AddWithValue("$productName", detail.ProductName);
+            command.Parameters.AddWithValue("$remark", detail.Remark);
             command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
             command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
             command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
@@ -229,13 +231,13 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = string.IsNullOrEmpty(channelCode)
             ? """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
                 FROM OutboundDetailTable
                 WHERE CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
                 """
             : """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
                 FROM OutboundDetailTable
                 WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
@@ -271,7 +273,7 @@ public class OutboundRepository
 
         var paramNames = orderNoList.Select((_, i) => $"$o{i}").ToList();
         command.CommandText = $"""
-            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, PurchaseChannelCode, PurchasePrice, WeightKg
+            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
             FROM OutboundDetailTable
             WHERE OrderNo IN ({string.Join(",", paramNames)})
             """;
@@ -330,8 +332,9 @@ public class OutboundRepository
         Recipient = reader.GetString(10),
         Address = reader.GetString(11),
         ProductName = reader.GetString(12),
-        PurchaseChannelCode = reader.IsDBNull(13) ? null : reader.GetString(13),
-        PurchasePrice = reader.IsDBNull(14) ? null : reader.GetDecimal(14),
-        WeightKg = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
+        Remark = reader.GetString(13),
+        PurchaseChannelCode = reader.IsDBNull(14) ? null : reader.GetString(14),
+        PurchasePrice = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
+        WeightKg = reader.IsDBNull(16) ? null : reader.GetDecimal(16),
     };
 }

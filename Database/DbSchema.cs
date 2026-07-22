@@ -561,6 +561,8 @@ public static class DbSchema
         // OutboundDetailTable.CskuCode(G9 해소) — MskuCode는 이름과 달리 이미 CSKU 코드를 저장하고
         // 있어(§7.0) 당장 필수는 아니지만, §7.1 실적 조회에서 CSKU 기준 명시적 조회가 필요해 추가한다.
         EnsureColumn(connection, "OutboundDetailTable", "CskuCode", "TEXT NOT NULL DEFAULT ''");
+        // 자동발주처리 연동: 비고(내부관리용 메모, OfsOrderItem.Remark) 발주확정 시점 스냅샷.
+        EnsureColumn(connection, "OutboundDetailTable", "Remark", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

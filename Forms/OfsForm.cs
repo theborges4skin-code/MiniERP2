@@ -158,6 +158,9 @@ public class OfsForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "수취인", Name = "Recipient", DataPropertyName = "Recipient", Width = 100 },
             new DataGridViewTextBoxColumn { HeaderText = "연락처", Name = "Phone", DataPropertyName = "Phone", Width = 120 },
             new DataGridViewTextBoxColumn { HeaderText = "주소", Name = "Address", DataPropertyName = "Address", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill },
+            // 비고(내부관리용 메모) 전체 내용을 노출하지 않고 있는지 여부만 표시한다(DataPropertyName 없이
+            // OnOrdersGridCellFormatting에서 채움 — "묶음" 열과 같은 패턴). 전체 내용은 우클릭 "메모 보기".
+            new DataGridViewTextBoxColumn { HeaderText = "메모", Name = "RemarkFlag", Width = 60, ReadOnly = true },
             // Mapped/Transformed Data
             new DataGridViewTextBoxColumn { HeaderText = "매핑된 SKU", Name = "MappedSku", DataPropertyName = "MappedSku", Width = 150 },
             new DataGridViewTextBoxColumn { HeaderText = "처리 상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true },
@@ -601,6 +604,7 @@ public class OfsForm : Form
                         Recipient = order.Recipient ?? string.Empty,
                         Address = order.Address ?? string.Empty,
                         ProductName = order.ProductName ?? string.Empty,
+                        Remark = order.Remark ?? string.Empty,
                     });
 
                     if (csku == null) failedOrders.Add(order); // 납품가 없음 표시는 그리드에 유지
@@ -855,15 +859,23 @@ public class OfsForm : Form
     /// </summary>
     private void OnOrdersGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
-        if (_ordersGrid.Columns[e.ColumnIndex].Name != "ShipmentGroup") return;
         if (e.RowIndex < 0 || e.RowIndex >= _ordersGrid.Rows.Count) return;
         if (_ordersGrid.Rows[e.RowIndex].DataBoundItem is not OfsOrderItem item) return;
 
-        var groupId = ShipmentGrouping.GetEffectiveGroupId(item);
-        var groupSize = _orders.Count(o => ShipmentGrouping.GetEffectiveGroupId(o) == groupId);
+        var columnName = _ordersGrid.Columns[e.ColumnIndex].Name;
+        if (columnName == "ShipmentGroup")
+        {
+            var groupId = ShipmentGrouping.GetEffectiveGroupId(item);
+            var groupSize = _orders.Count(o => ShipmentGrouping.GetEffectiveGroupId(o) == groupId);
 
-        e.Value = groupSize > 1 ? $"{groupSize}줄 묶음" : string.Empty;
-        e.FormattingApplied = true;
+            e.Value = groupSize > 1 ? $"{groupSize}줄 묶음" : string.Empty;
+            e.FormattingApplied = true;
+        }
+        else if (columnName == "RemarkFlag")
+        {
+            e.Value = string.IsNullOrWhiteSpace(item.Remark) ? string.Empty : "메모있음";
+            e.FormattingApplied = true;
+        }
     }
 
     /// <summary>
@@ -880,6 +892,22 @@ public class OfsForm : Form
         menu.Items.Add("합포장으로 묶기", null, OnMergeIntoOneShipmentClick);
         menu.Items.Add("분리배송으로 분리", null, OnSplitIntoNewShipmentClick);
         menu.Items.Add("묶음 해제", null, OnResetShipmentGroupClick);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("메모 보기", null, OnViewRemarkClick);
+    }
+
+    /// <summary>
+    /// 선택 행의 비고(내부관리용 메모) 전체 내용을 보여준다. 그리드에는 "메모있음" 여부만 표시되므로
+    /// (RemarkFlag 열), 실제 내용 확인은 이 메뉴로만 가능하다.
+    /// </summary>
+    private void OnViewRemarkClick(object? sender, EventArgs e)
+    {
+        var order = GetSelectedOrderItems().FirstOrDefault();
+        if (order == null) return;
+
+        MessageBox.Show(
+            string.IsNullOrWhiteSpace(order.Remark) ? "메모가 없습니다." : order.Remark,
+            "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     /// <summary>

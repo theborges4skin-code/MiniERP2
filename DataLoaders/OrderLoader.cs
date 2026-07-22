@@ -118,6 +118,7 @@ public class OrderLoader
                     Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
                     Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
                     DeliveryMessage = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
+                    Remark = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Remark),
                     OrderDate = GetDateValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderDate),
                     Status = "로드 완료"
                 };
@@ -145,6 +146,7 @@ public class OrderLoader
         && string.IsNullOrWhiteSpace(item.Phone)
         && string.IsNullOrWhiteSpace(item.Address)
         && string.IsNullOrWhiteSpace(item.DeliveryMessage)
+        && string.IsNullOrWhiteSpace(item.Remark)
         && item.OrderDate is null;
 
     private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)

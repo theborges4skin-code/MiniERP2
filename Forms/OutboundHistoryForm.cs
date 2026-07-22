@@ -57,6 +57,7 @@ public class OutboundHistoryForm : Form
         ("Qty",         "수량",         false),
         ("SupplyPrice", "납품가",       false),
         ("Address",     "주소",         false),
+        ("Remark",      "비고",         false),
         ("Status",      "상태",         false),
         ("CreatedAt",   "발주확정 시점", false),
         ("ConfirmedAt", "출고확정 시점", false),
@@ -147,6 +148,9 @@ public class OutboundHistoryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "수령인", Name = "Recipient", DataPropertyName = "Recipient", Width = 90, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "주소", Name = "Address", DataPropertyName = "Address", Width = 220, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 130, ReadOnly = true },
+            // 비고(내부관리용 메모) 전체 내용을 열에 노출하지 않고 유무만 표시한다(OFS 그리드와 같은
+            // 패턴 — DataPropertyName 없이 OnRemarkFlagCellFormatting에서 채움). 전체 내용은 우클릭 "메모 보기".
+            new DataGridViewTextBoxColumn { HeaderText = "메모", Name = "RemarkFlag", Width = 55, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "SKU", Name = "MskuCode", DataPropertyName = "MskuCode", Width = 110, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
@@ -159,6 +163,8 @@ public class OutboundHistoryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "출고확정 시점", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130, ReadOnly = true }
         );
         AddB2BMarginColumns();
+        _historyGrid.CellFormatting += OnRemarkFlagCellFormatting;
+        SetupRemarkContextMenu();
         _historyGrid.CellEndEdit += OnHistoryGridCellEndEdit;
         // ExcelLikeDataGridView의 붙여넣기(Ctrl+V)는 셀 값을 코드로 직접 대입해서(cell.Value = ...)
         // CellValueChanged만 발생시키고 CellEndEdit는 발생시키지 않는다 — 운송장번호를 붙여넣기로
@@ -255,6 +261,35 @@ public class OutboundHistoryForm : Form
         // Margin
         e.Value = (detail.SupplyPrice - effectiveCost) * weightKg;
         e.FormattingApplied = true;
+    }
+
+    /// <summary>"메모" 열에는 전체 내용 대신 유무만 표시한다(OfsForm의 RemarkFlag 열과 같은 패턴).</summary>
+    private void OnRemarkFlagCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
+        if (_historyGrid.Columns[e.ColumnIndex].Name != "RemarkFlag") return;
+        if (_historyGrid.Rows[e.RowIndex].DataBoundItem is not OutboundDetail detail) return;
+
+        e.Value = string.IsNullOrWhiteSpace(detail.Remark) ? string.Empty : "메모있음";
+        e.FormattingApplied = true;
+    }
+
+    /// <summary>선택 행의 비고(내부관리용 메모) 전체 내용을 보여준다.</summary>
+    private void SetupRemarkContextMenu()
+    {
+        var menu = _historyGrid.ContextMenuStrip!;
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("메모 보기", null, OnViewRemarkClick);
+    }
+
+    private void OnViewRemarkClick(object? sender, EventArgs e)
+    {
+        var detail = GetSelectedDetails().FirstOrDefault();
+        if (detail == null) return;
+
+        MessageBox.Show(
+            string.IsNullOrWhiteSpace(detail.Remark) ? "메모가 없습니다." : detail.Remark,
+            "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void OnLoadClick(object? sender, EventArgs e)
@@ -493,7 +528,7 @@ public class OutboundHistoryForm : Form
         try
         {
             var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
-            var overflowGroups = await _courierExporter.ExportAsync(orderItems, courier, filePath, channelConfigsByCode);
+            var overflowGroups = await _courierExporter.ExportAsync(orderItems, courier, filePath, channelConfigsByCode, appendCourierNameColumn: true);
             _statusLabel.Text = $"선택한 {selectedCount}건을 '{courier.CourierName}' 양식으로 내보냈습니다.";
 
             if (overflowGroups.Count > 0)
@@ -824,6 +859,7 @@ public class OutboundHistoryForm : Form
         "Recipient"    => d.Recipient,
         "Address"      => d.Address,
         "ProductName"  => d.ProductName,
+        "Remark"       => d.Remark,
         "MskuCode"     => d.MskuCode,
         "Qty"          => (object)d.Qty,
         "SupplyPrice"  => d.SupplyPrice,
