@@ -456,6 +456,20 @@ public static class DbSchema
             CREATE INDEX IF NOT EXISTS IX_PriceQuote_Origin ON PriceQuoteTable (ChannelCode, Origin, Status);
             CREATE UNIQUE INDEX IF NOT EXISTS UX_PriceQuote_QuoteNo ON PriceQuoteTable (QuoteNo);
 
+            CREATE TABLE IF NOT EXISTS AutoOrderInboxTable (
+                Id TEXT PRIMARY KEY,
+                SubjectSnip TEXT NOT NULL DEFAULT '',
+                ReceivedAt TEXT NOT NULL,
+                XlsxPath TEXT NOT NULL DEFAULT '',
+                Sha256 TEXT NOT NULL DEFAULT '',
+                RowCount INTEGER NOT NULL DEFAULT 0,
+                ParseStatus TEXT NOT NULL DEFAULT 'ok',
+                Status TEXT NOT NULL DEFAULT 'new',
+                LocalFilePath TEXT,
+                SeenAt TEXT NOT NULL,
+                ImportedAt TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS PriceQuoteLineTable (
                 Id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 QuoteId       INTEGER NOT NULL,
