@@ -24,6 +24,12 @@ public class OfsOrderItem
     public string? Remark { get; set; }
 
     /// <summary>
+    /// 채널힌트(자동발주(표준) 프리셋 전용). AutoOrderChannelResolver가 ChannelCode를 실채널로
+    /// 치환하는 데만 쓰는 임시 값 — 그 외 어떤 파이프라인(이력 저장 등)에도 흘러가지 않는다.
+    /// </summary>
+    public string? ChannelHint { get; set; }
+
+    /// <summary>
     /// 발주일(채널 설정에서 "발주일" 헤더를 매핑한 경우만 채워짐). 누적발주서 채널(과거 이력까지
     /// 누적해서 담긴 발주서 파일)에서 발주 파일을 불러올 때 "최근 N일 이내" 항목만 골라 보여주는
     /// 선택창(Forms.CumulativeOrderSelectionDialog)에 쓰인다.

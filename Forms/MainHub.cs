@@ -1,4 +1,6 @@
+using MiniERP2.Config;
 using MiniERP2.Database;
+using MiniERP2.Services;
 using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
@@ -8,12 +10,16 @@ public class MainHub : Form
     private readonly ItemRepository _itemRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly SettlementRepository _settlementRepository = new();
+    private readonly AutoOrderInboxRepository _autoOrderInboxRepository = new();
+    private readonly AutoOrderSettingsService _autoOrderSettingsService = new();
 
     private Label _summaryLabel = new();
+    private System.Windows.Forms.Timer _autoOrderPollTimer = new();
 
     public MainHub()
     {
         InitializeComponent();
+        Load += OnMainHubLoad;
     }
 
     private void InitializeComponent()
@@ -33,6 +39,7 @@ public class MainHub : Form
         MainMenuStrip = menuStrip;
 
         Activated += (s, e) => RefreshSummary();
+        FormClosing += (s, e) => _autoOrderPollTimer.Stop();
     }
 
     /// <summary>
@@ -50,6 +57,7 @@ public class MainHub : Form
             ("발주/출고 이력", (s, e) => FormManager.Show<OutboundHistoryForm>(), Keys.Control | Keys.D4),
             ("풀필먼트 발주 처리", (s, e) => FormManager.Show<FboOrderForm>(), Keys.Control | Keys.D6),
             ("풀필먼트 발주 이력", (s, e) => FormManager.Show<FboHistoryForm>(), Keys.Control | Keys.D7),
+            ("자동발주처리", (s, e) => FormManager.Show<AutoOrderInboxForm>(), Keys.Control | Keys.D9),
         }),
         ("기준정보", new()
         {
@@ -217,13 +225,57 @@ public class MainHub : Form
         var itemCount = _itemRepository.GetAll().Count;
         var settlementChannelsWithData = _salesChannelRepository.GetAll()
             .Count(c => _settlementRepository.GetByChannel(c.ChannelCode).Count > 0);
+        var autoOrderNewCount = _autoOrderInboxRepository.CountNew();
 
         _summaryLabel.Text =
             "메인 허브에 오신 것을 환영합니다.\n상단 메뉴 또는 아래 버튼에서 작업을 선택하세요.\n\n" +
             "── 마스터 데이터 현황 ──\n" +
             $"등록된 채널: {channelCount}개\n" +
             $"등록된 마스터SKU: {itemCount}개\n" +
-            $"이익분석 결과가 저장된 채널: {settlementChannelsWithData}개";
+            $"이익분석 결과가 저장된 채널: {settlementChannelsWithData}개\n" +
+            (autoOrderNewCount > 0 ? $"▶ 자동발주처리 확인 필요: {autoOrderNewCount}건" : "자동발주처리: 신규 없음");
+    }
+
+    /// <summary>
+    /// 자동발주처리 폴링 3경로 중 "시작 시 1회"+"30분 타이머"(02_자동발주처리_MiniERP2연동_설계.md §4).
+    /// 아직 인증 전이면(캐시된 로그인 없음) 백그라운드에서 브라우저를 불쑥 띄우지 않도록 조용히
+    /// 건너뛴다 — 사용자가 자동발주처리 창의 [지금 확인]/[연동 설정]에서 명시적으로 인증해야 한다.
+    /// </summary>
+    private void OnMainHubLoad(object? sender, EventArgs e)
+    {
+        var settings = _autoOrderSettingsService.Load();
+
+        _autoOrderPollTimer = new System.Windows.Forms.Timer
+        {
+            Interval = Math.Max(5, settings.PollingIntervalMinutes) * 60 * 1000,
+        };
+        _autoOrderPollTimer.Tick += async (_, _) => await PollAutoOrdersQuietlyAsync();
+        _autoOrderPollTimer.Start();
+
+        if (settings.PollOnStartup)
+        {
+            _ = PollAutoOrdersQuietlyAsync();
+        }
+    }
+
+    private async Task PollAutoOrdersQuietlyAsync()
+    {
+        try
+        {
+            var settings = _autoOrderSettingsService.Load();
+            if (!settings.IsConfigured) return;
+
+            var client = new GoogleDriveAutoOrderClient(_autoOrderSettingsService);
+            var pollingService = new AutoOrderPollingService(client, _autoOrderInboxRepository);
+            await pollingService.PollAsync(allowInteractiveAuth: false);
+        }
+        catch
+        {
+            // 백그라운드 자동 폴링 실패는 조용히 넘어간다 — 사용자는 자동발주처리 창의
+            // [지금 확인]으로 수동 확인 시 구체적인 오류를 볼 수 있다.
+        }
+
+        if (!IsDisposed) BeginInvoke(RefreshSummary);
     }
 
     private void OnLegacyImportClick(object? sender, EventArgs e)

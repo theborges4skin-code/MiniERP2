@@ -776,6 +776,22 @@ public class OfsForm : Form
         _manualOrderDialog.BringToFront();
     }
 
+    /// <summary>
+    /// 자동발주처리(Gmail 자동화) 알림창의 [발주 파일 로드로 열기]에서 호출한다. 채널 선택 창을
+    /// 거치지 않고 이미 로드·매핑까지 끝낸 항목을 그대로 그리드에 추가한다는 점만 수동 추가/일반
+    /// 파일 로드와 다르다.
+    /// </summary>
+    public void AddLoadedOrders(IReadOnlyCollection<OfsOrderItem> items)
+    {
+        if (items.Count == 0) return;
+
+        foreach (var item in items) _orders.Add(item);
+        _totalLoadedRowCount += items.Count;
+
+        RefreshExportPreview();
+        _statusLabel.Text = $"자동발주처리에서 {items.Count}건을 불러왔습니다. (총 {_orders.Count}건)";
+    }
+
     private void AddManualOrderItem(OfsOrderItem item)
     {
         _orders.Add(item);

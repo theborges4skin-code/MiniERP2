@@ -1,3 +1,4 @@
+using MiniERP2.Database;
 using MiniERP2.Models;
 
 namespace MiniERP2.Mapping;
@@ -40,5 +41,40 @@ public static class AutoOrderChannelResolver
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// "자동발주(표준)" 프리셋으로 파싱해 로드한 항목들에 대해, 각 항목의 ChannelHint를 실채널로
+    /// 해석해(ResolveChannelCode) ChannelCode를 치환하고, 그 실채널에 쌓인 SKU 매핑 규칙으로
+    /// 다시 매핑한다(02_자동발주처리_MiniERP2연동_설계.md §1-2). 힌트가 해석되지 않은 항목은
+    /// ChannelCode가 프리셋 코드로 남아있으므로, 호출 측이 사용자에게 수동 채널 재지정을 안내해야
+    /// 한다. 반환값은 실채널로 치환된 항목 수(안내 메시지용).
+    /// </summary>
+    public static int ApplyChannelOverrides(
+        List<OfsOrderItem> items,
+        IEnumerable<ChannelConfig> channelConfigs,
+        MappingRepository mappingRepository,
+        ChannelSkuRepository? channelSkuRepository = null)
+    {
+        var configList = channelConfigs as IList<ChannelConfig> ?? channelConfigs.ToList();
+        var mapperCache = new Dictionary<string, SkuMapper>(StringComparer.OrdinalIgnoreCase);
+        var resolvedCount = 0;
+
+        foreach (var item in items)
+        {
+            var realChannelCode = ResolveChannelCode(configList, item.ChannelHint);
+            if (realChannelCode == null) continue;
+
+            item.ChannelCode = realChannelCode;
+            if (!mapperCache.TryGetValue(realChannelCode, out var mapper))
+            {
+                mapper = new SkuMapper(mappingRepository, realChannelCode, channelSkuRepository);
+                mapperCache[realChannelCode] = mapper;
+            }
+            mapper.ApplyMapping(item);
+            resolvedCount++;
+        }
+
+        return resolvedCount;
     }
 }

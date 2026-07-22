@@ -119,6 +119,7 @@ public class OrderLoader
                     Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
                     DeliveryMessage = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
                     Remark = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Remark),
+                    ChannelHint = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ChannelHint),
                     OrderDate = GetDateValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderDate),
                     Status = "로드 완료"
                 };

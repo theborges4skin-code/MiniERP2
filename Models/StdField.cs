@@ -46,4 +46,11 @@ public enum StdField
     /// 자동발주(표준) 채널 프리셋의 "비고" 열에서 주로 쓰인다.
     /// </summary>
     Remark,
+
+    /// <summary>
+    /// 채널힌트(자동발주(표준) 프리셋 전용). 이메일 원문에서 읽은 채널 단서 문자열 — 실제 채널
+    /// 코드가 아니라 참고용 텍스트다. AutoOrderChannelResolver가 이 값을 각 채널의 AutoOrderHints와
+    /// 대조해 실채널코드를 찾는 데만 쓰이고, 매핑/이력 등 다른 어떤 파이프라인에도 흘러가지 않는다.
+    /// </summary>
+    ChannelHint,
 }
