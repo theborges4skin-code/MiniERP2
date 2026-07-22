@@ -91,4 +91,19 @@ public class ChannelConfig
     [DisplayName("계산서발행내역 — 헤더 행 번호")]
     [Description("계산서발행내역 파일의 헤더가 있는 행 번호 (기본값 1).")]
     public int RocketInvoiceHeaderRow { get; set; } = 1;
+
+    [Category("자동발주 연동")]
+    [DisplayName("자동발주(표준) 파싱 프리셋으로 사용")]
+    [Description("자동발주처리(Gmail 자동화)가 만든 표준 발주 xlsx를 이 채널의 발주서 매핑 설정으로 " +
+        "파싱합니다. 전체 채널 중 정확히 1개만 체크해야 하며, 자동발주 알림에서 [발주 파일 로드로 " +
+        "열기]를 누르면 채널 선택 없이 이 채널로 자동 로드됩니다.")]
+    public bool IsAutoOrderStandardPreset { get; set; }
+
+    [Category("자동발주 연동")]
+    [DisplayName("자동발주 채널힌트")]
+    [Description("자동발주처리 메일에서 읽은 채널 단서 문자열(channel_hint)이 이 목록과 일치하면, " +
+        "표준 프리셋으로 불러온 주문의 채널을 이 채널로 자동 치환하고 이 채널에 쌓인 SKU 매핑 규칙을 " +
+        "적용합니다. 쉼표(,)로 여러 별칭을 등록할 수 있습니다. (예: 쿠팡,COUPANG) 이 채널 자체가 " +
+        "자동발주(표준) 프리셋이면 비워두세요.")]
+    public string AutoOrderHints { get; set; } = string.Empty;
 }
