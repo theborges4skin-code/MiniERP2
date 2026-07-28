@@ -1117,6 +1117,8 @@ public class OfsForm : Form
             {
                 item.ShipmentGroupId = groupId;
             }
+            // 다시 한 송장으로 합쳐졌으니, 분리배송 때 붙였을 수 있는 수취인명 번호(1,2,3...)를 뗀다.
+            ShipmentGrouping.RenumberSplitRecipients([selected]);
             _ordersGrid.Invalidate();
             RefreshExportPreview();
         });
@@ -1142,6 +1144,9 @@ public class OfsForm : Form
                 var baseId = ShipmentGrouping.GetEffectiveGroupId(item);
                 item.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
             }
+            // 분리된 송장들의 수취인명이 서로 같으면(같은 주문에서 나뉜 것이므로 보통 같음) 택배사
+            // 시스템의 동일 수취인 자동합포장을 막기 위해 뒤에 1,2,3...을 붙인다.
+            ShipmentGrouping.RenumberSplitRecipients(selected.Select(item => (IReadOnlyList<OfsOrderItem>)new List<OfsOrderItem> { item }).ToList());
             _ordersGrid.Invalidate();
             RefreshExportPreview();
         });
@@ -1163,6 +1168,9 @@ public class OfsForm : Form
             {
                 item.ShipmentGroupId = null;
             }
+            // 묶음 해제로 줄마다 별도 송장이 되므로, 수취인명이 같으면 자동합포장을 막기 위해
+            // 1,2,3...을 붙인다.
+            ShipmentGrouping.RenumberSplitRecipients(selected.Select(item => (IReadOnlyList<OfsOrderItem>)new List<OfsOrderItem> { item }).ToList());
             _ordersGrid.Invalidate();
             RefreshExportPreview();
         });
@@ -1236,7 +1244,12 @@ public class OfsForm : Form
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
             AllowUserToAddRows = false,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            // FullRowSelect였을 때는 셀 1개만 좌클릭해도 그 행 전체가 선택돼, Ctrl+C 복사 시 셀
+            // 하나만 복사하려 해도 행 전체가 클립보드에 담기는 문제가 있었다(사용자 신고). RowHeaderSelect로
+            // 바꾸면 셀 클릭은 그 셀만 선택하고, 행 전체를 고르고 싶을 때는 행머리(맨 왼쪽)를 클릭하면
+            // 된다 — 합포장/분리배송 처리/묶음 복사 컨텍스트 메뉴(GetSelectedPreviewRows)는 행머리 선택과
+            // 셀 드래그 선택 둘 다에서 동작하도록 그쪽에서 SelectedCells도 함께 본다.
+            SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
         };
         // 컬럼은 고정돼 있지 않다 — 선택된 택배사의 헤더 매핑(HeaderMappingJson)에 따라
         // RefreshExportPreview()가 매번 다시 만든다(OnPreviewCourierChanged 참고).
@@ -1333,16 +1346,25 @@ public class OfsForm : Form
         menu.Items.Add("합포장(선택한 묶음들을 하나로 합치기)", null, OnMergePreviewGroupsClick);
         menu.Items.Add("분리배송 처리(묶음 풀기/줄이 1개면 복사해서 새 송장으로)", null, OnResetPreviewGroupsClick);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("이 줄 복사(상품명 공란 — 송장에 표시할 메시지용)", null, OnDuplicatePreviewRowClick);
+        menu.Items.Add("이 묶음 복사(별도 송장으로 추가)", null, OnDuplicatePreviewRowClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("실행취소", null, OnUndoPreviewEditClick);
         _previewGrid.ContextMenuStrip = menu;
     }
 
+    /// <summary>
+    /// 합포장/분리배송 처리/묶음 복사 컨텍스트 메뉴가 대상으로 삼을 행들. RowHeaderSelect 모드라
+    /// 행머리를 클릭하면 SelectedRows에 잡히지만, 셀만 드래그해 선택한 경우(예: 여러 줄에 걸쳐
+    /// 셀을 드래그)는 SelectedRows가 비어있으므로 SelectedCells의 행 인덱스도 함께 본다.
+    /// </summary>
     private List<ShipmentPreviewRow> GetSelectedPreviewRows()
     {
-        return _previewGrid.SelectedRows.Cast<DataGridViewRow>()
-            .Select(r => GetPreviewRowModel(r.Index))
+        var rowIndices = _previewGrid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Index)
+            .Concat(_previewGrid.SelectedCells.Cast<DataGridViewCell>().Select(c => c.RowIndex))
+            .Distinct();
+
+        return rowIndices
+            .Select(GetPreviewRowModel)
             .OfType<ShipmentPreviewRow>()
             .ToList();
     }
@@ -1373,6 +1395,8 @@ public class OfsForm : Form
             {
                 item.ShipmentGroupId = groupId;
             }
+            // 다시 한 송장으로 합쳐졌으니, 분리배송 때 붙였을 수 있는 수취인명 번호(1,2,3...)를 뗀다.
+            ShipmentGrouping.RenumberSplitRecipients([itemsToRegroup]);
             _ordersGrid.Invalidate();
             RefreshExportPreview();
             _statusLabel.Text = $"{selected.Count}개 묶음을 합포장으로 합쳤습니다. ({DateTime.Now:HH:mm:ss})";
@@ -1381,10 +1405,13 @@ public class OfsForm : Form
 
     /// <summary>
     /// 줄이 2개 이상인 묶음(합포장돼 있던 것)을 선택하면 각자 단독 묶음으로 풀어준다(기존 동작).
-    /// 줄이 1개뿐인 묶음은 풀어낼 게 없어 아무 변화도 안 보이는 것처럼 보인다는 사용자 신고가
-    /// 있었음 — 그런 경우는 그 줄을 통째로 복사해 새 별도 송장으로 만들어준다(품목/수량은 사용자가
-    /// 그 다음에 직접 수동으로 나눠 입력할 것을 전제로 함). 두 동작 모두 한 메뉴("분리배송 처리")로
-    /// 묶어 제공하며, 선택한 묶음마다 줄 수에 따라 적합한 동작을 자동으로 고른다.
+    /// 줄이 1개뿐인 묶음은, 수량이 2개 이상이면 "분리배송 = 주문수량을 나누는 것"이라는 원칙에 따라
+    /// 수량만큼 1개씩 별도 송장으로 완전히 쪼갠다(예: 수량 2 → 수량 1짜리 송장 2건). 수량이 이미
+    /// 1개뿐이라 더 쪼갤 게 없으면(예전처럼) 통째로 복사해 새 별도 송장을 만들어주고 품목/수량은
+    /// 사용자가 그 다음에 직접 수동으로 나눠 입력하게 한다. 세 동작 모두 한 메뉴("분리배송 처리")로
+    /// 묶어 제공하며, 선택한 묶음마다 수량/줄 수에 따라 적합한 동작을 자동으로 고른다. 어느 경우든
+    /// 결과가 2건 이상의 송장이 되면, 수취인명이 같아 택배사 시스템에서 자동합포장되지 않도록
+    /// 뒤에 1,2,3...을 붙인다.
     /// </summary>
     private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
     {
@@ -1400,27 +1427,53 @@ public class OfsForm : Form
             PushPreviewUndoSnapshot();
 
             var multiItemGroups = selected.Where(r => r.Items.Count > 1).ToList();
-            var ungroupedCount = 0;
-            if (multiItemGroups.Count > 0)
+            foreach (var row in multiItemGroups)
             {
-                var itemsToUngroup = multiItemGroups.SelectMany(r => r.Items).ToList();
-                ClearStaleInvoiceLabelOverrides(itemsToUngroup);
-                foreach (var item in itemsToUngroup)
-                {
-                    item.ShipmentGroupId = null;
-                }
-                ungroupedCount = multiItemGroups.Count;
+                ClearStaleInvoiceLabelOverrides(row.Items);
+                foreach (var item in row.Items) item.ShipmentGroupId = null;
+                ShipmentGrouping.RenumberSplitRecipients(row.Items.Select(i => (IReadOnlyList<OfsOrderItem>)new List<OfsOrderItem> { i }).ToList());
             }
+            var ungroupedCount = multiItemGroups.Count;
 
             var singleItemGroups = selected.Where(r => r.Items.Count == 1).ToList();
+            var splitInvoiceCount = 0;
+            var duplicatedForManualEditCount = 0;
             foreach (var row in singleItemGroups)
             {
                 var template = row.Items[0];
-                var duplicate = CloneOrderItem(template);
-                duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
-                duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
-                duplicate.ShipmentGroupId = $"{ShipmentGrouping.GetEffectiveGroupId(template)}-분리{Guid.NewGuid().ToString("N")[..6]}";
-                _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
+                var baseId = ShipmentGrouping.GetEffectiveGroupId(template);
+                ClearStaleInvoiceLabelOverrides([template]);
+
+                if (template.Quantity > 1)
+                {
+                    var unitCount = template.Quantity;
+                    var newShipments = new List<List<OfsOrderItem>> { new() { template } };
+                    var insertAt = _orders.IndexOf(template) + 1;
+                    for (int i = 1; i < unitCount; i++)
+                    {
+                        var duplicate = CloneOrderItem(template);
+                        duplicate.Quantity = 1;
+                        duplicate.TrackingNo = null;
+                        duplicate.InvoiceLabel = null;
+                        duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+                        _orders.Insert(insertAt++, duplicate);
+                        newShipments.Add([duplicate]);
+                    }
+                    template.Quantity = 1;
+                    template.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+                    ShipmentGrouping.RenumberSplitRecipients(newShipments);
+                    splitInvoiceCount += unitCount;
+                }
+                else
+                {
+                    var duplicate = CloneOrderItem(template);
+                    duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
+                    duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                    duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+                    _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
+                    ShipmentGrouping.RenumberSplitRecipients([[template], [duplicate]]);
+                    duplicatedForManualEditCount++;
+                }
             }
 
             _ordersGrid.Invalidate();
@@ -1428,16 +1481,18 @@ public class OfsForm : Form
 
             var messageParts = new List<string>();
             if (ungroupedCount > 0) messageParts.Add($"{ungroupedCount}개 묶음을 분리배송 처리");
-            if (singleItemGroups.Count > 0) messageParts.Add($"{singleItemGroups.Count}건을 복사해 새 송장으로 분리(품목/수량을 직접 수정하세요)");
+            if (splitInvoiceCount > 0) messageParts.Add($"{splitInvoiceCount}건으로 수량을 분리");
+            if (duplicatedForManualEditCount > 0) messageParts.Add($"{duplicatedForManualEditCount}건을 복사해 새 송장으로 분리(품목/수량을 직접 수정하세요)");
             _statusLabel.Text = $"{string.Join(", ", messageParts)}했습니다. ({DateTime.Now:HH:mm:ss})";
         });
     }
 
     /// <summary>
-    /// 선택한 묶음에 새 줄을 하나 복사해서 추가한다. 상품명만 공란으로 두어, 운영자가 상품명 칸에
-    /// 자유 텍스트(CS 메시지, 안내문구 등)를 입력하면 그게 그대로 송장의 품목란에 한 줄로 같이
-    /// 나가게 하기 위함이다(택배사 양식엔 별도 메모란이 없는 경우가 많아서 이렇게 끼워 넣는다).
-    /// 새 줄은 원본과 같은 묶음으로 묶여 같은 송장에 함께 출력된다.
+    /// 선택한 묶음을 통째로 복제해 완전히 별도의 새 송장(묶음)으로 추가한다. 상품명/매핑정보/
+    /// 송장표시명을 원본 그대로 유지해(CSKU 코드가 아니라 실제 품목명이 나오게) 복제 직후에도
+    /// 미리보기가 올바르게 보이도록 하고, 원본과 자동으로 합포장되지 않도록 새 ShipmentGroupId를
+    /// 부여한다. 두 송장의 수취인명이 같으면(택배사 시스템의 동일 수취인 자동합포장을 막기 위해)
+    /// 뒤에 1,2 번호를 붙인다. 여러 줄이 합포장된 묶음을 복제하면 그 줄 전부를 함께 복제한다.
     /// </summary>
     private void OnDuplicatePreviewRowClick(object? sender, EventArgs e)
     {
@@ -1452,37 +1507,28 @@ public class OfsForm : Form
 
             PushPreviewUndoSnapshot();
 
-            var template = selected[0].Items[0];
-            // 원본도 같은 묶음 키를 명시적으로 가지도록 해서, 새로 추가한 메시지 줄과 항상 같은
-            // 송장으로 묶이게 한다(원본이 아직 기본값=그룹화 없음 상태였다면 지금 명시값으로 고정).
-            // 묶음 구성이 바뀌므로(줄이 하나 늘어남) 옛 InvoiceLabel 오버라이드가 남아있으면 지운다.
-            ClearStaleInvoiceLabelOverrides([template]);
-            var groupId = ShipmentGrouping.GetEffectiveGroupId(template);
-            template.ShipmentGroupId = groupId;
+            var templateItems = selected[0].Items;
+            var baseId = ShipmentGrouping.GetEffectiveGroupId(templateItems[0]);
+            ClearStaleInvoiceLabelOverrides(templateItems);
+            foreach (var item in templateItems) item.ShipmentGroupId = baseId;
 
-            var duplicate = new OfsOrderItem
+            var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+            var duplicates = new List<OfsOrderItem>();
+            var insertAt = _orders.IndexOf(templateItems[^1]) + 1;
+            foreach (var original in templateItems)
             {
-                ChannelCode = template.ChannelCode,
-                OrderNo = template.OrderNo,
-                ProductName = string.Empty, // 상품명만 공란 — 여기에 송장에 표시할 메시지를 직접 입력한다.
-                OptionName = template.OptionName,
-                Quantity = template.Quantity,
-                Recipient = template.Recipient,
-                Phone = template.Phone,
-                Address = template.Address,
-                DeliveryMessage = template.DeliveryMessage,
-                MappedSku = template.MappedSku,
-                Status = template.Status,
-                TrackingNo = template.TrackingNo,
-                ShipmentGroupId = groupId,
-            };
+                var duplicate = CloneOrderItem(original);
+                duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
+                duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                duplicate.ShipmentGroupId = newGroupId;
+                _orders.Insert(insertAt++, duplicate);
+                duplicates.Add(duplicate);
+            }
 
-            _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
+            ShipmentGrouping.RenumberSplitRecipients([templateItems, duplicates]);
             _ordersGrid.Invalidate();
             RefreshExportPreview();
-
-            // 그리드를 막 다시 그린 직후 모달을 띄우면 같은 위험 패턴이라 상태표시줄로 대체.
-            _statusLabel.Text = "줄을 복사했습니다. 위 상세 목록 맨 아래 새 줄의 '상품명' 칸에 송장에 표시할 메시지를 입력하세요.";
+            _statusLabel.Text = $"묶음을 복사해 별도 송장으로 추가했습니다. ({DateTime.Now:HH:mm:ss})";
         });
     }
 

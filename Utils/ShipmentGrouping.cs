@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using MiniERP2.Models;
 
 namespace MiniERP2.Utils;
@@ -81,6 +82,42 @@ public static class ShipmentGrouping
 
         return $"{name}{quantityTag}";
     }
+
+    private static readonly Regex TrailingDigits = new(@"\d+$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 한 주문을 여러 송장으로 분리배송할 때(수량 분리/묶음 해제/줄 복사 등) 각 송장의 수취인명 뒤에
+    /// 1,2,3...을 붙인다. 택배사 시스템에 업로드할 때 수취인명(+주소)이 같으면 서로 다른 송장이라도
+    /// 자동으로 합포장 처리해버리는 문제가 있어(사용자 피드백), 분리배송 결과 송장이 2건 이상이면
+    /// 수취인명을 구분되게 만들어야 한다. 반대로 송장이 다시 1건으로 합쳐지면(묶음 1개만 전달됨)
+    /// 번호를 떼어 원래 이름으로 되돌린다.
+    /// </summary>
+    /// <param name="shipments">
+    /// 분리/재구성 직후의 송장(묶음)들 — 각 묶음은 그 송장에 속한 줄들의 목록이다. 순서대로 1,2,3...
+    /// 번호가 매겨지므로 호출 쪽에서 원하는 표시 순서로 전달해야 한다.
+    /// </param>
+    public static void RenumberSplitRecipients(IReadOnlyList<IReadOnlyList<OfsOrderItem>> shipments)
+    {
+        if (shipments.Count == 0) return;
+
+        var baseName = StripRecipientSuffix(shipments[0].FirstOrDefault(i => !string.IsNullOrEmpty(i.Recipient))?.Recipient);
+        if (string.IsNullOrEmpty(baseName)) return;
+
+        if (shipments.Count == 1)
+        {
+            foreach (var item in shipments[0]) item.Recipient = baseName;
+            return;
+        }
+
+        for (int i = 0; i < shipments.Count; i++)
+        {
+            var numbered = $"{baseName}{i + 1}";
+            foreach (var item in shipments[i]) item.Recipient = numbered;
+        }
+    }
+
+    private static string? StripRecipientSuffix(string? recipient) =>
+        string.IsNullOrEmpty(recipient) ? recipient : TrailingDigits.Replace(recipient, "");
 
     private static string FormatQuantityTag(string? template, int quantity)
     {

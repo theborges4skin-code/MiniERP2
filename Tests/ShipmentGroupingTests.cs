@@ -165,4 +165,79 @@ public class ShipmentGroupingTests
 
         Assert.AreEqual(2, ShipmentGrouping.CountDescriptionLines(items));
     }
+
+    [TestMethod]
+    public void RenumberSplitRecipients_TwoShipments_AppendsSequentialNumbers()
+    {
+        var shipment1 = new List<OfsOrderItem> { new() { Recipient = "홍길동" } };
+        var shipment2 = new List<OfsOrderItem> { new() { Recipient = "홍길동" } };
+
+        ShipmentGrouping.RenumberSplitRecipients([shipment1, shipment2]);
+
+        Assert.AreEqual("홍길동1", shipment1[0].Recipient);
+        Assert.AreEqual("홍길동2", shipment2[0].Recipient);
+    }
+
+    [TestMethod]
+    public void RenumberSplitRecipients_AppliesSameNumberToAllItemsInOneShipment()
+    {
+        // 한 송장(=한 묶음)에 여러 품목 줄이 있으면 그 줄들 전부 같은 수취인 번호를 가져야 한다.
+        var shipment1 = new List<OfsOrderItem>
+        {
+            new() { Recipient = "홍길동", ProductName = "A품목" },
+            new() { Recipient = "홍길동", ProductName = "B품목" },
+        };
+        var shipment2 = new List<OfsOrderItem> { new() { Recipient = "홍길동" } };
+
+        ShipmentGrouping.RenumberSplitRecipients([shipment1, shipment2]);
+
+        Assert.AreEqual("홍길동1", shipment1[0].Recipient);
+        Assert.AreEqual("홍길동1", shipment1[1].Recipient);
+        Assert.AreEqual("홍길동2", shipment2[0].Recipient);
+    }
+
+    [TestMethod]
+    public void RenumberSplitRecipients_SingleShipment_StripsExistingSuffix()
+    {
+        // 분리배송했던 송장들을 다시 합포장으로 합치면(=송장이 1개로 줄어들면), 예전에 붙였던
+        // 수취인명 번호(1,2,3...)를 떼어 원래 이름으로 되돌려야 한다.
+        var merged = new List<OfsOrderItem>
+        {
+            new() { Recipient = "홍길동1" },
+            new() { Recipient = "홍길동1" },
+        };
+
+        ShipmentGrouping.RenumberSplitRecipients([merged]);
+
+        Assert.AreEqual("홍길동", merged[0].Recipient);
+        Assert.AreEqual("홍길동", merged[1].Recipient);
+    }
+
+    [TestMethod]
+    public void RenumberSplitRecipients_ReSplittingAlreadyNumberedRecipient_DoesNotCompoundSuffix()
+    {
+        // 이미 "홍길동1"처럼 번호가 붙은 상태에서 다시 분리하면 "홍길동11", "홍길동12"처럼 번호가
+        // 누적되면 안 되고, 기존 번호를 떼어낸 원래 이름 기준으로 다시 매겨야 한다.
+        var shipment1 = new List<OfsOrderItem> { new() { Recipient = "홍길동1" } };
+        var shipment2 = new List<OfsOrderItem> { new() { Recipient = "홍길동1" } };
+        var shipment3 = new List<OfsOrderItem> { new() { Recipient = "홍길동1" } };
+
+        ShipmentGrouping.RenumberSplitRecipients([shipment1, shipment2, shipment3]);
+
+        Assert.AreEqual("홍길동1", shipment1[0].Recipient);
+        Assert.AreEqual("홍길동2", shipment2[0].Recipient);
+        Assert.AreEqual("홍길동3", shipment3[0].Recipient);
+    }
+
+    [TestMethod]
+    public void RenumberSplitRecipients_EmptyRecipient_DoesNothing()
+    {
+        var shipment1 = new List<OfsOrderItem> { new() { Recipient = null } };
+        var shipment2 = new List<OfsOrderItem> { new() { Recipient = null } };
+
+        ShipmentGrouping.RenumberSplitRecipients([shipment1, shipment2]);
+
+        Assert.IsNull(shipment1[0].Recipient);
+        Assert.IsNull(shipment2[0].Recipient);
+    }
 }
