@@ -33,7 +33,13 @@ public class CourierExporter
     /// 품목이 4줄을 초과해 줄바꿈으로 다 표시되지 못할 수 있는 묶음들의 대표 주문번호 목록입니다.
     /// 비어있으면 모든 묶음이 4줄 이하입니다. 내보내기 자체는 초과 여부와 무관하게 항상 끝까지 진행됩니다.
     /// </returns>
-    public async Task<List<string>> ExportAsync(IEnumerable<OfsOrderItem> orders, CourierMaster courier, string filePath, IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode = null)
+    /// <param name="appendCourierNameColumn">
+    /// true면 택배사 고유 양식 컬럼 뒤에 "택배사" 열을 하나 더 붙여 courier.CourierName을 채운다.
+    /// 택배사 프로그램에 그대로 업로드하는 파일(OfsForm의 최초 발주 출력)에서는 컬럼 구성이 어긋나면
+    /// 택배사 쪽 인식이 깨질 수 있어 기본값 false로 두고, 이미 운송장이 확정된 뒤 거래처에 그대로
+    /// 전달만 하는 용도(OutboundHistoryForm 재출력)에서만 true로 켠다.
+    /// </param>
+    public async Task<List<string>> ExportAsync(IEnumerable<OfsOrderItem> orders, CourierMaster courier, string filePath, IReadOnlyDictionary<string, ChannelConfig>? channelConfigsByCode = null, bool appendCourierNameColumn = false)
     {
         return await Task.Run(() =>
         {
@@ -62,6 +68,10 @@ public class CourierExporter
             {
                 worksheet.Cells[1, i + 1].Value = headers[i];
             }
+            if (appendCourierNameColumn)
+            {
+                worksheet.Cells[1, headers.Count + 1].Value = "택배사";
+            }
 
             // 2. 데이터 쓰기 — 묶음(=송장) 단위로 한 행씩 출력한다.
             var row = 2;
@@ -87,6 +97,10 @@ public class CourierExporter
                         entries[col], groupItems, courier, channelConfig,
                         item => ResolveInvoiceDisplayName(item, invoiceDisplayNameCache));
                     worksheet.Cells[row, col + 1].Value = value;
+                }
+                if (appendCourierNameColumn)
+                {
+                    worksheet.Cells[row, entries.Count + 1].Value = courier.CourierName;
                 }
                 row++;
             }

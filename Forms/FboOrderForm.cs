@@ -166,9 +166,10 @@ public class FboOrderForm : Form
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "수량", DataPropertyName = "Qty", Width = 60 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "유통기한(YYYYMMDD)", DataPropertyName = "ExpiryDate", Width = 130 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "박스타입", DataPropertyName = "BoxType", Width = 70 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "이송장번호", DataPropertyName = "TrackingNo", ReadOnly = true, Width = 110 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "이송장번호", DataPropertyName = "TrackingNo", Width = 110 });
         _grid.DataSource = _rows;
-        _grid.CellEndEdit += (s, e) => UpdateSummary();
+        _grid.CellEndEdit += OnGridCellEndEdit;
+        _grid.KeyDown += OnGridKeyDown;
 
         // 5행: 후속 처리(발주확정 이후에만 의미가 있는 단계 — CJ 처리 결과 반영/재고 보고)
         var row5 = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 2, 6, 0) };
@@ -578,6 +579,82 @@ public class FboOrderForm : Form
         _summaryLabel.Text = $"박스 {boxCount}개 / 품목줄 {_rows.Count} / 총수량 {totalQty}개";
     }
 
+    /// <summary>이송장번호를 직접 타이핑해 편집했을 때, 같은 박스(합포장으로 묶인 다른 품목 줄)에도
+    /// 동일한 값을 맞춘다 — 박스 1개당 이송장은 하나이므로(운송장 불러오기 때와 동일한 규칙).</summary>
+    private void OnGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex >= 0 && e.RowIndex < _rows.Count &&
+            _grid.Columns[e.ColumnIndex].DataPropertyName == nameof(FboBoxItemRow.TrackingNo))
+        {
+            SyncTrackingNoAcrossBox(_rows[e.RowIndex].BoxSeq, _rows[e.RowIndex].TrackingNo);
+        }
+        UpdateSummary();
+    }
+
+    private void SyncTrackingNoAcrossBox(int boxSeq, string? trackingNo)
+    {
+        foreach (var row in _rows.Where(r => r.BoxSeq == boxSeq)) row.TrackingNo = trackingNo;
+        _rows.ResetBindings();
+    }
+
+    /// <summary>Ctrl+V로 엑셀 등에서 복사한 여러 줄/열을 현재 셀 위치부터 그리드에 붙여넣는다.
+    /// DataGridView가 기본으로 지원하지 않으므로 클립보드 텍스트(탭/줄바꿈 구분)를 직접 파싱한다.</summary>
+    private void OnGridKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (!e.Control || e.KeyCode != Keys.V) return;
+        e.Handled = true;
+        e.SuppressKeyPress = true;
+        PasteClipboardIntoGrid();
+    }
+
+    private void PasteClipboardIntoGrid()
+    {
+        if (_grid.CurrentCell == null || !Clipboard.ContainsText()) return;
+        var text = Clipboard.GetText();
+        if (string.IsNullOrEmpty(text)) return;
+        var lines = text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+        int startRow = _grid.CurrentCell.RowIndex;
+        int startCol = _grid.CurrentCell.ColumnIndex;
+        var touchedBoxes = new Dictionary<int, string?>();
+
+        for (int r = 0; r < lines.Length; r++)
+        {
+            int rowIndex = startRow + r;
+            if (rowIndex >= _rows.Count) break;
+            var row = _rows[rowIndex];
+            var cells = lines[r].Split('\t');
+            for (int c = 0; c < cells.Length; c++)
+            {
+                int colIndex = startCol + c;
+                if (colIndex >= _grid.Columns.Count) break;
+                var column = _grid.Columns[colIndex];
+                if (column.ReadOnly) continue;
+                var value = cells[c].Trim();
+
+                switch (column.DataPropertyName)
+                {
+                    case nameof(FboBoxItemRow.TrackingNo):
+                        row.TrackingNo = string.IsNullOrEmpty(value) ? null : value;
+                        touchedBoxes[row.BoxSeq] = row.TrackingNo;
+                        break;
+                    case nameof(FboBoxItemRow.Qty):
+                        if (int.TryParse(value, out var qty)) row.Qty = qty;
+                        break;
+                    case nameof(FboBoxItemRow.ExpiryDate):
+                        row.ExpiryDate = string.IsNullOrEmpty(value) ? null : value;
+                        break;
+                    case nameof(FboBoxItemRow.BoxType):
+                        row.BoxType = value;
+                        break;
+                }
+            }
+        }
+
+        foreach (var (boxSeq, trackingNo) in touchedBoxes) SyncTrackingNoAcrossBox(boxSeq, trackingNo);
+        _rows.ResetBindings();
+        UpdateSummary();
+    }
+
     private void OnSaveClick(object? sender, EventArgs e)
     {
         var channel = SelectedChannel();
@@ -639,7 +716,7 @@ public class FboOrderForm : Form
                 ReceiverDisplayName = first.ReceiverDisplayName,
                 MatchKey = first.MatchKey,
                 BoxType = first.BoxType,
-                TrackingNo = existingBox?.TrackingNo,
+                TrackingNo = !string.IsNullOrWhiteSpace(first.TrackingNo) ? first.TrackingNo.Trim() : existingBox?.TrackingNo,
                 TrackingLoadedAt = existingBox?.TrackingLoadedAt,
                 Status = existingBox?.Status ?? "대기",
             };

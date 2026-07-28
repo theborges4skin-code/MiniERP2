@@ -65,6 +65,32 @@ public class CourierExporterTests
     }
 
     [TestMethod]
+    public async Task ExportAsync_AppendCourierNameColumn_AddsTrailingColumnWithCourierName()
+    {
+        var courier = new CourierMaster
+        {
+            CourierName = "CJ대한통운",
+            HeaderMappingJson = """{ "받는분": "Recipient", "운송장번호": "TrackingNo" }"""
+        };
+        var orders = new List<OfsOrderItem>
+        {
+            new() { Recipient = "홍길동", TrackingNo = "T001" },
+            new() { Recipient = "김철수", TrackingNo = "T002" },
+        };
+
+        var exporter = new CourierExporter();
+        await exporter.ExportAsync(orders, courier, _filePath, appendCourierNameColumn: true);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["Sheet1"];
+
+        Assert.AreEqual("택배사", sheet.Cells[1, 3].Value);
+        Assert.AreEqual("CJ대한통운", sheet.Cells[2, 3].Value);
+        Assert.AreEqual("CJ대한통운", sheet.Cells[3, 3].Value);
+    }
+
+    [TestMethod]
     public async Task ExportAsync_WithChannelOverride_UsesFixedValueInsteadOfOrderData()
     {
         var courier = new CourierMaster
