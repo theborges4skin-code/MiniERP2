@@ -492,9 +492,14 @@ public static class DocumentExporter
         var ws = package.Workbook.Worksheets.Add("견적서");
 
         bool withQty = !doc.IsBasic;
-        int totalCols = withQty ? 9 : 5;
+        // 기본형은 5열(항상 동일). 수량포함형은 VAT별도면 공급가/세액을 분리해 8열, VAT포함이면
+        // 입력한 단가에 이미 세금이 포함돼 있다고 보고 별도 세액 없이 6열로 더 단순하게 보여준다
+        // (거래명세표 VAT포함 레이아웃과 같은 원칙 — WriteDataHeader 참고). 예전엔 수량포함형이면
+        // 무조건 8열로 세액을 추가로 얹어, VAT포함을 선택해도 이중과세처럼 보이는 버그가 있었다.
+        bool showTaxBreakdown = withQty && doc.IsVatExcluded;
+        int totalCols = !withQty ? 5 : (showTaxBreakdown ? 9 : 7);
 
-        SetQuoteColumnWidths(ws, withQty);
+        SetQuoteColumnWidths(ws, withQty, showTaxBreakdown);
         SetPrintSettings(ws);
 
         int row = 1;
@@ -503,12 +508,12 @@ public static class DocumentExporter
         row++;
         row = WriteQuoteDivider(ws, row, totalCols);
         row++;
-        row = WriteQuotePriceBasisLine(ws, row, doc, totalCols, withQty);
+        row = WriteQuotePriceBasisLine(ws, row, doc, totalCols);
 
         int headerRow = row;
-        row = WriteQuoteDataHeader(ws, row, withQty);
-        row = WriteQuoteDataRows(ws, row, doc, withQty);
-        if (withQty) row = WriteQuoteTotalRow(ws, row, doc, totalCols);
+        row = WriteQuoteDataHeader(ws, row, withQty, showTaxBreakdown);
+        row = WriteQuoteDataRows(ws, row, doc, withQty, showTaxBreakdown);
+        if (withQty) row = WriteQuoteTotalRow(ws, row, doc, totalCols, showTaxBreakdown);
         row++;
 
         row = WriteQuoteNotesSection(ws, row, doc, totalCols);
@@ -526,7 +531,7 @@ public static class DocumentExporter
         ExportHelper.SaveExcel(package, filePath);
     }
 
-    private static void SetQuoteColumnWidths(ExcelWorksheet ws, bool withQty)
+    private static void SetQuoteColumnWidths(ExcelWorksheet ws, bool withQty, bool showTaxBreakdown)
     {
         ws.Column(1).Width = 3; // 여백/불릿 열(샘플의 B열에 해당)
         if (withQty)
@@ -535,10 +540,18 @@ public static class DocumentExporter
             ws.Column(3).Width = 7;   // 단위
             ws.Column(4).Width = 10;  // 단가
             ws.Column(5).Width = 7;   // 수량
-            ws.Column(6).Width = 10;  // 공급가
-            ws.Column(7).Width = 10;  // 세액
-            ws.Column(8).Width = 11;  // 합계금액
-            ws.Column(9).Width = 12;  // 비고
+            if (showTaxBreakdown)
+            {
+                ws.Column(6).Width = 10;  // 공급가
+                ws.Column(7).Width = 10;  // 세액
+                ws.Column(8).Width = 11;  // 합계금액
+                ws.Column(9).Width = 12;  // 비고
+            }
+            else
+            {
+                ws.Column(6).Width = 11;  // 합계금액(VAT포함)
+                ws.Column(7).Width = 14;  // 비고
+            }
         }
         else
         {
@@ -598,14 +611,15 @@ public static class DocumentExporter
         return row + 1;
     }
 
-    private static int WriteQuotePriceBasisLine(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols, bool withQty)
+    private static int WriteQuotePriceBasisLine(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
     {
         ws.Cells[row, 1].Value = "1. 가격 기준";
         ws.Cells[row, 1].Style.Font.Size = 11;
 
-        // 수량포함형은 세액/합계금액 열이 있어 VAT 포함여부를 굳이 밝히지 않고 통화 단위만 표기한다.
-        string corner = withQty ? "(단위: 원)" : $"({doc.PriceBasis})";
-        Merge(ws, row, totalCols - 1, row, totalCols, corner);
+        // 수량포함형도 이제 VAT별도/포함에 따라 세액 계산이 실제로 달라지므로(공급가/세액 분리
+        // 여부), 기본형과 마찬가지로 가격기준을 그대로 표기한다(예전엔 "(단위: 원)"으로 뭉뚱그려
+        // VAT 여부를 안 보여줬음).
+        Merge(ws, row, totalCols - 1, row, totalCols, $"({doc.PriceBasis})");
         ws.Cells[row, totalCols - 1].Style.Font.Size = 9;
         ws.Cells[row, totalCols - 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
 
@@ -623,11 +637,13 @@ public static class DocumentExporter
         ws.Row(row).Height = 16;
     }
 
-    private static int WriteQuoteDataHeader(ExcelWorksheet ws, int row, bool withQty)
+    private static int WriteQuoteDataHeader(ExcelWorksheet ws, int row, bool withQty, bool showTaxBreakdown)
     {
-        string[] headers = withQty
-            ? new[] { "제품명", "단위", "단가", "수량", "공급가", "세액", "합계금액", "비고" }
-            : new[] { "제품명", "단위", "판매가", "비고" };
+        string[] headers = !withQty
+            ? new[] { "제품명", "단위", "판매가", "비고" }
+            : showTaxBreakdown
+                ? new[] { "제품명", "단위", "단가", "수량", "공급가", "세액", "합계금액", "비고" }
+                : new[] { "제품명", "단위", "단가(VAT포함)", "수량", "합계금액(VAT포함)", "비고" };
 
         for (int i = 0; i < headers.Length; i++)
         {
@@ -644,7 +660,7 @@ public static class DocumentExporter
         return row + 1;
     }
 
-    private static int WriteQuoteDataRows(ExcelWorksheet ws, int row, QuoteDoc doc, bool withQty)
+    private static int WriteQuoteDataRows(ExcelWorksheet ws, int row, QuoteDoc doc, bool withQty, bool showTaxBreakdown)
     {
         var lines = doc.Lines.Where(l => !string.IsNullOrWhiteSpace(l.ItemName) || l.UnitPrice != 0).ToList();
 
@@ -661,10 +677,20 @@ public static class DocumentExporter
             if (withQty)
             {
                 SetNum(ws, row, 5, line.Qty);
-                SetNum(ws, row, 6, line.Amount);
-                SetNum(ws, row, 7, line.Tax);
-                SetNum(ws, row, 8, line.LineTotal);
-                noteCol = 9;
+                if (showTaxBreakdown)
+                {
+                    SetNum(ws, row, 6, line.Amount);
+                    SetNum(ws, row, 7, line.Tax(vatExcluded: true));
+                    SetNum(ws, row, 8, line.LineTotal(vatExcluded: true));
+                    noteCol = 9;
+                }
+                else
+                {
+                    // VAT포함은 단가에 이미 세금이 포함돼 있다고 보므로 공급가/세액을 따로 나누지
+                    // 않고 합계금액 한 칸만 보여준다(LineTotal(false) == Amount).
+                    SetNum(ws, row, 6, line.LineTotal(vatExcluded: false));
+                    noteCol = 7;
+                }
             }
             else
             {
@@ -689,15 +715,24 @@ public static class DocumentExporter
         return $"{note} ({packing})";
     }
 
-    private static int WriteQuoteTotalRow(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols)
+    private static int WriteQuoteTotalRow(ExcelWorksheet ws, int row, QuoteDoc doc, int totalCols, bool showTaxBreakdown)
     {
         Merge(ws, row, 2, row, 4, "계");
         StyleLabel(ws.Cells[row, 2], bold: true, center: true);
 
         SetNum(ws, row, 5, doc.TotalQty);
-        SetNum(ws, row, 6, doc.TotalAmount);
-        SetNum(ws, row, 7, doc.TotalTax);
-        SetNum(ws, row, 8, doc.GrandTotal);
+        if (showTaxBreakdown)
+        {
+            SetNum(ws, row, 6, doc.TotalAmount);
+            SetNum(ws, row, 7, doc.TotalTax);
+            SetNum(ws, row, 8, doc.GrandTotal);
+        }
+        else
+        {
+            // VAT포함은 공급가/세액을 나누지 않으므로 합계금액(= TotalAmount, TotalTax는 항상 0) 한
+            // 칸만 채운다(WriteQuoteDataRows/WriteQuoteDataHeader의 6열 레이아웃과 맞춤).
+            SetNum(ws, row, 6, doc.GrandTotal);
+        }
 
         for (int c = 2; c <= totalCols; c++)
         {

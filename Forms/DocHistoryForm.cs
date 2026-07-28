@@ -152,16 +152,47 @@ public class DocHistoryForm : Form
 
     private void OnOpenFileClick(object? sender, EventArgs e) => OpenSelected();
 
+    /// <summary>
+    /// 원본 경로의 파일이 그대로 있으면 그걸 열고, 사용자가 파일을 옮기거나 지워서 없어졌으면
+    /// 발행 시점에 DB에 함께 백업해둔 바이트(DocHistoryTable.FileBytes)를 임시 폴더에 복원해
+    /// 대신 연다(사용자 신고 — 예전엔 FilePath에만 의존해 파일을 못 찾으면 그대로 실패했었음).
+    /// FileBytes도 없으면(도입 이전 옛 이력) 기존처럼 안내만 하고 끝낸다.
+    /// </summary>
     private void OpenSelected()
     {
         var r = SelectedRecord();
         if (r == null) return;
-        if (!File.Exists(r.FilePath))
+
+        if (File.Exists(r.FilePath))
         {
-            MessageBox.Show("파일을 찾을 수 없습니다.\n" + r.FilePath, "파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Process.Start(new ProcessStartInfo(r.FilePath) { UseShellExecute = true });
             return;
         }
-        Process.Start(new ProcessStartInfo(r.FilePath) { UseShellExecute = true });
+
+        var fileBytes = _repo.GetFileBytes(r.Id);
+        if (fileBytes == null)
+        {
+            MessageBox.Show("파일을 찾을 수 없고, 이 이력에는 DB 백업본도 없습니다.\n" + r.FilePath, "파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            var restoreDir = Path.Combine(Path.GetTempPath(), "MiniERP2_DocHistory");
+            Directory.CreateDirectory(restoreDir);
+            var restoredPath = Path.Combine(restoreDir, $"{Path.GetFileNameWithoutExtension(r.FilePath)}_{r.Id}.xlsx");
+            File.WriteAllBytes(restoredPath, fileBytes);
+
+            MessageBox.Show(
+                "원본 파일을 찾을 수 없어, 발행 시점에 DB에 백업해둔 내용으로 복원해 엽니다.\n" +
+                "필요하면 열린 문서를 '다른 이름으로 저장'해 원하는 위치에 다시 보관하세요.",
+                "DB 백업본으로 복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Process.Start(new ProcessStartInfo(restoredPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("백업본 복원에 실패했습니다.\n" + ex.Message, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)

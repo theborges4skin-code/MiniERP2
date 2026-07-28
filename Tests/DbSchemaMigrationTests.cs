@@ -224,6 +224,19 @@ public class DbSchemaMigrationTests
         Assert.IsTrue(HasColumn(connection, "OutboundDetailTable", "CskuCode"));
     }
 
+    /// <summary>
+    /// 문서발행 이력에서 FilePath만으로는 원본 파일이 이동/삭제되면 다시 열 수 없는 문제(사용자
+    /// 신고)를 막기 위해, 발행 시점의 엑셀 바이트를 DB에도 백업해두는 FileBytes 컬럼이 보강되는지
+    /// 검증한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_AddsFileBytesColumnToDocHistoryTable()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+
+        Assert.IsTrue(HasColumn(connection, "DocHistoryTable", "FileBytes"));
+    }
+
     private static bool TableExists(SqliteConnection connection, string tableName)
     {
         using var command = connection.CreateCommand();

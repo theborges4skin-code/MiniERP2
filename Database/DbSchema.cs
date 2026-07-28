@@ -577,6 +577,10 @@ public static class DbSchema
         EnsureColumn(connection, "OutboundDetailTable", "CskuCode", "TEXT NOT NULL DEFAULT ''");
         // 자동발주처리 연동: 비고(내부관리용 메모, OfsOrderItem.Remark) 발주확정 시점 스냅샷.
         EnsureColumn(connection, "OutboundDetailTable", "Remark", "TEXT NOT NULL DEFAULT ''");
+        // 문서발행 이력에서 FilePath만 들고 있으면 사용자가 파일을 옮기거나 지운 뒤 이력에서 "파일
+        // 열기"를 누를 때 못 찾는 문제가 있었다(사용자 신고) — 생성 시점의 엑셀 바이트를 DB에도
+        // 함께 백업해, 원본 경로가 없어져도 이력에서 그대로 복원해 열 수 있게 한다.
+        EnsureColumn(connection, "DocHistoryTable", "FileBytes", "BLOB");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

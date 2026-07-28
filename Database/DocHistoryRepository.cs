@@ -10,8 +10,8 @@ public class DocHistoryRepository
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO DocHistoryTable (DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt)
-            VALUES ($docType, $issueDate, $buyerName, $totalAmount, $filePath, $createdAt)
+            INSERT INTO DocHistoryTable (DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt, FileBytes)
+            VALUES ($docType, $issueDate, $buyerName, $totalAmount, $filePath, $createdAt, $fileBytes)
             """;
         cmd.Parameters.AddWithValue("$docType",     r.DocType);
         cmd.Parameters.AddWithValue("$issueDate",   r.IssueDate.ToString("yyyy-MM-dd"));
@@ -19,7 +19,24 @@ public class DocHistoryRepository
         cmd.Parameters.AddWithValue("$totalAmount", (double)r.TotalAmount);
         cmd.Parameters.AddWithValue("$filePath",    r.FilePath);
         cmd.Parameters.AddWithValue("$createdAt",   r.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.Parameters.AddWithValue("$fileBytes",   (object?)r.FileBytes ?? DBNull.Value);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 이력 저장 시 함께 백업해둔 원본 엑셀 바이트를 조회한다(없으면 null — FileBytes 도입 이전에
+    /// 저장된 옛 이력이거나 백업 자체가 실패했던 경우). "파일 열기"에서 FilePath의 실제 파일을
+    /// 찾을 수 없을 때만 이 메서드로 복원을 시도한다.
+    /// </summary>
+    public byte[]? GetFileBytes(int id)
+    {
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT FileBytes FROM DocHistoryTable WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+
+        var result = cmd.ExecuteScalar();
+        return result is byte[] bytes ? bytes : null;
     }
 
     public List<DocHistoryRecord> Query(DateTime from, DateTime to, string? docType = null)

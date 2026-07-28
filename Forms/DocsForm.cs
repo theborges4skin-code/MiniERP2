@@ -1294,6 +1294,12 @@ public class DocsForm : Form
                     break;
             }
 
+            // 생성 직후의 엑셀 바이트를 DB에도 백업해둔다 — FilePath만 들고 있으면 사용자가 나중에
+            // 파일을 옮기거나 지웠을 때 이력에서 "파일 열기"가 불가능해지는 문제(사용자 신고)를
+            // 막기 위함. 읽기 실패해도(권한 등) 이력 저장 자체는 계속 진행한다.
+            byte[]? fileBytes = null;
+            try { fileBytes = File.ReadAllBytes(filePath); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
+
             _historyRepo.Add(new DocHistoryRecord
             {
                 DocType     = DocTypeLabel(),
@@ -1302,6 +1308,7 @@ public class DocsForm : Form
                 TotalAmount = total,
                 FilePath    = filePath,
                 CreatedAt   = DateTime.Now,
+                FileBytes   = fileBytes,
             });
         }
         catch

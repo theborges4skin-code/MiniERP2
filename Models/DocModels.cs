@@ -139,9 +139,17 @@ public class QuoteLineItem
     public decimal Qty { get; set; }       // 수량포함 버전에서만 사용
     public string Note { get; set; } = "";
 
-    public decimal Amount => Math.Round(Qty * UnitPrice, 0, MidpointRounding.AwayFromZero);   // 공급가
-    public decimal Tax => Math.Round(Amount * 0.1m, 0, MidpointRounding.AwayFromZero);
-    public decimal LineTotal => Amount + Tax;                                                  // 합계금액
+    /// <summary>입력한 단가×수량. VAT별도면 공급가(세전), VAT포함이면 그 자체가 합계금액(세후)이다.</summary>
+    public decimal Amount => Math.Round(Qty * UnitPrice, 0, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// VAT별도일 때만 공급가의 10%를 별도 세액으로 얹는다. VAT포함은 입력한 단가에 이미 세금이
+    /// 포함돼 있다고 보고 추가로 얹지 않는다(0) — 거래명세표(TradeStatementDoc/DocumentExporter의
+    /// WriteDataHeader)의 VAT포함 처리와 같은 원칙.
+    /// </summary>
+    public decimal Tax(bool vatExcluded) => vatExcluded ? Math.Round(Amount * 0.1m, 0, MidpointRounding.AwayFromZero) : 0m;
+
+    public decimal LineTotal(bool vatExcluded) => Amount + Tax(vatExcluded);
 }
 
 public class QuoteDoc
@@ -151,7 +159,7 @@ public class QuoteDoc
     public string RecipientName { get; set; } = "";   // 수신
     public string DocTitle { get; set; } = "견 적 서";
     public string HeaderText { get; set; } = "";       // 인사문 — 줄바꿈으로 여러 줄 입력 가능(비우면 기본 문구 사용)
-    public string PriceBasis { get; set; } = "VAT 포함"; // 가격기준 라벨(기본형에서만 사용)
+    public string PriceBasis { get; set; } = "VAT 포함"; // 가격기준 라벨 — 기본형은 표시 문구로만 쓰고, 수량포함형은 세액 계산/열 구성에도 실제로 반영한다(IsVatExcluded 참고).
     public List<QuoteLineItem> Lines { get; set; } = new();
     public string FooterNote { get; set; } = "";       // "2. 기타" 비고 — 줄바꿈으로 구분, 최대 10줄까지 표시
     public DateTime IssueDate { get; set; } = DateTime.Today;
@@ -159,9 +167,15 @@ public class QuoteDoc
 
     public bool IsBasic => DocType == DocType.QuoteBasic;
 
+    /// <summary>
+    /// "VAT 별도" 문구인지 판별한다(기본형은 표시 문구로만 쓰이므로 실제 계산엔 영향 없음). 수량포함형만
+    /// 이 값에 따라 공급가/세액 분리 여부가 갈린다(TotalTax/GrandTotal, DocumentExporter.ExportQuote 참고).
+    /// </summary>
+    public bool IsVatExcluded => PriceBasis.Replace(" ", "").Contains("별도");
+
     public decimal TotalQty => NonEmpty.Sum(l => l.Qty);
     public decimal TotalAmount => NonEmpty.Sum(l => l.Amount);
-    public decimal TotalTax => Math.Round(TotalAmount * 0.1m, 0, MidpointRounding.AwayFromZero);
+    public decimal TotalTax => IsVatExcluded ? Math.Round(TotalAmount * 0.1m, 0, MidpointRounding.AwayFromZero) : 0m;
     public decimal GrandTotal => TotalAmount + TotalTax;
 
     private IEnumerable<QuoteLineItem> NonEmpty =>
