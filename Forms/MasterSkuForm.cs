@@ -55,6 +55,7 @@ public class MasterSkuForm : Form
         };
 
         var btnRefresh = new Button { Text = "새로고침", Size = new Size(100, 30) };
+        var btnAddNew = new Button { Text = "새 마스터SKU 추가", Size = new Size(130, 30) };
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
         var btnImport = new Button { Text = "엑셀 가져오기", Size = new Size(110, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
@@ -62,6 +63,7 @@ public class MasterSkuForm : Form
         var btnOverview = new Button { Text = "매입·납품 통합 조회", Size = new Size(140, 30) };
 
         btnRefresh.Click += OnRefreshClick;
+        btnAddNew.Click += OnAddNewMasterSkuClick;
         btnSave.Click += OnSaveClick;
         btnImport.Click += OnImportClick;
         btnExport.Click += OnExportClick;
@@ -74,6 +76,7 @@ public class MasterSkuForm : Form
         toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Padding = new Padding(0, 7, 2, 0) });
         toolStrip.Controls.Add(_searchBox);
         toolStrip.Controls.Add(btnRefresh);
+        toolStrip.Controls.Add(btnAddNew);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnImport);
         toolStrip.Controls.Add(btnExport);
@@ -280,6 +283,37 @@ public class MasterSkuForm : Form
     private void OnRefreshClick(object? sender, EventArgs e)
     {
         LoadData();
+    }
+
+    /// <summary>
+    /// 그리드 맨 아래 빈 행에 직접 타이핑해도 등록은 되지만(AllowUserToAddRows), 필수값을 빠뜨리기
+    /// 쉽고 화면을 스크롤해 빈 행을 찾아야 하는 불편이 있었다(사용자 요청 — 택배비처럼 실물이 없는
+    /// 명목상 SKU를 등록할 때 특히). NewMasterSkuDialog(거래처별 CSKU 관리의 "마스터SKU 지정/변경"
+    /// 에서 이미 쓰던 것과 동일)로 SKU/품명/원가/단위를 한 창에서 바로 받아 즉시 등록한다.
+    /// </summary>
+    private void OnAddNewMasterSkuClick(object? sender, EventArgs e)
+    {
+        using var dlg = new NewMasterSkuDialog();
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ResultSku == null) return;
+
+        _searchBox.Text = ""; // 검색어가 걸려 있으면 방금 등록한 항목이 안 보일 수 있으므로 해제
+        LoadData();
+        SelectRowBySku(dlg.ResultSku);
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"마스터SKU '{dlg.ResultSku}'을(를) 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void SelectRowBySku(string sku)
+    {
+        foreach (DataGridViewRow row in _itemsGrid.Rows)
+        {
+            if (row.DataBoundItem is not ItemModel item || item.Sku != sku) continue;
+            _itemsGrid.ClearSelection();
+            row.Selected = true;
+            _itemsGrid.CurrentCell = row.Cells[0];
+            _itemsGrid.FirstDisplayedScrollingRowIndex = row.Index;
+            break;
+        }
     }
 
     private void OnSaveClick(object? sender, EventArgs e)
