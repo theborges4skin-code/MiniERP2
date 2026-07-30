@@ -340,6 +340,21 @@ public class PartnerClosingRepository
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// CH 거래처의 비고를 저장한다. 아직 이 기간의 헤더가 없으면(대조만 하고 확정 전) 대조중
+    /// 상태로 빈 헤더를 먼저 만든다.
+    /// </summary>
+    public void SetReconcileNoteForParty(string period, string partyKey, string partyName, string note)
+    {
+        var header = GetHeader(period, partyKey);
+        if (header == null)
+        {
+            header = new PartnerClosing { Period = period, PartyKey = partyKey, PartyName = partyName, Status = "대조중" };
+            SaveHeader(header);
+        }
+        SetReconcileNote(header.Id, note);
+    }
+
     /// <summary>발행 완료 처리: DocHistoryId를 연결하고 상태를 발행완료로 바꾼다(§9).</summary>
     public void MarkPublished(long closingId, long docHistoryId)
     {
