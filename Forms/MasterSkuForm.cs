@@ -254,6 +254,12 @@ public class MasterSkuForm : Form
     private void ApplySearchFilter()
     {
         var keyword = _searchBox.Text.Trim();
+
+        // 데이터바인딩된 그리드에서 "현재 위치"(BindingManager.Position)에 있는 행을 숨기려 하면
+        // InvalidOperationException이 난다(WinForms 알려진 제약) — 숨기기 전에 현재 셀을 먼저
+        // 해제해 그 의존성을 끊어야 한다.
+        _itemsGrid.CurrentCell = null;
+
         foreach (DataGridViewRow row in _itemsGrid.Rows)
         {
             if (row.IsNewRow || string.IsNullOrEmpty(keyword)) { row.Visible = true; continue; }
