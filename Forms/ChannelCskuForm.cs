@@ -33,8 +33,15 @@ public class ChannelCskuForm : Form
     private Dictionary<string, decimal> _costPriceByMsku = new();
     private readonly HashSet<string> _dirtyCostMskus = [];
 
-    public ChannelCskuForm()
+    private readonly string? _initialChannelCode;
+
+    public ChannelCskuForm() : this(null) { }
+
+    /// <summary>거래처 마감보드의 수동 주문 추가 등, 이미 채널이 정해진 화면에서 "CSKU가 없으면
+    /// 바로 등록창 열기"로 진입할 때 그 채널을 미리 선택해둔다.</summary>
+    public ChannelCskuForm(string? initialChannelCode)
     {
+        _initialChannelCode = initialChannelCode;
         InitializeComponent();
         LoadChannelCombo();
     }
@@ -214,7 +221,10 @@ public class ChannelCskuForm : Form
     {
         var channels = _salesChannelRepository.GetAll().OrderBy(c => c.ChannelName).ToList();
         _channelCombo.DataSource = channels;
-        if (channels.Count > 0) _channelCombo.SelectedIndex = 0;
+
+        var preselect = _initialChannelCode != null ? channels.FirstOrDefault(c => c.ChannelCode == _initialChannelCode) : null;
+        if (preselect != null) _channelCombo.SelectedItem = preselect;
+        else if (channels.Count > 0) _channelCombo.SelectedIndex = 0;
         else LoadData();
     }
 
