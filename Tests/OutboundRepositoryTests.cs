@@ -432,4 +432,78 @@ public class OutboundRepositoryTests
 
         Assert.HasCount(0, results);
     }
+
+    [TestMethod]
+    public void UpdateProductName_ChangesOnlyThatColumn()
+    {
+        var repository = new OutboundRepository();
+        var conflicts = repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-20", TrackingNo = "T020", MskuCode = "SKU-1", Qty = 3, SupplyPrice = 5000m, ProductName = "" },
+        });
+        Assert.IsEmpty(conflicts);
+        var saved = repository.FindByOrderNos(["ORDER-20"]).Single();
+
+        repository.UpdateProductName(saved.Id, "SLES 18L 말통");
+
+        var reloaded = repository.FindByOrderNos(["ORDER-20"]).Single();
+        Assert.AreEqual("SLES 18L 말통", reloaded.ProductName);
+        Assert.AreEqual(3, reloaded.Qty); // 다른 열은 안 건드려야 한다
+        Assert.AreEqual(5000m, reloaded.SupplyPrice);
+    }
+
+    [TestMethod]
+    public void CorrectSupplyPrice_BypassesConfirmedLock()
+    {
+        // 거래처마감보드 §4.2 ② 소급 경로 — 정상 UpdateDetail은 출고확정 건의 SupplyPrice를 잠그지만
+        // (SaveOutbound_AlreadyShipped_LocksSupplyPrice 참고), 이 정정 경로는 의도적으로 뚫고 지나가야 한다.
+        var repository = new OutboundRepository();
+        repository.SaveOutbound(new[]
+        {
+            new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-21", TrackingNo = "T021", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 65000m },
+        });
+        var saved = repository.FindByOrderNos(["ORDER-21"]).Single();
+        Assert.AreEqual("출고확정", saved.Status);
+
+        repository.CorrectSupplyPrice(saved.Id, 59091m);
+
+        var reloaded = repository.FindByOrderNos(["ORDER-21"]).Single();
+        Assert.AreEqual(59091m, reloaded.SupplyPrice);
+    }
+
+    [TestMethod]
+    public void CorrectSupplyPriceForCskuFromDate_UpdatesOnlyMatchingChannelCskuAndDateRange()
+    {
+        var repository = new OutboundRepository();
+        var oldDate = DateTime.Now.AddDays(-10);
+        var newDate = DateTime.Now.AddDays(-2);
+
+        // 같은 CSKU, 기준일 이전 건(안 바뀌어야 함)
+        repository.SaveOutbound(new[] { new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-22", TrackingNo = "T022", MskuCode = "SLES18", CskuCode = "SLES18", Qty = 1, SupplyPrice = 60000m } });
+        // 같은 CSKU, 기준일 이후 건(바뀌어야 함)
+        repository.SaveOutbound(new[] { new OutboundDetail { ChannelCode = "CH-A", OrderNo = "ORDER-23", TrackingNo = "T023", MskuCode = "SLES18", CskuCode = "SLES18", Qty = 1, SupplyPrice = 60000m } });
+        // 다른 채널의 같은 CSKU(안 바뀌어야 함)
+        repository.SaveOutbound(new[] { new OutboundDetail { ChannelCode = "CH-B", OrderNo = "ORDER-24", TrackingNo = "T024", MskuCode = "SLES18", CskuCode = "SLES18", Qty = 1, SupplyPrice = 60000m } });
+
+        // 기준일 이전 건은 ConfirmedAt을 강제로 과거로 되돌려 조건 검증(SaveOutbound는 항상 지금 시각으로 확정한다).
+        var beforeRow = repository.FindByOrderNos(["ORDER-22"]).Single();
+        BackdateConfirmedAt(beforeRow.Id, oldDate);
+
+        var updatedCount = repository.CorrectSupplyPriceForCskuFromDate("CH-A", "SLES18", newDate.Date, 59091m);
+
+        Assert.AreEqual(1, updatedCount);
+        Assert.AreEqual(60000m, repository.FindByOrderNos(["ORDER-22"]).Single().SupplyPrice); // 기준일 이전 — 안 바뀜
+        Assert.AreEqual(59091m, repository.FindByOrderNos(["ORDER-23"]).Single().SupplyPrice); // 기준일 이후 — 바뀜
+        Assert.AreEqual(60000m, repository.FindByOrderNos(["ORDER-24"]).Single().SupplyPrice); // 다른 채널 — 안 바뀜
+    }
+
+    private static void BackdateConfirmedAt(long id, DateTime confirmedAt)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET ConfirmedAt = $confirmedAt WHERE Id = $id";
+        command.Parameters.AddWithValue("$confirmedAt", confirmedAt);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
 }

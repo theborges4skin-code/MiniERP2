@@ -63,10 +63,50 @@ public class OutboundHistoryForm : Form
         ("ConfirmedAt", "출고확정 시점", false),
     ];
 
-    public OutboundHistoryForm()
+    private readonly long? _focusDetailId;
+
+    public OutboundHistoryForm() : this(null) { }
+
+    /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §2)에서 "역으로 출고이력 추적"할 때 쓰는 생성자.
+    /// 지정한 채널·날짜 근방으로 조회 조건을 미리 채우고 자동으로 조회한 뒤, 그 라인을 선택해
+    /// 스크롤한다 — 마감보드의 라인 상세에는 없는 필드(운송장번호/수령인/상태 등)까지 여기서
+    /// 바로 이어서 확인·수정할 수 있게 하기 위함이다.
+    /// </summary>
+    public OutboundHistoryForm(long? focusDetailId, string? focusChannelCode = null, DateTime? focusDate = null)
     {
+        _focusDetailId = focusDetailId;
         InitializeComponent();
         FormClosing += OnFormClosing;
+
+        if (focusDetailId == null) return;
+
+        if (!string.IsNullOrEmpty(focusChannelCode))
+            _channelComboBox.SelectedValue = focusChannelCode;
+        if (focusDate != null)
+        {
+            _fromDatePicker.Value = focusDate.Value.AddDays(-14);
+            _toDatePicker.Value = focusDate.Value.AddDays(14);
+        }
+        Load += (s, e) =>
+        {
+            OnLoadClick(this, EventArgs.Empty);
+            SelectAndScrollToDetail(focusDetailId.Value);
+        };
+    }
+
+    private void SelectAndScrollToDetail(long id)
+    {
+        foreach (DataGridViewRow row in _historyGrid.Rows)
+        {
+            if (row.DataBoundItem is not OutboundDetail d || d.Id != id) continue;
+            _historyGrid.ClearSelection();
+            row.Selected = true;
+            _historyGrid.CurrentCell = row.Cells[0];
+            _historyGrid.FirstDisplayedScrollingRowIndex = row.Index;
+            _statusLabel.Text = $"거래처 마감보드에서 지정한 라인(Id={id})을 찾아 선택했습니다.";
+            break;
+        }
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)

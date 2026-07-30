@@ -21,6 +21,7 @@ public class PartnerClosingForm : Form
     private readonly DocPartyRepository _docPartyRepo = new();
     private readonly DocHistoryRepository _docHistoryRepo = new();
     private readonly OutboundRepository _outboundRepo = new();
+    private readonly ChannelSkuRepository _channelSkuRepo = new();
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
@@ -187,26 +188,28 @@ public class PartnerClosingForm : Form
             PersistenceKey = "PartnerClosingForm.LineGrid",
             AutoGenerateColumns = false,
             AllowUserToAddRows = false,
-            ReadOnly = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
             MultiSelect = true,
         };
         grid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "LineDateText", DataPropertyName = "LineDateText", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "LineDateText", DataPropertyName = "LineDateText", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 100, ReadOnly = true },
+            // 마감 대조 중 CSKU 미등록 등으로 품목명이 비어있는 경우가 있어(§1) 여기서 바로 고칠 수
+            // 있게 편집을 허용한다. 단가도 마찬가지 이유로 편집 허용(HandleUnitPriceEdit 참고).
             new DataGridViewTextBoxColumn { HeaderText = "품목", Name = "ItemName", DataPropertyName = "ItemName", Width = 150 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", DataPropertyName = "UnitPrice", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "Profit", DataPropertyName = "Profit", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+            new DataGridViewTextBoxColumn { HeaderText = "원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "Profit", DataPropertyName = "Profit", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
+        grid.CellEndEdit += OnLineGridCellEndEdit;
 
         var menu = new ContextMenuStrip();
         var reassignItem = new ToolStripMenuItem("귀속월 변경");
         reassignItem.Click += OnReassignPeriodClick;
         menu.Items.Add(reassignItem);
-        var openHistoryItem = new ToolStripMenuItem("출고이력 관리창에서 열기");
-        openHistoryItem.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
+        var openHistoryItem = new ToolStripMenuItem("이 라인 출고이력 관리창에서 열기(추적)");
+        openHistoryItem.Click += OnOpenLineInHistoryClick;
         menu.Items.Add(openHistoryItem);
         grid.ContextMenuStrip = menu;
 
@@ -603,6 +606,105 @@ public class PartnerClosingForm : Form
         _statusLabel.Text = $"{ids.Count}건의 귀속월을 {dlg.Value}(으)로 변경했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
+    /// <summary>
+    /// 라인 상세의 품목/단가 편집을 처리한다(§1). 품목은 바로 저장되고, 단가는 이번 건에만 적용할지
+    /// 이 날짜 이후 같은 CSKU 전체(+등록 단가)에 적용할지 물어본다. 스냅샷(확정 후)이나 원본 라인이
+    /// 없는 건(OutboundDetailId=null)은 편집 대상에서 제외한다.
+    /// </summary>
+    private void OnLineGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _lineGrid.Rows.Count) return;
+        if (_lineGrid.Rows[e.RowIndex].DataBoundItem is not LineRow line) return;
+        if (line.Source.OutboundDetailId is not { } detailId)
+        {
+            MessageBox.Show("원본 발주/출고 라인이 없는 항목(확정 스냅샷 등)은 여기서 수정할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RefreshBoard();
+            return;
+        }
+
+        var columnName = _lineGrid.Columns[e.ColumnIndex].Name;
+        if (columnName == "ItemName")
+        {
+            _outboundRepo.UpdateProductName(detailId, line.ItemName);
+            _statusLabel.Text = $"품목명을 '{line.ItemName}'(으)로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        else if (columnName == "UnitPrice")
+        {
+            HandleUnitPriceEdit(line, detailId);
+        }
+    }
+
+    private void HandleUnitPriceEdit(LineRow line, long detailId)
+    {
+        var partyRow = _partyGrid.CurrentRow?.DataBoundItem as PartyRow;
+        if (partyRow == null || partyRow.IsManual || string.IsNullOrEmpty(line.CskuCode))
+        {
+            RefreshBoard();
+            return;
+        }
+        var channelCode = partyRow.PartyKey["CH:".Length..];
+        var newPrice = line.UnitPrice;
+        var lineDate = (line.Source.LineDate ?? DateTime.Today).Date;
+
+        var choice = MessageBox.Show(
+            $"단가를 {newPrice:N0}원으로 변경합니다.\n\n" +
+            "[예] 이 건에만 적용\n" +
+            $"[아니오] {lineDate:yyyy-MM-dd} 이후 이 CSKU({line.CskuCode}) 전체에 적용(등록 단가도 함께 갱신)\n" +
+            "[취소] 변경 취소",
+            "단가 변경 범위 선택", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+
+        if (choice == DialogResult.Cancel)
+        {
+            RefreshBoard();
+            SelectPartyByKey(partyRow.PartyKey);
+            return;
+        }
+
+        if (choice == DialogResult.Yes)
+        {
+            _outboundRepo.CorrectSupplyPrice(detailId, newPrice);
+            _statusLabel.Text = $"이 건의 단가를 {newPrice:N0}원으로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+        else
+        {
+            var updatedCount = _outboundRepo.CorrectSupplyPriceForCskuFromDate(channelCode, line.CskuCode, lineDate, newPrice);
+
+            var registered = _channelSkuRepo.GetByChannelAndCskuCode(channelCode, line.CskuCode);
+            var registeredNote = "";
+            if (registered != null)
+            {
+                registered.SupplyPrice = newPrice;
+                _channelSkuRepo.Upsert(registered);
+                registeredNote = " + 등록 단가";
+            }
+
+            _statusLabel.Text = $"{lineDate:yyyy-MM-dd} 이후 {line.CskuCode} {updatedCount}건{registeredNote}을 {newPrice:N0}원으로 일괄 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+        }
+
+        RefreshBoard();
+        SelectPartyByKey(partyRow.PartyKey);
+    }
+
+    /// <summary>
+    /// 이 라인을 발주/출고 이력 관리창에서 바로 찾아 연다("역으로 추적" — §2). 마감보드 라인
+    /// 상세에는 없는 필드(운송장번호·수령인·상태 등)까지 이어서 확인·수정할 수 있다.
+    /// </summary>
+    private void OnOpenLineInHistoryClick(object? sender, EventArgs e)
+    {
+        var line = _lineGrid.CurrentRow?.DataBoundItem as LineRow;
+        var partyRow = _partyGrid.CurrentRow?.DataBoundItem as PartyRow;
+        if (line?.Source.OutboundDetailId == null || partyRow == null || partyRow.IsManual)
+        {
+            FormManager.Show<OutboundHistoryForm>();
+            return;
+        }
+
+        var channelCode = partyRow.PartyKey["CH:".Length..];
+        var form = new OutboundHistoryForm(line.Source.OutboundDetailId, channelCode, line.Source.LineDate);
+        FormManager.ApplyBoundsTracking(form);
+        form.Show();
+    }
+
     private sealed class PartyRow(PartnerClosingSummary source, bool isFavorite)
     {
         public PartnerClosingSummary Source { get; } = source;
@@ -635,9 +737,9 @@ public class PartnerClosingForm : Form
         public PartnerClosingLine Source { get; } = source;
         public string LineDateText { get; } = source.LineDate?.ToString("yyyy-MM-dd") ?? "";
         public string CskuCode { get; } = source.CskuCode;
-        public string ItemName { get; } = source.ItemName;
+        public string ItemName { get; set; } = source.ItemName;
         public decimal Qty { get; } = source.Qty;
-        public decimal UnitPrice { get; } = source.UnitPrice;
+        public decimal UnitPrice { get; set; } = source.UnitPrice;
         public decimal CostPrice { get; } = source.CostPrice;
         public decimal Profit { get; } = source.Profit;
     }

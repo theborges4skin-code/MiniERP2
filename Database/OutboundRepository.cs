@@ -384,6 +384,56 @@ public class OutboundRepository
         return (long)command.ExecuteScalar()!;
     }
 
+    /// <summary>품목명만 단독으로 고친다(거래처마감보드 §1 — CSKU 미등록 등으로 품목명이 비어있는 경우 정정용).</summary>
+    public void UpdateProductName(long id, string productName)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET ProductName = $name WHERE Id = $id";
+        command.Parameters.AddWithValue("$name", productName);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 출고확정 건의 납품가를 의도적으로 정정한다(거래처마감보드_개발기획서.md §4.2 ② 소급 경로).
+    /// UpdateDetail의 확정 잠금(P3 — 재저장 시 조용히 덮이는 것을 막는 보호장치)과 달리, 이 메서드는
+    /// 마감 대조 중 발견한 오류를 사용자가 명시적으로 바로잡는 조작이라 잠금을 거치지 않는다.
+    /// </summary>
+    public void CorrectSupplyPrice(long id, decimal newSupplyPrice)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET SupplyPrice = $price WHERE Id = $id";
+        command.Parameters.AddWithValue("$price", newSupplyPrice);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 같은 채널의 같은 CSKU(구버전 데이터는 CskuCode가 비어있고 MskuCode에만 값이 있을 수 있어
+    /// 그 경우도 함께 봄)를 가진 건 중, 지정한 날짜(포함) 이후 출고확정된 모든 라인의 납품가를
+    /// 한꺼번에 정정한다(§4.2 ② 소급 경로 — 여러 건에 걸쳐 잘못 등록된 단가를 한 번에 바로잡을 때).
+    /// </summary>
+    public int CorrectSupplyPriceForCskuFromDate(string channelCode, string cskuCode, DateTime fromDateInclusive, decimal newSupplyPrice)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE OutboundDetailTable
+            SET SupplyPrice = $price
+            WHERE ChannelCode = $channelCode
+              AND (CskuCode = $csku OR (CskuCode = '' AND MskuCode = $csku))
+              AND ConfirmedAt IS NOT NULL
+              AND substr(ConfirmedAt, 1, 10) >= $fromDate
+            """;
+        command.Parameters.AddWithValue("$price", newSupplyPrice);
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.Parameters.AddWithValue("$csku", cskuCode);
+        command.Parameters.AddWithValue("$fromDate", fromDateInclusive.ToString("yyyy-MM-dd"));
+        return command.ExecuteNonQuery();
+    }
+
     /// <summary>여러 ShipmentGroupKey에 속한 모든 라인을 기간·채널 무관하게 조회합니다(§6 운임 가중배부 — 한 발송이 여러 귀속월에 걸쳐 있는 경우의 전체 중량 기준을 구하기 위함).</summary>
     public List<OutboundDetail> GetByShipmentGroupKeys(IEnumerable<string> shipmentGroupKeys)
     {
