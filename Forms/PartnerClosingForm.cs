@@ -90,6 +90,12 @@ public class PartnerClosingForm : Form
         var btnCancelClosing = new Button { Text = "확정취소", Size = new Size(80, 28) };
         btnCancelClosing.Click += OnCancelClosingClick;
 
+        var btnPreviewStatement = new Button { Text = "명세표 미리보기", Size = new Size(100, 28) };
+        btnPreviewStatement.Click += (s, e) => OnPreviewClick(isLedger: false);
+
+        var btnPreviewLedger = new Button { Text = "매출장 미리보기", Size = new Size(100, 28) };
+        btnPreviewLedger.Click += (s, e) => OnPreviewClick(isLedger: true);
+
         var btnPublishStatement = new Button { Text = "명세표 발행", Size = new Size(90, 28) };
         btnPublishStatement.Click += (s, e) => OnPublishClick(isLedger: false);
 
@@ -107,6 +113,8 @@ public class PartnerClosingForm : Form
         toolbar.Controls.Add(btnAddManualOrder);
         toolbar.Controls.Add(btnConfirm);
         toolbar.Controls.Add(btnCancelClosing);
+        toolbar.Controls.Add(btnPreviewStatement);
+        toolbar.Controls.Add(btnPreviewLedger);
         toolbar.Controls.Add(btnPublishStatement);
         toolbar.Controls.Add(btnPublishLedger);
         toolbar.Controls.Add(_statusSummaryLabel);
@@ -442,6 +450,58 @@ public class PartnerClosingForm : Form
 
         RefreshBoard();
         _statusLabel.Text = $"{selected.Count}건 확정취소 완료. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 명세표/매출장을 파일로 저장하지 않고 새 창(비모달)으로 바로 확인한다(버그수정 §1 — 매번
+    /// 파일로 받아 엑셀을 열어 확인하고 다시 고치는 왕복이 번거롭다는 요청). 선택 1건 기준이며,
+    /// 마감확정 전(대조중/미확인)이어도 라이브 집계로 미리 계산 결과를 볼 수 있다.
+    /// </summary>
+    private void OnPreviewClick(bool isLedger)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1)
+        {
+            MessageBox.Show("미리보기할 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+
+        var docType = MiniERP2.Models.DocType.TradeStatementVatExcl;
+        var ignoreDateForLedger = false;
+        if (!isLedger)
+        {
+            var vatChoice = MessageBox.Show("VAT 별도로 미리보시겠습니까?\n(아니오 = VAT 포함, 취소 = 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (vatChoice == DialogResult.Cancel) return;
+            docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
+        }
+        else
+        {
+            var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (groupChoice == DialogResult.Cancel) return;
+            ignoreDateForLedger = groupChoice == DialogResult.No;
+        }
+
+        var supplier = _docPartyRepo.GetDefaultSupplier();
+        if (supplier == null)
+        {
+            MessageBox.Show("공급자(기본 거래처) 프로필이 설정되어 있지 않습니다. 문서관리 화면에서 먼저 등록하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        var buyer = row.IsManual
+            ? new DocParty { CompanyName = row.PartyName }
+            : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
+        if (buyer == null)
+        {
+            MessageBox.Show("공급받는자 프로필이 이 채널에 연결되어 있지 않습니다(거래처 관리에서 채널 연결 필요). 미리보기는 공급받는자 정보가 비어있는 채로 표시됩니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            buyer = new DocParty { CompanyName = row.PartyName };
+        }
+
+        var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
+        var previewForm = isLedger
+            ? DocumentPreviewForm.ForSalesLedger(PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger))
+            : DocumentPreviewForm.ForTradeStatement(PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer));
+        previewForm.Show(this);
     }
 
     /// <summary>

@@ -19,12 +19,19 @@ public class ChannelCskuForm : Form
 {
     private readonly ChannelSkuRepository _cskuRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly ItemRepository _itemRepository = new();
     private readonly SettingsService _settingsService = new();
 
     private ComboBox _channelCombo = new();
     private ExcelLikeDataGridView _cskuGrid = new();
     private BindingList<ChannelSkuModel> _cskus = new();
     private Label _statusLabel = new();
+
+    // "제조원가"는 ChannelSkuModel에 없는 필드(마스터SKU=ItemTable 소속 값)라 그리드 열에는 직접
+    // 바인딩할 수 없다 — Msku 기준으로 옆에서 캐시해뒀다가 CellFormatting/저장 시 반영한다
+    // (OutboundHistoryForm의 FreightCost 열과 같은 관례).
+    private Dictionary<string, decimal> _costPriceByMsku = new();
+    private readonly HashSet<string> _dirtyCostMskus = [];
 
     public ChannelCskuForm()
     {
@@ -73,6 +80,7 @@ public class ChannelCskuForm : Form
         _cskuGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 150 },
             new DataGridViewTextBoxColumn { Name = "Msku", HeaderText = "마스터SKU", DataPropertyName = "Msku", Width = 130 },
+            new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "제조원가", DataPropertyName = string.Empty, Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", Width = 180 },
             new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { Name = "Unit", HeaderText = "단위", DataPropertyName = "Unit", Width = 60 },
@@ -84,6 +92,7 @@ public class ChannelCskuForm : Form
         // 마스터SKU 칸 편집이 끝났을 때 CSKU 코드가 비어있으면 "채널명 앞 3글자_마스터SKU" 기본값을
         // 제안한다(CSkuForm의 ChannelCode 트리거와 같은 관례 — 여기선 채널이 이미 고정이라 Msku가 트리거).
         _cskuGrid.CellEndEdit += OnCskuGridCellEndEdit;
+        _cskuGrid.CellFormatting += OnCskuGridCellFormatting;
 
         SetupContextMenu();
         _cskuGrid.UserDeletingRow += OnUserDeletingRow;
@@ -100,9 +109,35 @@ public class ChannelCskuForm : Form
         var historyMenuItem = new ToolStripMenuItem("변경 이력 보기(&H)");
         historyMenuItem.Click += OnHistoryMenuItemClick;
 
+        // TempSkuGenerator로 임시 등록된(예: "TEMP004") 마스터SKU를 실제 카탈로그 SKU로 정식
+        // 교체하기 위한 진입점(§3 — "정식 등록").
+        var assignMasterSkuItem = new ToolStripMenuItem("마스터SKU 지정/변경(정식 등록)...");
+        assignMasterSkuItem.Click += OnAssignMasterSkuClick;
+
         _cskuGrid.ContextMenuStrip!.Items.Add(new ToolStripSeparator());
         _cskuGrid.ContextMenuStrip.Items.Add(historyMenuItem);
-        _cskuGrid.ContextMenuStrip.Opening += (s, e) => historyMenuItem.Enabled = _cskuGrid.SelectedRows.Count == 1;
+        _cskuGrid.ContextMenuStrip.Items.Add(assignMasterSkuItem);
+        _cskuGrid.ContextMenuStrip.Opening += (s, e) =>
+        {
+            historyMenuItem.Enabled = _cskuGrid.SelectedRows.Count == 1;
+            assignMasterSkuItem.Enabled = _cskuGrid.SelectedRows.Count == 1;
+        };
+    }
+
+    private void OnAssignMasterSkuClick(object? sender, EventArgs e)
+    {
+        if (_cskuGrid.SelectedRows.Count != 1) return;
+        var selectedRow = _cskuGrid.SelectedRows[0];
+        if (selectedRow.IsNewRow) return;
+        if (selectedRow.DataBoundItem is not ChannelSkuModel csku) return;
+
+        using var dlg = new AssignMasterSkuDialog(csku.Msku, csku.InvoiceDisplayName);
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedSku == null) return;
+
+        csku.Msku = dlg.SelectedSku;
+        _cskuGrid.InvalidateRow(selectedRow.Index);
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"마스터SKU를 '{dlg.SelectedSku}'(으)로 지정했습니다. [저장]을 눌러야 반영됩니다.";
     }
 
     private void OnHistoryMenuItemClick(object? sender, EventArgs e)
@@ -144,15 +179,44 @@ public class ChannelCskuForm : Form
 
         _cskus = new BindingList<ChannelSkuModel>(_cskuRepository.GetAllByChannel(channel.ChannelCode));
         _cskuGrid.DataSource = _cskus;
+        _dirtyCostMskus.Clear();
+        _costPriceByMsku = _cskus
+            .Select(c => c.Msku)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct()
+            .ToDictionary(m => m, m => _itemRepository.GetBySku(m)?.CostPrice ?? 0m);
         _statusLabel.Text = $"{channel.ChannelName} — CSKU {_cskus.Count}건";
         _statusLabel.ForeColor = Color.DarkGreen;
     }
 
-    private void OnCskuGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    private void OnCskuGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
-        if (_cskuGrid.Columns[e.ColumnIndex].Name != "Msku") return;
+        if (_cskuGrid.Columns[e.ColumnIndex].Name != "CostPrice") return;
         if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
         if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+
+        e.Value = _costPriceByMsku.TryGetValue(csku.Msku, out var cost) ? cost : 0m;
+        e.FormattingApplied = true;
+    }
+
+    private void OnCskuGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
+        if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+        var columnName = _cskuGrid.Columns[e.ColumnIndex].Name;
+
+        // "제조원가"는 ChannelSkuModel이 아니라 마스터SKU(ItemTable) 소속 값이라 저장 시점에 따로
+        // 반영한다(OnSaveClick 참고) — 여기서는 캐시만 갱신.
+        if (columnName == "CostPrice")
+        {
+            if (string.IsNullOrWhiteSpace(csku.Msku)) return;
+            var raw = _cskuGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
+            _costPriceByMsku[csku.Msku] = decimal.TryParse(raw, out var parsed) ? parsed : 0m;
+            _dirtyCostMskus.Add(csku.Msku);
+            return;
+        }
+
+        if (columnName != "Msku") return;
         if (!string.IsNullOrWhiteSpace(csku.CskuCode) || string.IsNullOrWhiteSpace(csku.Msku)) return;
 
         var channel = SelectedChannel;
@@ -183,9 +247,27 @@ public class ChannelCskuForm : Form
 
                 _cskuRepository.Upsert(csku);
             }
+
+            // 제조원가는 마스터SKU(ItemTable) 소속 값이라 CSKU Upsert와 별도로 반영한다. 아직 정식
+            // 등록 안 된 임시 마스터SKU(예: TEMP004가 ItemTable에 없는 경우)는 저장할 곳이 없으므로
+            // 건너뛰고 안내한다 — 먼저 [마스터SKU 지정/변경(정식 등록)]으로 실제 SKU에 연결해야 한다.
+            var unregisteredMskus = new List<string>();
+            foreach (var msku in _dirtyCostMskus)
+            {
+                var existing = _itemRepository.GetBySku(msku);
+                if (existing == null) { unregisteredMskus.Add(msku); continue; }
+                existing.CostPrice = _costPriceByMsku[msku];
+                _itemRepository.Upsert(existing);
+            }
+
             LoadData();
             _statusLabel.ForeColor = Color.DarkGreen;
             _statusLabel.Text = $"성공적으로 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+            if (unregisteredMskus.Count > 0)
+            {
+                _statusLabel.ForeColor = Color.DarkOrange;
+                _statusLabel.Text += $" (제조원가 미반영: {string.Join(", ", unregisteredMskus)} — 마스터SKU 미등록, [마스터SKU 지정/변경]으로 먼저 연결하세요)";
+            }
         }
         catch (Exception ex)
         {

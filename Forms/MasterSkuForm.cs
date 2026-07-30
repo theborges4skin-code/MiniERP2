@@ -21,6 +21,7 @@ public class MasterSkuForm : Form
     private BindingList<ItemModel> _items = new();
     private Label _statusLabel = new();
     private Dictionary<string, string> _cskuSummaryCache = new();
+    private TextBox _searchBox = new();
 
     public MasterSkuForm()
     {
@@ -67,6 +68,11 @@ public class MasterSkuForm : Form
         btnViewCsku.Click += (s, e) => OpenCskuFormForSelectedRow();
         btnOverview.Click += (s, e) => OpenOverviewFormForSelectedRow();
 
+        _searchBox = new TextBox { Width = 160, PlaceholderText = "SKU/상품명 검색" };
+        _searchBox.TextChanged += (s, e) => ApplySearchFilter();
+
+        toolStrip.Controls.Add(new Label { Text = "검색:", AutoSize = true, Padding = new Padding(0, 7, 2, 0) });
+        toolStrip.Controls.Add(_searchBox);
         toolStrip.Controls.Add(btnRefresh);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnImport);
@@ -236,6 +242,25 @@ public class MasterSkuForm : Form
                 g => g.Key,
                 g => $"{g.Count()}건 ({string.Join(", ", g.Select(c => c.ChannelCode).Distinct())})",
                 StringComparer.OrdinalIgnoreCase);
+
+        ApplySearchFilter();
+    }
+
+    /// <summary>
+    /// SKU/상품명 부분일치로 행을 숨긴다(§2 — 목록이 길어져 원하는 SKU를 찾기 힘들다는 요청).
+    /// 새 BindingList로 바꿔치기하지 않고 Row.Visible만 토글하는 이유: AllowUserToAddRows로 추가한
+    /// 새 행이나 미저장 편집이 필터링 중에 별도 리스트로 갈라져 저장 시 누락되는 걸 막기 위함이다.
+    /// </summary>
+    private void ApplySearchFilter()
+    {
+        var keyword = _searchBox.Text.Trim();
+        foreach (DataGridViewRow row in _itemsGrid.Rows)
+        {
+            if (row.IsNewRow || string.IsNullOrEmpty(keyword)) { row.Visible = true; continue; }
+            if (row.DataBoundItem is not ItemModel item) { row.Visible = true; continue; }
+            row.Visible = item.Sku.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                || item.ItemName.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private void OnItemsGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
