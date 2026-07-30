@@ -139,6 +139,59 @@ public class DbSchemaMigrationTests
     }
 
     /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §5.4) 도입 전 스키마(ClosingPeriod/ChannelCode/
+    /// Period 컬럼 없음)의 OutboundDetailTable·DocHistoryTable을 열었을 때, 기존 데이터를 잃지 않고
+    /// 신규 컬럼이 기본값('')으로 보강되는지 검증한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_OnLegacyOutboundAndDocHistoryTables_AddsPartnerClosingColumns()
+    {
+        using (var legacyConnection = new SqliteConnection($"Data Source={PathProvider.DatabaseFilePath}"))
+        {
+            legacyConnection.Open();
+            using var command = legacyConnection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE OutboundDetailTable (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ChannelCode TEXT NOT NULL DEFAULT '',
+                    OrderNo TEXT NOT NULL,
+                    TrackingNo TEXT NOT NULL,
+                    MskuCode TEXT NOT NULL,
+                    Qty INTEGER NOT NULL,
+                    SupplyPrice REAL NOT NULL,
+                    CreatedAt TEXT NOT NULL DEFAULT '',
+                    Status TEXT NOT NULL DEFAULT '발주확정'
+                );
+                INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status)
+                VALUES ('CH01', 'ORDER-LEGACY-1', '', 'SKU-1', 1, 1000, '2024-01-01', '발주확정');
+
+                CREATE TABLE DocHistoryTable (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    DocType TEXT NOT NULL DEFAULT '',
+                    IssueDate TEXT NOT NULL DEFAULT '',
+                    BuyerName TEXT NOT NULL DEFAULT '',
+                    TotalAmount REAL NOT NULL DEFAULT 0,
+                    FilePath TEXT NOT NULL DEFAULT '',
+                    CreatedAt TEXT NOT NULL DEFAULT ''
+                );
+                INSERT INTO DocHistoryTable (DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt)
+                VALUES ('TradeStatementVatExcl', '2024-01-01', '레거시거래처', 10000, 'C:\\legacy.xlsx', '2024-01-01 00:00:00');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var outboundRepo = new OutboundRepository();
+        var outboundResults = outboundRepo.GetHistory(null, new DateTime(2023, 1, 1), DateTime.Now);
+        Assert.AreEqual("", outboundResults.Single(r => r.OrderNo == "ORDER-LEGACY-1").ClosingPeriod);
+
+        var docHistoryRepo = new DocHistoryRepository();
+        var docResults = docHistoryRepo.Query(new DateTime(2023, 1, 1), DateTime.Now);
+        var legacyDoc = docResults.Single(d => d.BuyerName == "레거시거래처");
+        Assert.AreEqual("", legacyDoc.ChannelCode);
+        Assert.AreEqual("", legacyDoc.Period);
+    }
+
+    /// <summary>
     /// B2B 견적관리(§2.1) 도입 전 스키마(IsPurchase/IsSales 컬럼 없음)의 SalesChannelTable을 열었을 때
     /// 기존 채널 데이터를 잃지 않고, 신규 컬럼이 기본값(IsSales=1/IsPurchase=0)으로 보강되는지 검증한다.
     /// </summary>

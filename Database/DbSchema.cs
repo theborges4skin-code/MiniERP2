@@ -358,6 +358,55 @@ public static class DbSchema
                 CreatedAt TEXT NOT NULL DEFAULT ''
             );
 
+            -- 거래처 마감보드(거래처마감보드_개발기획서.md §5.1): 거래처 자체(기간과 무관)를 나타내는
+            -- 상시 마스터. 즐겨찾기(고정 노출)·수동 거래처 등록의 기준이 된다. SalesChannelTable.
+            -- IsFavorite(OFS 채널 선택용)와는 목적이 다른 별개의 즐겨찾기 축이라 재사용하지 않는다.
+            CREATE TABLE IF NOT EXISTS PartnerMasterTable (
+                PartyKey TEXT PRIMARY KEY,
+                PartyName TEXT NOT NULL DEFAULT '',
+                IsManual INTEGER NOT NULL DEFAULT 0,
+                IsFavorite INTEGER NOT NULL DEFAULT 0,
+                IsActive INTEGER NOT NULL DEFAULT 1
+            );
+
+            -- 거래처×월 마감 헤더(§5.2). 라인 스냅샷은 PartnerClosingLineTable(§5.3)에 별도 보관해
+            -- 확정 이후 원본 OutboundDetailTable 라인이 편집·삭제돼도 발행된 명세표와 어긋나지 않는다.
+            CREATE TABLE IF NOT EXISTS PartnerClosingTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period TEXT NOT NULL,
+                PartyKey TEXT NOT NULL,
+                PartyName TEXT NOT NULL DEFAULT '',
+                IsManual INTEGER NOT NULL DEFAULT 0,
+                Status TEXT NOT NULL DEFAULT '미확인',
+                TotalQty REAL NOT NULL DEFAULT 0,
+                TotalSupply REAL NOT NULL DEFAULT 0,
+                TotalCost REAL NOT NULL DEFAULT 0,
+                TotalProfit REAL NOT NULL DEFAULT 0,
+                FreightAllocated REAL NOT NULL DEFAULT 0,
+                ReconcileNote TEXT NOT NULL DEFAULT '',
+                ConfirmedAt TEXT,
+                DocHistoryId INTEGER
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_PartnerClosing_Period_PartyKey ON PartnerClosingTable (Period, PartyKey);
+
+            CREATE TABLE IF NOT EXISTS PartnerClosingLineTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClosingId INTEGER NOT NULL,
+                OutboundDetailId INTEGER,
+                LineDate TEXT NOT NULL DEFAULT '',
+                CskuCode TEXT NOT NULL DEFAULT '',
+                MasterSku TEXT NOT NULL DEFAULT '',
+                ItemName TEXT NOT NULL DEFAULT '',
+                Spec TEXT NOT NULL DEFAULT '',
+                Qty REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                CostPrice REAL NOT NULL DEFAULT 0,
+                Profit REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_PartnerClosingLine_ClosingId ON PartnerClosingLineTable (ClosingId);
+
             CREATE TABLE IF NOT EXISTS FboCskuMaster (
                 Csku TEXT PRIMARY KEY,
                 FboItemCode TEXT NOT NULL DEFAULT '',
@@ -494,6 +543,61 @@ public static class DbSchema
             CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Quote_Row ON PriceQuoteLineTable (QuoteId, RowNo);
             CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Csku ON PriceQuoteLineTable (CskuCode);
             CREATE INDEX IF NOT EXISTS IX_PriceQuoteLine_Msku ON PriceQuoteLineTable (Msku);
+
+            -- ⚠ 임시(실험용) — 문서이력_조회축_갭재검토_A.md rev.2. 기존 PriceQuoteTable/DocHistoryTable/
+            -- ChannelSkuPriceHistory 등 실제 서비스 테이블과 완전히 독립적으로, 견적/거래명세표/
+            -- 가격조정 3종 문서의 라인 이력을 채널×CSKU×기간으로 통합 조회하는 기능을 먼저
+            -- 단독으로 개발·검증하기 위한 표(tidy-long, 문서유형이 달라도 한 행 = 한 품목줄로
+            -- 정규화). 검증이 끝나면 실제 문서관리 기능에 편입하거나 이 표 자체를 폐기한다.
+            CREATE TABLE IF NOT EXISTS DocLineHistoryTable (
+                Id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                DocGroupKey   TEXT NOT NULL DEFAULT '',   -- 같은 문서(발행 1건)에 속한 줄을 묶는 키
+                DocNo         TEXT NOT NULL DEFAULT '',   -- 문서번호/식별자(있으면)
+                DocType       TEXT NOT NULL DEFAULT '',   -- Quote / Statement / PriceAdjustment
+                ChannelCode   TEXT NOT NULL DEFAULT '',
+                ChannelName   TEXT NOT NULL DEFAULT '',   -- 표시용 스냅샷(조인 없이 바로 보여주기 위함)
+                CskuCode      TEXT NOT NULL DEFAULT '',   -- '' = 미매핑(자유품목) 버킷
+                ItemNameSnap  TEXT NOT NULL DEFAULT '',
+                Qty           REAL NOT NULL DEFAULT 0,
+                UnitPrice     REAL NOT NULL DEFAULT 0,
+                SupplyAmount  REAL NOT NULL DEFAULT 0,
+                Tax           REAL NOT NULL DEFAULT 0,
+                Total         REAL NOT NULL DEFAULT 0,
+                IssueDate     TEXT NOT NULL DEFAULT '',   -- 귀속일(견적=발행일/명세=출고확정일/가격조정=적용일)
+                YearMonth     TEXT NOT NULL DEFAULT '',   -- 'yyyy-MM' 파생 저장(조회/집계용)
+                Quarter       TEXT NOT NULL DEFAULT '',   -- 'yyyy-Q1'~'yyyy-Q4' 파생 저장
+                SourceRef     TEXT NOT NULL DEFAULT '',   -- 원본 문서 참조(파일경로 등 느슨한 텍스트 링크)
+                Note          TEXT NOT NULL DEFAULT '',
+                CreatedAt     TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_DocLineHistory_Channel_Csku ON DocLineHistoryTable (ChannelCode, CskuCode);
+            CREATE INDEX IF NOT EXISTS IX_DocLineHistory_YearMonth ON DocLineHistoryTable (YearMonth);
+            CREATE INDEX IF NOT EXISTS IX_DocLineHistory_Quarter ON DocLineHistoryTable (Quarter);
+            CREATE INDEX IF NOT EXISTS IX_DocLineHistory_DocGroup ON DocLineHistoryTable (DocGroupKey);
+
+            -- 배송지주소록_개발기획서_확정본.md: 채널 종속 없는 범용 배송지 주소록(발주지 주소 원장).
+            -- SalesChannelTable/FboChannelConfig/DocPartyTable과는 완전히 별개이며(§1 확정), OFS의
+            -- "배송지 불러오기"에서만 골라 쓴다.
+            CREATE TABLE IF NOT EXISTS AddressBookTable (
+                AddressId    INTEGER PRIMARY KEY AUTOINCREMENT,
+                Label        TEXT NOT NULL DEFAULT '',
+                ReceiverName TEXT NOT NULL DEFAULT '',
+                Phone        TEXT NOT NULL DEFAULT '',
+                Address      TEXT NOT NULL DEFAULT '',
+                Memo         TEXT NOT NULL DEFAULT '',
+                IsActive     INTEGER NOT NULL DEFAULT 1,
+                DisplayOrder INTEGER NOT NULL DEFAULT 0,
+                CreatedAt    TEXT NOT NULL DEFAULT ''
+            );
+
+            -- 주소 ↔ 채널 태그(다대다, 선택적). ChannelCode는 참조만 하고 FK를 강제하지 않는다
+            -- (채널이 삭제돼도 주소 원장은 보존 — DocPartyTable.ChannelCode와 같은 느슨한 참조 관례).
+            CREATE TABLE IF NOT EXISTS AddressChannelTagTable (
+                AddressId   INTEGER NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                PRIMARY KEY (AddressId, ChannelCode)
+            );
             """;
         command.ExecuteNonQuery();
 
@@ -581,6 +685,13 @@ public static class DbSchema
         // 열기"를 누를 때 못 찾는 문제가 있었다(사용자 신고) — 생성 시점의 엑셀 바이트를 DB에도
         // 함께 백업해, 원본 경로가 없어져도 이력에서 그대로 복원해 열 수 있게 한다.
         EnsureColumn(connection, "DocHistoryTable", "FileBytes", "BLOB");
+
+        // 거래처 마감보드(거래처마감보드_개발기획서.md §4, §5.4): 귀속월 수동 고정값. 빈 값이면
+        // 보드가 ConfirmedAt의 연월로 자동 판정한다.
+        EnsureColumn(connection, "OutboundDetailTable", "ClosingPeriod", "TEXT NOT NULL DEFAULT ''");
+        // 보드에서 발행 실적을 역참조하기 위한 채널·귀속월 기록(문서 발행 시점에 채워짐).
+        EnsureColumn(connection, "DocHistoryTable", "ChannelCode", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "DocHistoryTable", "Period", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

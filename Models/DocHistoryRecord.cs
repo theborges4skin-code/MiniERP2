@@ -10,6 +10,12 @@ public class DocHistoryRecord
     public string FilePath { get; set; } = "";
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>거래처 마감보드(§9)에서 발행 실적을 역참조하기 위한 채널 코드. 빈 문자열이면 보드 밖에서 발행된 문서.</summary>
+    public string ChannelCode { get; set; } = "";
+
+    /// <summary>거래처 마감보드 귀속월(YYYY-MM). 빈 문자열이면 보드 밖에서 발행된 문서.</summary>
+    public string Period { get; set; } = "";
+
     /// <summary>
     /// 발행 시점에 저장한 엑셀 파일의 원본 바이트(내장DB 백업). FilePath의 원본 파일이 사용자에
     /// 의해 이동/삭제되어도 이 값으로 복원해 열 수 있다. 목록 조회(DocHistoryRepository.Query)는

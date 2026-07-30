@@ -5,13 +5,14 @@ namespace MiniERP2.Database;
 
 public class DocHistoryRepository
 {
-    public void Add(DocHistoryRecord r)
+    public long Add(DocHistoryRecord r)
     {
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO DocHistoryTable (DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt, FileBytes)
-            VALUES ($docType, $issueDate, $buyerName, $totalAmount, $filePath, $createdAt, $fileBytes)
+            INSERT INTO DocHistoryTable (DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt, FileBytes, ChannelCode, Period)
+            VALUES ($docType, $issueDate, $buyerName, $totalAmount, $filePath, $createdAt, $fileBytes, $channelCode, $period);
+            SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$docType",     r.DocType);
         cmd.Parameters.AddWithValue("$issueDate",   r.IssueDate.ToString("yyyy-MM-dd"));
@@ -20,7 +21,9 @@ public class DocHistoryRepository
         cmd.Parameters.AddWithValue("$filePath",    r.FilePath);
         cmd.Parameters.AddWithValue("$createdAt",   r.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("$fileBytes",   (object?)r.FileBytes ?? DBNull.Value);
-        cmd.ExecuteNonQuery();
+        cmd.Parameters.AddWithValue("$channelCode", r.ChannelCode);
+        cmd.Parameters.AddWithValue("$period",      r.Period);
+        return (long)cmd.ExecuteScalar()!;
     }
 
     /// <summary>
@@ -49,7 +52,7 @@ public class DocHistoryRepository
             : " AND DocType = $docType";
 
         cmd.CommandText = $"""
-            SELECT Id, DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt
+            SELECT Id, DocType, IssueDate, BuyerName, TotalAmount, FilePath, CreatedAt, ChannelCode, Period
             FROM DocHistoryTable
             WHERE IssueDate >= $from AND IssueDate <= $to
             {docTypeFilter}
@@ -73,6 +76,8 @@ public class DocHistoryRepository
                 TotalAmount = (decimal)reader.GetDouble(4),
                 FilePath    = reader.GetString(5),
                 CreatedAt   = DateTime.Parse(reader.GetString(6)),
+                ChannelCode = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                Period      = reader.IsDBNull(8) ? "" : reader.GetString(8),
             });
         }
         return list;

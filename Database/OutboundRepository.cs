@@ -231,13 +231,13 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = string.IsNullOrEmpty(channelCode)
             ? """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
                 FROM OutboundDetailTable
                 WHERE CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
                 """
             : """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
+                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
                 FROM OutboundDetailTable
                 WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
                 ORDER BY CreatedAt
@@ -273,7 +273,7 @@ public class OutboundRepository
 
         var paramNames = orderNoList.Select((_, i) => $"$o{i}").ToList();
         command.CommandText = $"""
-            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg
+            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
             FROM OutboundDetailTable
             WHERE OrderNo IN ({string.Join(",", paramNames)})
             """;
@@ -336,5 +336,8 @@ public class OutboundRepository
         PurchaseChannelCode = reader.IsDBNull(14) ? null : reader.GetString(14),
         PurchasePrice = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
         WeightKg = reader.IsDBNull(16) ? null : reader.GetDecimal(16),
+        ShipmentGroupKey = reader.IsDBNull(17) ? "" : reader.GetString(17),
+        CskuCode = reader.IsDBNull(18) ? "" : reader.GetString(18),
+        ClosingPeriod = reader.IsDBNull(19) ? "" : reader.GetString(19),
     };
 }

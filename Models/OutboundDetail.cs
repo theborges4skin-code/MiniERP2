@@ -61,4 +61,16 @@ public class OutboundDetail
 
     /// <summary>이 라인의 중량(kg)입니다. 발송헤더 운임을 라인별로 배부할 때 가중치로 사용합니다.</summary>
     public decimal? WeightKg { get; set; }
+
+    /// <summary>
+    /// G9 해소용 CSKU 전용 컬럼입니다(DbSchema.cs). 신규 라인부터만 채워지며, 과거분은 비어있으므로
+    /// 이 값이 빈 문자열이면 <see cref="MskuCode"/>를 CSKU로 간주해 폴백해야 합니다.
+    /// </summary>
+    public string CskuCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §4) 귀속월 수동 고정값(YYYY-MM). 빈 문자열이면
+    /// 미조정 상태이며, 보드가 ConfirmedAt의 연월로 자동 판정합니다.
+    /// </summary>
+    public string ClosingPeriod { get; set; } = string.Empty;
 }
