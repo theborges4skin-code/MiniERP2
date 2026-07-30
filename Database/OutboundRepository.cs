@@ -222,6 +222,149 @@ public class OutboundRepository
         return GetHistory(channelCode, from, to);
     }
 
+    private const string ClosingCols = "Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod";
+
+    /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §4)의 귀속월 판정 규칙에 따라 출고확정된 라인을
+    /// 조회합니다: ClosingPeriod가 수동 지정되어 있으면 그 값, 아니면 ConfirmedAt의 연월이 period와
+    /// 일치하는 건. channelCode가 null이면 전체 채널(수동 거래처는 대상 밖 — MANUAL 파티는
+    /// PartnerClosingTable에서 직접 관리한다).
+    /// </summary>
+    public List<OutboundDetail> GetForClosingPeriod(string? channelCode, string period)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        var channelFilter = string.IsNullOrEmpty(channelCode) ? "" : "AND ChannelCode = $channelCode";
+        command.CommandText = $"""
+            SELECT {ClosingCols}
+            FROM OutboundDetailTable
+            WHERE ConfirmedAt IS NOT NULL
+              AND (
+                    (ClosingPeriod <> '' AND ClosingPeriod = $period)
+                 OR (ClosingPeriod = '' AND substr(ConfirmedAt, 1, 7) = $period)
+                  )
+              {channelFilter}
+            ORDER BY ConfirmedAt
+            """;
+        command.Parameters.AddWithValue("$period", period);
+        if (!string.IsNullOrEmpty(channelCode)) command.Parameters.AddWithValue("$channelCode", channelCode);
+
+        var results = new List<OutboundDetail>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) results.Add(ReadOutboundDetail(reader));
+        return results;
+    }
+
+    /// <summary>
+    /// 발주확정만 되고 아직 출고확정(ConfirmedAt)되지 않은 건을 귀속월 기준으로 조회합니다
+    /// (거래처마감보드 §4 "미출고 잔량" — 기본 집계에서는 제외하고 별도 표시하기 위한 용도).
+    /// </summary>
+    public List<OutboundDetail> GetUnshippedForPeriod(string? channelCode, string period)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        var channelFilter = string.IsNullOrEmpty(channelCode) ? "" : "AND ChannelCode = $channelCode";
+        command.CommandText = $"""
+            SELECT {ClosingCols}
+            FROM OutboundDetailTable
+            WHERE ConfirmedAt IS NULL
+              AND (
+                    (ClosingPeriod <> '' AND ClosingPeriod = $period)
+                 OR (ClosingPeriod = '' AND substr(CreatedAt, 1, 7) = $period)
+                  )
+              {channelFilter}
+            ORDER BY CreatedAt
+            """;
+        command.Parameters.AddWithValue("$period", period);
+        if (!string.IsNullOrEmpty(channelCode)) command.Parameters.AddWithValue("$channelCode", channelCode);
+
+        var results = new List<OutboundDetail>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) results.Add(ReadOutboundDetail(reader));
+        return results;
+    }
+
+    /// <summary>
+    /// 지정된 기간 구간(YYYY-MM, 양끝 포함) 안에 출고확정 활동이 있었던 채널코드 목록입니다
+    /// (거래처마감보드 §7 "최근 3개월 활동" 자동 판정용).
+    /// </summary>
+    public List<string> GetActiveChannelCodesBetween(string fromPeriodInclusive, string toPeriodInclusive)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT ChannelCode FROM OutboundDetailTable
+            WHERE ConfirmedAt IS NOT NULL
+              AND (
+                    (ClosingPeriod <> '' AND ClosingPeriod BETWEEN $from AND $to)
+                 OR (ClosingPeriod = '' AND substr(ConfirmedAt, 1, 7) BETWEEN $from AND $to)
+                  )
+            """;
+        command.Parameters.AddWithValue("$from", fromPeriodInclusive);
+        command.Parameters.AddWithValue("$to", toPeriodInclusive);
+
+        var results = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) results.Add(reader.GetString(0));
+        return results;
+    }
+
+    /// <summary>1회라도 출고확정 이력이 있었던 전체 채널코드입니다(§7 "전체 거래처 보기").</summary>
+    public List<string> GetAllActiveChannelCodesEver()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT ChannelCode FROM OutboundDetailTable WHERE ConfirmedAt IS NOT NULL";
+
+        var results = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) results.Add(reader.GetString(0));
+        return results;
+    }
+
+    /// <summary>
+    /// 지정된 발주/출고 이력 Id들의 귀속월(ClosingPeriod)을 일괄 고정합니다(§4 수동 귀속월 변경).
+    /// </summary>
+    public void SetClosingPeriod(IEnumerable<long> ids, string period)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE OutboundDetailTable SET ClosingPeriod = $period WHERE Id = $id";
+        var periodParam = command.Parameters.Add("$period", SqliteType.Text);
+        var idParam = command.Parameters.Add("$id", SqliteType.Integer);
+        periodParam.Value = period;
+        foreach (var id in ids)
+        {
+            idParam.Value = id;
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    /// <summary>여러 ShipmentGroupKey에 속한 모든 라인을 기간·채널 무관하게 조회합니다(§6 운임 가중배부 — 한 발송이 여러 귀속월에 걸쳐 있는 경우의 전체 중량 기준을 구하기 위함).</summary>
+    public List<OutboundDetail> GetByShipmentGroupKeys(IEnumerable<string> shipmentGroupKeys)
+    {
+        var keys = shipmentGroupKeys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToList();
+        if (keys.Count == 0) return [];
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        var paramNames = keys.Select((_, i) => $"$k{i}").ToList();
+        command.CommandText = $"""
+            SELECT {ClosingCols}
+            FROM OutboundDetailTable
+            WHERE ShipmentGroupKey IN ({string.Join(",", paramNames)})
+            """;
+        for (var i = 0; i < keys.Count; i++) command.Parameters.AddWithValue(paramNames[i], keys[i]);
+
+        var results = new List<OutboundDetail>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) results.Add(ReadOutboundDetail(reader));
+        return results;
+    }
+
     /// <summary>
     /// 발주/출고 이력을 조회합니다(발주/출고 이력 관리창용). channelCode가 null이면 전체 채널.
     /// </summary>
