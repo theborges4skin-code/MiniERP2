@@ -448,15 +448,17 @@ public class PartnerClosingForm : Form
     /// 명세표/매출장 발행(§9). DocsForm의 그리드 주입 방식 대신 DocumentExporter를 헤드리스로 직접
     /// 호출한다 — 선택 1건이면 SaveFileDialog로 파일명을 묻고, 여러 건이면(배치) 폴더 하나만 골라
     /// "{거래처명}_{기간}_{문서}.xlsx"로 자동 저장한다. 확정(§상태=확정/발행완료) 상태인 거래처만 대상.
+    /// 매출장은 여러 거래처를 골랐을 때 "통합 출력"(현황표 시트 + 확정 거래처별 시트를 파일 1개로)도
+    /// 고를 수 있다(RunCombinedLedgerExport).
     /// </summary>
     private void OnPublishClick(bool isLedger)
     {
         var allSelected = SelectedPartyRows();
         var selected = allSelected.Where(r => r.Status is "확정" or "발행완료").ToList();
         var skippedNotConfirmed = allSelected.Count - selected.Count;
-        if (selected.Count == 0)
+        if (allSelected.Count == 0)
         {
-            MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("발행할 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -464,6 +466,11 @@ public class PartnerClosingForm : Form
         var ignoreDateForLedger = false;
         if (!isLedger)
         {
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             var vatChoice = MessageBox.Show("VAT 별도로 발행합니까?\n(아니오 = VAT 포함, 취소 = 발행 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (vatChoice == DialogResult.Cancel) return;
             docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
@@ -473,6 +480,25 @@ public class PartnerClosingForm : Form
             var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 발행 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (groupChoice == DialogResult.Cancel) return;
             ignoreDateForLedger = groupChoice == DialogResult.No;
+
+            if (allSelected.Count > 1)
+            {
+                var combineChoice = MessageBox.Show(
+                    "여러 거래처를 골랐습니다. 현황표(전체 거래처 마감확정 여부)+확정된 거래처별 매출장 시트를 파일 1개로 통합 출력하시겠습니까?\n(아니오 = 거래처별 개별 파일, 취소 = 발행 중단)",
+                    "매출장 출력 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (combineChoice == DialogResult.Cancel) return;
+                if (combineChoice == DialogResult.Yes)
+                {
+                    RunCombinedLedgerExport(allSelected, selected, ignoreDateForLedger);
+                    return;
+                }
+            }
+
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
         }
 
         var supplier = _docPartyRepo.GetDefaultSupplier();
@@ -574,6 +600,103 @@ public class PartnerClosingForm : Form
         if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
         if (skippedNotConfirmed > 0) msg += $" ({skippedNotConfirmed}건은 미확정이라 제외)";
         _statusLabel.Text = msg;
+    }
+
+    /// <summary>
+    /// 매출장 통합 출력: 파일 1개 안에 "현황" 시트(선택한 거래처 전부 — 미확정 포함, 거래금액·
+    /// 마감확정 여부) + 확정된 거래처별 매출장 시트를 이어붙인다. 미확정 거래처는 현황표에만
+    /// 나타나고 매출장 시트는 생기지 않는다.
+    /// </summary>
+    private void RunCombinedLedgerExport(List<PartyRow> allSelected, List<PartyRow> confirmed, bool ignoreDateForLedger)
+    {
+        var supplier = _docPartyRepo.GetDefaultSupplier();
+        if (supplier == null)
+        {
+            MessageBox.Show("공급자(기본 거래처) 프로필이 설정되어 있지 않습니다. 문서관리 화면에서 먼저 등록하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var sfd = new SaveFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            FileName = $"매출장_통합_{CurrentPeriod}_{DateTime.Now:yyyyMMdd}.xlsx",
+        };
+        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+        var overviewRows = new List<SalesLedgerOverviewRow>();
+        var ledgers = new List<(string PartyName, SalesLedgerDoc Doc)>();
+        var confirmedForHistory = new List<(PartyRow Row, PartnerClosingSummary Summary)>();
+        var errors = new List<string>();
+
+        foreach (var row in allSelected)
+        {
+            var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
+            var isConfirmed = row.Status is "확정" or "발행완료";
+            overviewRows.Add(new SalesLedgerOverviewRow
+            {
+                PartyName = row.PartyName,
+                Status = row.Status,
+                IsConfirmed = isConfirmed,
+                TotalQty = summary.TotalQty,
+                TotalSupply = summary.TotalSupply,
+                TotalProfit = summary.TotalProfit,
+            });
+            if (!isConfirmed) continue;
+
+            var buyer = row.IsManual
+                ? new DocParty { CompanyName = row.PartyName }
+                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
+            if (buyer == null)
+            {
+                errors.Add($"{row.PartyName}: 공급받는자 프로필 미연결");
+                continue;
+            }
+
+            ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger)));
+            confirmedForHistory.Add((row, summary));
+        }
+
+        if (ledgers.Count == 0)
+        {
+            MessageBox.Show("통합 출력할 확정 상태 거래처가 없습니다(현황표만으로는 출력하지 않습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            DocumentExporter.ExportSalesLedgersCombined(overviewRows, ledgers, sfd.FileName);
+
+            byte[]? fileBytes = null;
+            try { fileBytes = File.ReadAllBytes(sfd.FileName); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
+
+            foreach (var (row, summary) in confirmedForHistory)
+            {
+                var docHistoryId = _docHistoryRepo.Add(new DocHistoryRecord
+                {
+                    DocType = "SalesLedger",
+                    IssueDate = DateTime.Today,
+                    BuyerName = row.PartyName,
+                    TotalAmount = summary.TotalSupply,
+                    FilePath = sfd.FileName,
+                    CreatedAt = DateTime.Now,
+                    FileBytes = fileBytes,
+                    ChannelCode = row.IsManual ? "" : row.PartyKey["CH:".Length..],
+                    Period = CurrentPeriod,
+                });
+                if (row.ClosingId != null) _closingRepo.MarkPublished(row.ClosingId.Value, docHistoryId);
+            }
+
+            RefreshBoard();
+            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+
+            var msg = $"통합 매출장 출력 완료 — 현황 {overviewRows.Count}건, 매출장 시트 {ledgers.Count}건.";
+            if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
+            _statusLabel.Text = msg;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"통합 출력 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnToggleFavoriteClick(object? sender, EventArgs e)

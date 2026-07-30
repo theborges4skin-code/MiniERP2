@@ -972,6 +972,36 @@ public static class DocumentExporter
         ExcelLicense.Ensure();
         using var package = new ExcelPackage();
         var ws = package.Workbook.Worksheets.Add("매출장");
+        WriteSalesLedgerSheet(ws, doc);
+        ExportHelper.SaveExcel(package, filePath);
+    }
+
+    /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §9) 일괄 출력용: 첫 시트에 거래처별 거래금액·
+    /// 마감확정 여부 현황표를 두고, 이어서 <paramref name="ledgers"/>(마감확정된 거래처만) 각각을
+    /// 별도 시트로 이어붙인 파일 1개를 만든다. 현황표에는 미확정 거래처도 함께 나열되지만(§요청),
+    /// 매출장 시트는 확정된 거래처만 생긴다.
+    /// </summary>
+    public static void ExportSalesLedgersCombined(List<SalesLedgerOverviewRow> overviewRows, List<(string PartyName, SalesLedgerDoc Doc)> ledgers, string filePath)
+    {
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage();
+
+        var overviewWs = package.Workbook.Worksheets.Add("현황");
+        WriteSalesLedgerOverviewSheet(overviewWs, overviewRows);
+
+        var usedNames = new HashSet<string> { "현황" };
+        foreach (var (partyName, doc) in ledgers)
+        {
+            var ws = package.Workbook.Worksheets.Add(UniqueSheetName(usedNames, partyName));
+            WriteSalesLedgerSheet(ws, doc);
+        }
+
+        ExportHelper.SaveExcel(package, filePath);
+    }
+
+    private static void WriteSalesLedgerSheet(ExcelWorksheet ws, SalesLedgerDoc doc)
+    {
         var layout = LedgerLayout.Build(doc.ShowCost, doc.ShowProfit);
 
         SetLedgerColumnWidths(ws, layout);
@@ -989,8 +1019,65 @@ public static class DocumentExporter
 
         if (doc.StampImagePath != null && File.Exists(doc.StampImagePath))
             InsertStamp(ws, doc.StampImagePath);
+    }
 
-        ExportHelper.SaveExcel(package, filePath);
+    private const int OvColParty = 1, OvColStatus = 2, OvColQty = 3, OvColSupply = 4, OvColProfit = 5, OvTotalCols = 5;
+
+    private static void WriteSalesLedgerOverviewSheet(ExcelWorksheet ws, List<SalesLedgerOverviewRow> rows)
+    {
+        ws.Column(OvColParty).Width = 22;
+        ws.Column(OvColStatus).Width = 12;
+        ws.Column(OvColQty).Width = 10;
+        ws.Column(OvColSupply).Width = 14;
+        ws.Column(OvColProfit).Width = 14;
+        SetPrintSettings(ws);
+
+        int row = 1;
+        Merge(ws, row, 1, row, OvTotalCols, "거래처별 마감 현황");
+        ws.Cells[row, 1].Style.Font.Size = 16;
+        ws.Cells[row, 1].Style.Font.Bold = true;
+        ws.Cells[row, 1].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+        ws.Row(row).Height = 30;
+        row++;
+
+        string[] headers = { "거래처", "마감 상태", "수량", "공급가합", "이익" };
+        for (int c = 1; c <= OvTotalCols; c++)
+        {
+            var cell = ws.Cells[row, c];
+            cell.Value = headers[c - 1];
+            cell.Style.Font.Bold = true;
+            cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+            cell.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(230, 230, 230));
+            ApplyCellBorder(cell);
+        }
+        row++;
+
+        foreach (var r in rows)
+        {
+            ws.Cells[row, OvColParty].Value = r.PartyName;
+            ws.Cells[row, OvColStatus].Value = r.IsConfirmed ? $"마감확정({r.Status})" : $"미확정({r.Status})";
+            if (!r.IsConfirmed)
+            {
+                ws.Cells[row, OvColStatus].Style.Font.Color.SetColor(System.Drawing.Color.DarkOrange);
+            }
+            SetNum(ws, row, OvColQty, r.TotalQty);
+            SetNum(ws, row, OvColSupply, r.TotalSupply);
+            SetNum(ws, row, OvColProfit, r.TotalProfit);
+            for (int c = 1; c <= OvTotalCols; c++) ApplyCellBorder(ws.Cells[row, c]);
+            row++;
+        }
+
+        ws.Cells[row, OvColParty].Value = "합계";
+        ws.Cells[row, OvColParty].Style.Font.Bold = true;
+        SetNum(ws, row, OvColQty, rows.Sum(r => r.TotalQty));
+        SetNum(ws, row, OvColSupply, rows.Sum(r => r.TotalSupply));
+        SetNum(ws, row, OvColProfit, rows.Sum(r => r.TotalProfit));
+        for (int c = 1; c <= OvTotalCols; c++)
+        {
+            ws.Cells[row, c].Style.Font.Bold = true;
+            ApplyCellBorder(ws.Cells[row, c]);
+        }
     }
 
     private static void SetLedgerColumnWidths(ExcelWorksheet ws, LedgerLayout l)

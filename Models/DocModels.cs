@@ -128,6 +128,21 @@ public class SalesLedgerDoc
     private static bool IsEmpty(SalesLedgerLineItem l) => string.IsNullOrWhiteSpace(l.ItemName) && l.Qty == 0 && l.UnitPrice == 0;
 }
 
+/// <summary>
+/// 거래처 마감보드(거래처마감보드_개발기획서.md §9) 일괄 매출장 출력의 "현황" 시트 1행.
+/// 마감확정 여부와 무관하게 선택된 거래처 전부를 나열하되(DocumentExporter.
+/// ExportSalesLedgersCombined 참고), 실제 매출장 시트는 IsConfirmed인 거래처만 생긴다.
+/// </summary>
+public class SalesLedgerOverviewRow
+{
+    public string PartyName { get; set; } = "";
+    public string Status { get; set; } = "";
+    public bool IsConfirmed { get; set; }
+    public decimal TotalQty { get; set; }
+    public decimal TotalSupply { get; set; }
+    public decimal TotalProfit { get; set; }
+}
+
 // ── 견적서 ──────────────────────────────────────────────────────────────
 
 public class QuoteLineItem
