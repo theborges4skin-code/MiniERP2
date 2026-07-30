@@ -195,8 +195,10 @@ public class ChannelCskuForm : Form
         if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
         if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
 
+        // FormattingApplied=true는 e.Value가 "이미 완성된 표시용 문자열"일 때만 써야 한다 — 이
+        // 열은 DefaultCellStyle.Format="N0"로 숫자 서식을 그리드가 대신 입혀야 하므로, 원시
+        // decimal 값만 넣고 FormattingApplied는 켜지 않는다(켜면 FormatException 발생).
         e.Value = _costPriceByMsku.TryGetValue(csku.Msku, out var cost) ? cost : 0m;
-        e.FormattingApplied = true;
     }
 
     private void OnCskuGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)

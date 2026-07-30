@@ -75,6 +75,13 @@ public class ExcelLikeDataGridView : DataGridView
             OnPasteClick(this, EventArgs.Empty);
             return true;
         }
+        // 기본 Ctrl+C는 DataGridView 내장 처리로 곧장 들어가 CopySelection()을 거치지 않는다
+        // (아래 버그 설명 참고) — 이 앱의 복사 규칙을 항상 타도록 여기서도 가로챈다.
+        if (keyData == (Keys.Control | Keys.C))
+        {
+            CopySelection();
+            return true;
+        }
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
@@ -206,8 +213,27 @@ public class ExcelLikeDataGridView : DataGridView
         }
     }
 
-    private void OnCopyClick(object? sender, EventArgs e)
+    private void OnCopyClick(object? sender, EventArgs e) => CopySelection();
+
+    /// <summary>
+    /// 이 앱 대부분의 그리드는 SelectionMode가 FullRowSelect/RowHeaderSelect다(우클릭 메뉴/버튼으로
+    /// 행 단위 일괄 작업을 고르기 위함 — 마감확정, 선택 삭제 등). 그 모드에서는 셀 하나만 클릭해도
+    /// DataGridView가 그 행 전체를 "선택된 셀"로 잡아버려서, 그대로 복사하면 셀 하나만 복사하려던
+    /// 의도와 달리 행 전체가 복사돼 다른 셀에 붙여넣을 때 여러 칸이 한꺼번에 덮어써진다(사용자 신고,
+    /// 2026-07-30). 클릭 한 번으로 걸린 단일 행 선택은 지금 클릭한 셀 하나만 복사하고, 여러 행을
+    /// 일부러 골랐을 때(Ctrl/Shift+클릭)는 기존처럼 그 행들 전체를 복사한다(다른 곳에 붙여넣기용
+    /// 배치 복사는 계속 지원). CellSelect 모드 그리드는 원래도 셀 단위라 영향 없음.
+    /// </summary>
+    private void CopySelection()
     {
+        var isRowBasedMode = SelectionMode is DataGridViewSelectionMode.FullRowSelect or DataGridViewSelectionMode.RowHeaderSelect;
+
+        if (isRowBasedMode && SelectedRows.Count <= 1 && CurrentCell != null)
+        {
+            Clipboard.SetText(CurrentCell.FormattedValue?.ToString() ?? string.Empty);
+            return;
+        }
+
         if (SelectedCells.Count > 0)
         {
             Clipboard.SetDataObject(GetClipboardContent());

@@ -253,6 +253,11 @@ public class OutboundHistoryForm : Form
     /// 그 값과 라인 데이터로부터 매번 다시 계산해서 보여준다(§3 산출 규칙). WeightKg이 없는 줄(=
     /// B2B 대상이 아닌 마켓플레이스 라인)은 빈 칸으로 남긴다 — 이 열들을 안 쓰면 기존 화면과 동일.
     /// </summary>
+    // FormattingApplied=true는 e.Value가 "이미 완성된 표시용 문자열"일 때만 써야 한다 — 아래 4개
+    // 열은 전부 DefaultCellStyle.Format="N0"로 그리드가 숫자 서식을 입혀야 하므로, 원시 decimal만
+    // 넣고 FormattingApplied는 켜지 않는다(켜면 FormatException — 2026-07-30 ChannelCskuForm의
+    // 같은 패턴에서 실제로 재현됨. 여기서는 DataError 억제(아래 생성자)로 조용히 삼켜지고 있었을
+    // 뿐 같은 버그였다).
     private void OnB2BColumnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         if (e.RowIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
@@ -263,14 +268,12 @@ public class OutboundHistoryForm : Form
         if (columnName == "FreightCost")
         {
             e.Value = _freightByShipmentKey.TryGetValue(detail.ShipmentGroupKey, out var freight) ? freight : 0m;
-            e.FormattingApplied = true;
             return;
         }
 
         if (detail.WeightKg is not { } weightKg || weightKg <= 0)
         {
             e.Value = null;
-            e.FormattingApplied = true;
             return;
         }
 
@@ -284,7 +287,6 @@ public class OutboundHistoryForm : Form
         if (columnName == "FreightPerKg")
         {
             e.Value = freightPerKg;
-            e.FormattingApplied = true;
             return;
         }
 
@@ -294,13 +296,11 @@ public class OutboundHistoryForm : Form
         if (columnName == "EffectiveCost")
         {
             e.Value = effectiveCost;
-            e.FormattingApplied = true;
             return;
         }
 
         // Margin
         e.Value = (detail.SupplyPrice - effectiveCost) * weightKg;
-        e.FormattingApplied = true;
     }
 
     /// <summary>"메모" 열에는 전체 내용 대신 유무만 표시한다(OfsForm의 RemarkFlag 열과 같은 패턴).</summary>
