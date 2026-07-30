@@ -343,6 +343,47 @@ public class OutboundRepository
         transaction.Commit();
     }
 
+    /// <summary>
+    /// 거래처 마감보드(거래처마감보드_개발기획서.md §2)에서, MiniERP2(OFS)를 경유하지 않은 주문을
+    /// 수동으로 발주/출고 이력에 편입시킨다. 마감 대조 시점에 바로 집계 대상이 되어야 하므로 항상
+    /// "출고확정" 상태+지정한 날짜로 즉시 확정해 넣는다(발주확정 단계 없음). 이렇게 넣은 건도
+    /// OutboundDetailTable의 정상 행이라 발주/출고 이력 관리창(OutboundHistoryForm)에서 채널·기간
+    /// 조건으로 조회하면 그대로 나온다 — 별도 저장소를 두지 않는다.
+    /// </summary>
+    public long AddManualEntry(OutboundDetail detail)
+    {
+        var orderNo = string.IsNullOrWhiteSpace(detail.OrderNo)
+            ? $"수동-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}"
+            : detail.OrderNo;
+        var confirmedAt = detail.ConfirmedAt ?? DateTime.Now;
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, CskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $cskuCode, $qty, $supplyPrice, $createdAt, '출고확정', $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg);
+            SELECT last_insert_rowid();
+            """;
+        command.Parameters.AddWithValue("$channelCode", detail.ChannelCode);
+        command.Parameters.AddWithValue("$orderNo", orderNo);
+        command.Parameters.AddWithValue("$shipmentGroupKey", orderNo);
+        command.Parameters.AddWithValue("$trackingNo", "(수동입력)");
+        command.Parameters.AddWithValue("$mskuCode", detail.MskuCode);
+        command.Parameters.AddWithValue("$cskuCode", detail.CskuCode);
+        command.Parameters.AddWithValue("$qty", detail.Qty);
+        command.Parameters.AddWithValue("$supplyPrice", detail.SupplyPrice);
+        command.Parameters.AddWithValue("$createdAt", DateTime.Now);
+        command.Parameters.AddWithValue("$confirmedAt", confirmedAt);
+        command.Parameters.AddWithValue("$recipient", detail.Recipient);
+        command.Parameters.AddWithValue("$address", detail.Address);
+        command.Parameters.AddWithValue("$productName", detail.ProductName);
+        command.Parameters.AddWithValue("$remark", detail.Remark);
+        command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
+        command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
+        return (long)command.ExecuteScalar()!;
+    }
+
     /// <summary>여러 ShipmentGroupKey에 속한 모든 라인을 기간·채널 무관하게 조회합니다(§6 운임 가중배부 — 한 발송이 여러 귀속월에 걸쳐 있는 경우의 전체 중량 기준을 구하기 위함).</summary>
     public List<OutboundDetail> GetByShipmentGroupKeys(IEnumerable<string> shipmentGroupKeys)
     {

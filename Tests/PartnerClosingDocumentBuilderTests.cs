@@ -6,6 +6,8 @@ namespace MiniERP2.Tests;
 [TestClass]
 public class PartnerClosingDocumentBuilderTests
 {
+    // OutboundDetail.SupplyPrice(→UnitPrice)는 VAT포함 단가로 저장된다(2026-07-30 확인).
+    // CSKU "A"는 7/1에 두 건(1개+3개), 7/2에 한 건(2개)으로 나뉘어 있고, CSKU "B"는 7/1에 1건.
     private static PartnerClosingSummary Summary() => new()
     {
         Period = "2026-07",
@@ -13,38 +15,83 @@ public class PartnerClosingDocumentBuilderTests
         PartyName = "테스트채널",
         Lines =
         [
-            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 10), ItemName = "상품A", Qty = 2, UnitPrice = 10000m, CostPrice = 4000m, Profit = 12000m },
-            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 20), ItemName = "상품B", Qty = 1, UnitPrice = 5000m, CostPrice = 2000m, Profit = 3000m },
+            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 1), CskuCode = "A", ItemName = "상품A", Qty = 1, UnitPrice = 11000m, CostPrice = 2200m },
+            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 1), CskuCode = "A", ItemName = "상품A", Qty = 3, UnitPrice = 11000m, CostPrice = 2200m },
+            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 2), CskuCode = "A", ItemName = "상품A", Qty = 2, UnitPrice = 11000m, CostPrice = 2200m },
+            new PartnerClosingLine { LineDate = new DateTime(2026, 7, 1), CskuCode = "B", ItemName = "상품B", Qty = 1, UnitPrice = 5500m, CostPrice = 1100m },
         ],
     };
 
     [TestMethod]
-    public void BuildTradeStatement_MapsLinesAndComputesVatExcludedTotal()
+    public void BuildTradeStatement_VatExcl_MergesSameDateCskuAndDividesOutVat()
     {
         var supplier = new DocParty { CompanyName = "공급자" };
         var buyer = new DocParty { CompanyName = "매입자" };
 
         var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(Summary(), DocType.TradeStatementVatExcl, supplier, buyer);
 
-        Assert.HasCount(2, doc.Lines);
-        Assert.AreEqual(25000m, doc.TotalSupply); // 2*10000 + 1*5000
-        Assert.AreEqual(2500m, doc.TotalTax);     // 10% VAT excl
-        Assert.AreEqual(27500m, doc.GrandTotal);
-        Assert.AreEqual(7, doc.Lines[0].Month);
-        Assert.AreEqual(10, doc.Lines[0].Day);
+        // 7/1 A(1+3=4개), 7/2 A(2개), 7/1 B(1개) — 날짜가 다른 7/2 A는 합쳐지지 않고 별도 줄.
+        Assert.HasCount(3, doc.Lines);
+
+        var jul1A = doc.Lines.Single(l => l.Day == 1 && l.Qty == 4);
+        Assert.AreEqual(10000m, jul1A.UnitPrice); // 11000 / 1.1
+        Assert.AreEqual(40000m, jul1A.SupplyAmount);
+
+        var jul2A = doc.Lines.Single(l => l.Day == 2);
+        Assert.AreEqual(2m, jul2A.Qty);
+        Assert.AreEqual(10000m, jul2A.UnitPrice);
+
+        // VAT포함 원래 총액(4*11000+2*11000+1*5500=71500)과 공급가+세액이 정확히 일치해야 한다.
+        Assert.AreEqual(65000m, doc.TotalSupply);
+        Assert.AreEqual(6500m, doc.TotalTax);
+        Assert.AreEqual(71500m, doc.GrandTotal);
     }
 
     [TestMethod]
-    public void BuildSalesLedger_ComputesProfitFromCostPrice()
+    public void BuildTradeStatement_VatIncl_KeepsRawPriceWithoutDividing()
     {
         var supplier = new DocParty { CompanyName = "공급자" };
         var buyer = new DocParty { CompanyName = "매입자" };
 
-        var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(Summary(), supplier, buyer);
+        var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(Summary(), DocType.TradeStatementVatIncl, supplier, buyer);
 
-        Assert.AreEqual(25000m, doc.TotalSupply);
-        Assert.AreEqual(2 * 4000m + 1 * 2000m, doc.TotalCost);
-        Assert.AreEqual(doc.TotalSupply - doc.TotalCost, doc.TotalProfit);
+        var jul1A = doc.Lines.Single(l => l.Day == 1 && l.Qty == 4);
+        Assert.AreEqual(11000m, jul1A.UnitPrice); // VAT포함이므로 나누지 않음
+        Assert.AreEqual(71500m, doc.TotalSupply); // 이 문서유형은 TotalSupply 자체가 합계금액(VAT포함)
+    }
+
+    [TestMethod]
+    public void BuildSalesLedger_DefaultGroupsByDateAndCsku_AndAlwaysExcludesVat()
+    {
+        var supplier = new DocParty { CompanyName = "공급자" };
+        var buyer = new DocParty { CompanyName = "매입자" };
+
+        var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(Summary(), supplier, buyer, ignoreDate: false);
+
+        Assert.HasCount(3, doc.Lines);
+        Assert.AreEqual(65000m, doc.TotalSupply);
+        Assert.AreEqual(13000m, doc.TotalCost); // (4+2)*2000 + 1*1000
+        Assert.AreEqual(52000m, doc.TotalProfit);
+    }
+
+    [TestMethod]
+    public void BuildSalesLedger_IgnoreDate_MergesAcrossDatesButKeepsSameTotals()
+    {
+        var supplier = new DocParty { CompanyName = "공급자" };
+        var buyer = new DocParty { CompanyName = "매입자" };
+
+        var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(Summary(), supplier, buyer, ignoreDate: true);
+
+        // CSKU "A"(7/1+7/2 통합 6개), "B"(1개) 두 줄로만 합산되고, 날짜 칸은 비워야 한다(일=0).
+        Assert.HasCount(2, doc.Lines);
+        var lineA = doc.Lines.Single(l => l.Qty == 6);
+        Assert.AreEqual(0, lineA.Day);
+        Assert.AreEqual(7, lineA.Month);
+        Assert.AreEqual(10000m, lineA.UnitPrice);
+
+        // 합산 단위만 바뀔 뿐 총액은 날짜별 합산과 같아야 한다.
+        Assert.AreEqual(65000m, doc.TotalSupply);
+        Assert.AreEqual(52000m, doc.TotalProfit);
     }
 
     [TestMethod]

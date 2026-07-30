@@ -20,6 +20,7 @@ public class PartnerClosingForm : Form
     private readonly SalesChannelRepository _channelRepo = new();
     private readonly DocPartyRepository _docPartyRepo = new();
     private readonly DocHistoryRepository _docHistoryRepo = new();
+    private readonly OutboundRepository _outboundRepo = new();
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
@@ -79,6 +80,9 @@ public class PartnerClosingForm : Form
         var btnManualEntry = new Button { Text = "금액입력/비고", Size = new Size(100, 28) };
         btnManualEntry.Click += OnManualEntryClick;
 
+        var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(110, 28) };
+        btnAddManualOrder.Click += OnAddManualOrderClick;
+
         var btnConfirm = new Button { Text = "마감확정", Size = new Size(80, 28) };
         btnConfirm.Click += OnConfirmClick;
 
@@ -99,6 +103,7 @@ public class PartnerClosingForm : Form
         toolbar.Controls.Add(_includeAllCheck);
         toolbar.Controls.Add(btnAddManual);
         toolbar.Controls.Add(btnManualEntry);
+        toolbar.Controls.Add(btnAddManualOrder);
         toolbar.Controls.Add(btnConfirm);
         toolbar.Controls.Add(btnCancelClosing);
         toolbar.Controls.Add(btnPublishStatement);
@@ -320,6 +325,59 @@ public class PartnerClosingForm : Form
         RefreshBoard();
     }
 
+    /// <summary>
+    /// MiniERP2(OFS)를 경유하지 않은 주문을 채널 경유 거래처의 발주/출고 이력에 수동으로 편입한다
+    /// (거래처마감보드_개발기획서.md §2). 항상 "출고확정" 상태+지정한 날짜로 즉시 확정되므로 마감
+    /// 집계에 바로 잡히고, 정상 OutboundDetailTable 행이라 발주/출고 이력 관리창에서도 그대로 조회된다.
+    /// </summary>
+    private void OnAddManualOrderClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1 || selected[0].IsManual)
+        {
+            MessageBox.Show("수동 주문을 추가할 채널 경유 거래처 1개를 선택하세요(수동 거래처는 [금액입력/비고]를 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+        var channelCode = row.PartyKey["CH:".Length..];
+
+        using var dlg = new PartnerManualOrderDialog(channelCode, row.PartyName);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        var detail = new OutboundDetail
+        {
+            ChannelCode = channelCode,
+            MskuCode = dlg.CskuCode,
+            CskuCode = dlg.CskuCode,
+            Qty = (int)dlg.Qty,
+            SupplyPrice = dlg.UnitPrice,
+            PurchasePrice = dlg.CostPrice,
+            ProductName = dlg.ItemName,
+            Remark = dlg.Note,
+            ConfirmedAt = dlg.OrderDate,
+        };
+        _outboundRepo.AddManualEntry(detail);
+
+        // 고른 날짜가 지금 보고 있는 귀속월과 다르면, 방금 넣은 건이 바로 보이도록 그 달로 화면을 옮긴다.
+        _periodCombo.Text = dlg.OrderDate.ToString("yyyy-MM");
+        RefreshBoard();
+        SelectPartyByKey(row.PartyKey);
+        _statusLabel.Text = $"수동 주문을 추가했습니다({dlg.OrderDate:yyyy-MM-dd}, {dlg.CskuCode} x{dlg.Qty}). ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void SelectPartyByKey(string partyKey)
+    {
+        foreach (DataGridViewRow gridRow in _partyGrid.Rows)
+        {
+            if (gridRow.DataBoundItem is not PartyRow pr || pr.PartyKey != partyKey) continue;
+            _partyGrid.ClearSelection();
+            gridRow.Selected = true;
+            _partyGrid.CurrentCell = gridRow.Cells[0];
+            LoadLineGrid();
+            break;
+        }
+    }
+
     private void OnConfirmClick(object? sender, EventArgs e)
     {
         var selected = SelectedPartyRows();
@@ -400,11 +458,18 @@ public class PartnerClosingForm : Form
         }
 
         var docType = MiniERP2.Models.DocType.TradeStatementVatExcl;
+        var ignoreDateForLedger = false;
         if (!isLedger)
         {
             var vatChoice = MessageBox.Show("VAT 별도로 발행합니까?\n(아니오 = VAT 포함, 취소 = 발행 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (vatChoice == DialogResult.Cancel) return;
             docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
+        }
+        else
+        {
+            var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 발행 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (groupChoice == DialogResult.Cancel) return;
+            ignoreDateForLedger = groupChoice == DialogResult.No;
         }
 
         var supplier = _docPartyRepo.GetDefaultSupplier();
@@ -458,7 +523,7 @@ public class PartnerClosingForm : Form
                 decimal totalAmount;
                 if (isLedger)
                 {
-                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer);
+                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger);
                     DocumentExporter.ExportSalesLedger(doc, filePath);
                     totalAmount = doc.TotalSupply;
                 }
