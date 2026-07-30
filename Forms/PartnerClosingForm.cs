@@ -208,16 +208,24 @@ public class PartnerClosingForm : Form
         return grid;
     }
 
+    /// <summary>
+    /// 상태별 행 강조는 라이트/다크 테마와 무관하게 항상 밝은 파스텔 배경 + 검정 글자로 고정한다
+    /// (Forms/OfsForm.cs의 발송대기/메모 행 강조와 같은 관례 — 배경을 밝게 정한 이상 글자색도
+    /// 같이 고정해야 다크모드에서 흰 글자가 밝은 배경 위에 묻혀 안 보이는 문제가 없다). 강조가
+    /// 없는 "미확인" 행은 색을 건드리지 않고 그리드의 테마 기본색(라이트/다크 자동 반영)을 그대로 쓴다.
+    /// </summary>
     private void OnPartyGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         if (e.RowIndex < 0 || _partyGrid.Rows[e.RowIndex].DataBoundItem is not PartyRow row) return;
-        _partyGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = row.Status switch
+        var (back, fore) = row.Status switch
         {
-            "대조중" => Color.LightYellow,
-            "확정" => Color.FromArgb(220, 245, 220),
-            "발행완료" => Color.Gainsboro,
-            _ => Color.White,
+            "대조중" => (Color.LightYellow, Color.Black),
+            "확정" => (Color.FromArgb(220, 245, 220), Color.Black),
+            "발행완료" => (Color.Gainsboro, Color.Black),
+            _ => (_partyGrid.DefaultCellStyle.BackColor, _partyGrid.DefaultCellStyle.ForeColor),
         };
+        _partyGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = back;
+        _partyGrid.Rows[e.RowIndex].DefaultCellStyle.ForeColor = fore;
     }
 
     private string CurrentPeriod => _periodCombo.Text.Trim();
