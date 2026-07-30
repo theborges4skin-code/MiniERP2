@@ -7,6 +7,9 @@ public class FboHistoryRow
     public DateTime OrderDate { get; set; }
     public required string ChannelId { get; set; }
     public int BoxSeq { get; set; }
+
+    /// <summary>FboBoxItem의 PK 구성요소 — 개별 CSKU 라인을 정확히 지목해 수정/복사/삭제할 때 쓴다.</summary>
+    public int ItemSeq { get; set; }
     public string ReceiverDisplayName { get; set; } = string.Empty;
     public string Csku { get; set; } = string.Empty;
     public string ItemName { get; set; } = string.Empty;

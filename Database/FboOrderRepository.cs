@@ -246,7 +246,7 @@ public class FboOrderRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT o.FboNo, o.OrderDate, o.ChannelId, b.BoxSeq, b.ReceiverDisplayName, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status
+            SELECT o.FboNo, o.OrderDate, o.ChannelId, b.BoxSeq, b.ReceiverDisplayName, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status, i.ItemSeq
             FROM FboOrder o
             JOIN FboBox b ON b.FboNo = o.FboNo
             JOIN FboBoxItem i ON i.FboNo = b.FboNo AND i.BoxSeq = b.BoxSeq
@@ -274,9 +274,69 @@ public class FboOrderRepository
                 Qty = reader.GetInt32(7),
                 TrackingNo = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Status = reader.GetString(9),
+                ItemSeq = reader.GetInt32(10),
             });
         }
         return result;
+    }
+
+    /// <summary>
+    /// 개별 CSKU 라인 1건(FboBoxItem)만 수정한다(발주/출고 이력 조회창 §라인 단위 관리 — 지금까지는
+    /// 발주(FboNo) 전체 단위로만 복사/삭제가 가능해 라인 하나 고치려고 발주 전체를 다시 만들어야
+    /// 했다). 박스/헤더는 건드리지 않는다.
+    /// </summary>
+    public void UpdateBoxItem(FboBoxItem item)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE FboBoxItem
+            SET Csku = $csku, FboItemCode = $fboItemCode, ItemName = $itemName,
+                InvoiceDisplayName = $invoiceDisplayName, QtyPerBox = $qtyPerBox, Qty = $qty, ExpiryDate = $expiryDate
+            WHERE FboNo = $fboNo AND BoxSeq = $boxSeq AND ItemSeq = $itemSeq
+            """;
+        command.Parameters.AddWithValue("$csku", item.Csku);
+        command.Parameters.AddWithValue("$fboItemCode", item.FboItemCode);
+        command.Parameters.AddWithValue("$itemName", item.ItemName);
+        command.Parameters.AddWithValue("$invoiceDisplayName", (object?)item.InvoiceDisplayName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$qtyPerBox", item.QtyPerBox);
+        command.Parameters.AddWithValue("$qty", item.Qty);
+        command.Parameters.AddWithValue("$expiryDate", (object?)item.ExpiryDate ?? DBNull.Value);
+        command.Parameters.AddWithValue("$fboNo", item.FboNo);
+        command.Parameters.AddWithValue("$boxSeq", item.BoxSeq);
+        command.Parameters.AddWithValue("$itemSeq", item.ItemSeq);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 개별 CSKU 라인 1건만 삭제한다(박스/발주 헤더는 그대로 둠). 출고확정(이송장번호 등록) 여부
+    /// 확인/경고는 호출 측(FboHistoryForm)의 책임이다.
+    /// </summary>
+    public void DeleteBoxItem(string fboNo, int boxSeq, int itemSeq)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM FboBoxItem WHERE FboNo = $fboNo AND BoxSeq = $boxSeq AND ItemSeq = $itemSeq";
+        command.Parameters.AddWithValue("$fboNo", fboNo);
+        command.Parameters.AddWithValue("$boxSeq", boxSeq);
+        command.Parameters.AddWithValue("$itemSeq", itemSeq);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>지정한 (FboNo, BoxSeq)에 속한 박스 1건을 가져온다(라인 단위 액션에서 소속 박스의
+    /// 이송장 등록 여부·표시명 등을 확인할 때 쓴다).</summary>
+    public FboBox? GetBox(string fboNo, int boxSeq)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT FboNo, BoxSeq, ReceiverDisplayName, MatchKey, BoxType, TrackingNo, TrackingLoadedAt, Status
+            FROM FboBox WHERE FboNo = $fboNo AND BoxSeq = $boxSeq
+            """;
+        command.Parameters.AddWithValue("$fboNo", fboNo);
+        command.Parameters.AddWithValue("$boxSeq", boxSeq);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadBox(reader) : null;
     }
 
     /// <summary>
