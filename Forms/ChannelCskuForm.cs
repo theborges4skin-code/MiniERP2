@@ -57,6 +57,8 @@ public class ChannelCskuForm : Form
         _channelCombo = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(SalesChannel.ChannelName) };
         _channelCombo.SelectedIndexChanged += (s, e) => LoadData();
 
+        var btnAddCsku = new Button { Text = "CSKU 추가", Size = new Size(90, 30) };
+        btnAddCsku.Click += OnAddCskuClick;
         var btnSave = new Button { Text = "저장", Size = new Size(90, 30) };
         btnSave.Click += OnSaveClick;
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
@@ -64,6 +66,7 @@ public class ChannelCskuForm : Form
 
         toolStrip.Controls.Add(new Label { Text = "거래처:", AutoSize = true, Padding = new Padding(0, 7, 2, 0) });
         toolStrip.Controls.Add(_channelCombo);
+        toolStrip.Controls.Add(btnAddCsku);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
         _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
@@ -138,6 +141,56 @@ public class ChannelCskuForm : Form
         _cskuGrid.InvalidateRow(selectedRow.Index);
         _statusLabel.ForeColor = Color.DarkGreen;
         _statusLabel.Text = $"마스터SKU를 '{dlg.SelectedSku}'(으)로 지정했습니다. [저장]을 눌러야 반영됩니다.";
+    }
+
+    /// <summary>
+    /// 그리드 맨 아래 빈 행에 직접 타이핑해도 CSKU 등록은 되지만, 마스터SKU를 검색하거나 그
+    /// 자리에서 새로 만들 수가 없어 매번 마스터SKU 관리창을 오가야 했다(사용자 요청 — 마스터SKU
+    /// 관리의 "새 마스터SKU 추가"와 같은 이유). NewChannelCskuDialog로 마스터SKU 지정/신규등록과
+    /// CSKU 정보 입력을 한 창에서 받아 즉시 등록한다(Upsert는 바로 반영, 그리드 "저장" 버튼을
+    /// 기다릴 필요 없음).
+    /// </summary>
+    private void OnAddCskuClick(object? sender, EventArgs e)
+    {
+        var channel = SelectedChannel;
+        if (channel == null)
+        {
+            MessageBox.Show("거래처를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new NewChannelCskuDialog(channel.ChannelCode, channel.ChannelName);
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedMasterSku == null) return;
+
+        _cskuRepository.Upsert(new ChannelSkuModel
+        {
+            ChannelCode = channel.ChannelCode,
+            CskuCode = dlg.CskuCode,
+            Msku = dlg.SelectedMasterSku,
+            SupplyPrice = dlg.SupplyPrice,
+            InvoiceDisplayName = dlg.InvoiceDisplayName,
+            Unit = dlg.Unit,
+            Packing = dlg.Packing,
+            Note = dlg.Note,
+        });
+
+        LoadData();
+        SelectRowByCskuCode(dlg.CskuCode);
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"CSKU '{dlg.CskuCode}'를 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void SelectRowByCskuCode(string cskuCode)
+    {
+        foreach (DataGridViewRow row in _cskuGrid.Rows)
+        {
+            if (row.DataBoundItem is not ChannelSkuModel csku || csku.CskuCode != cskuCode) continue;
+            _cskuGrid.ClearSelection();
+            row.Selected = true;
+            _cskuGrid.CurrentCell = row.Cells[0];
+            _cskuGrid.FirstDisplayedScrollingRowIndex = row.Index;
+            break;
+        }
     }
 
     private void OnHistoryMenuItemClick(object? sender, EventArgs e)
