@@ -4,6 +4,7 @@ using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -17,6 +18,8 @@ public class PartnerClosingForm : Form
     private readonly PartnerClosingRepository _closingRepo = new();
     private readonly PartnerMasterRepository _masterRepo = new();
     private readonly SalesChannelRepository _channelRepo = new();
+    private readonly DocPartyRepository _docPartyRepo = new();
+    private readonly DocHistoryRepository _docHistoryRepo = new();
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
@@ -82,6 +85,12 @@ public class PartnerClosingForm : Form
         var btnCancelClosing = new Button { Text = "확정취소", Size = new Size(80, 28) };
         btnCancelClosing.Click += OnCancelClosingClick;
 
+        var btnPublishStatement = new Button { Text = "명세표 발행", Size = new Size(90, 28) };
+        btnPublishStatement.Click += (s, e) => OnPublishClick(isLedger: false);
+
+        var btnPublishLedger = new Button { Text = "매출장 발행", Size = new Size(90, 28) };
+        btnPublishLedger.Click += (s, e) => OnPublishClick(isLedger: true);
+
         _statusSummaryLabel = new Label { AutoSize = true, Padding = new Padding(10, 6, 0, 0), Text = "상태요약: -" };
 
         toolbar.Controls.Add(new Label { Text = "기간:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
@@ -92,6 +101,8 @@ public class PartnerClosingForm : Form
         toolbar.Controls.Add(btnManualEntry);
         toolbar.Controls.Add(btnConfirm);
         toolbar.Controls.Add(btnCancelClosing);
+        toolbar.Controls.Add(btnPublishStatement);
+        toolbar.Controls.Add(btnPublishLedger);
         toolbar.Controls.Add(_statusSummaryLabel);
         return toolbar;
     }
@@ -362,6 +373,131 @@ public class PartnerClosingForm : Form
 
         RefreshBoard();
         _statusLabel.Text = $"{selected.Count}건 확정취소 완료. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 명세표/매출장 발행(§9). DocsForm의 그리드 주입 방식 대신 DocumentExporter를 헤드리스로 직접
+    /// 호출한다 — 선택 1건이면 SaveFileDialog로 파일명을 묻고, 여러 건이면(배치) 폴더 하나만 골라
+    /// "{거래처명}_{기간}_{문서}.xlsx"로 자동 저장한다. 확정(§상태=확정/발행완료) 상태인 거래처만 대상.
+    /// </summary>
+    private void OnPublishClick(bool isLedger)
+    {
+        var allSelected = SelectedPartyRows();
+        var selected = allSelected.Where(r => r.Status is "확정" or "발행완료").ToList();
+        var skippedNotConfirmed = allSelected.Count - selected.Count;
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var docType = MiniERP2.Models.DocType.TradeStatementVatExcl;
+        if (!isLedger)
+        {
+            var vatChoice = MessageBox.Show("VAT 별도로 발행합니까?\n(아니오 = VAT 포함, 취소 = 발행 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (vatChoice == DialogResult.Cancel) return;
+            docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
+        }
+
+        var supplier = _docPartyRepo.GetDefaultSupplier();
+        if (supplier == null)
+        {
+            MessageBox.Show("공급자(기본 거래처) 프로필이 설정되어 있지 않습니다. 문서관리 화면에서 먼저 등록하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        string? folder = null;
+        if (selected.Count > 1)
+        {
+            using var fbd = new FolderBrowserDialog { Description = "발행 파일을 저장할 폴더를 선택하세요." };
+            if (fbd.ShowDialog(this) != DialogResult.OK) return;
+            folder = fbd.SelectedPath;
+        }
+
+        var docLabel = isLedger ? "매출장" : "거래명세표";
+        var errors = new List<string>();
+        var successCount = 0;
+        string? lastFilePath = null;
+
+        foreach (var row in selected)
+        {
+            var buyer = row.IsManual
+                ? new DocParty { CompanyName = row.PartyName }
+                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
+            if (buyer == null)
+            {
+                errors.Add($"{row.PartyName}: 공급받는자 프로필 미연결(거래처 관리에서 채널 연결 필요)");
+                continue;
+            }
+
+            var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
+            var fileName = PartnerClosingDocumentBuilder.DefaultFileName(summary, docLabel);
+
+            string filePath;
+            if (folder != null)
+            {
+                filePath = Path.Combine(folder, fileName);
+            }
+            else
+            {
+                using var sfd = new SaveFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx", FileName = fileName };
+                if (sfd.ShowDialog(this) != DialogResult.OK) continue;
+                filePath = sfd.FileName;
+            }
+
+            try
+            {
+                decimal totalAmount;
+                if (isLedger)
+                {
+                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer);
+                    DocumentExporter.ExportSalesLedger(doc, filePath);
+                    totalAmount = doc.TotalSupply;
+                }
+                else
+                {
+                    var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer);
+                    DocumentExporter.ExportTradeStatement(doc, filePath);
+                    totalAmount = doc.GrandTotal;
+                }
+
+                byte[]? fileBytes = null;
+                try { fileBytes = File.ReadAllBytes(filePath); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
+
+                var docHistoryId = _docHistoryRepo.Add(new DocHistoryRecord
+                {
+                    DocType = isLedger ? "SalesLedger" : docType.ToString(),
+                    IssueDate = DateTime.Today,
+                    BuyerName = buyer.CompanyName,
+                    TotalAmount = totalAmount,
+                    FilePath = filePath,
+                    CreatedAt = DateTime.Now,
+                    FileBytes = fileBytes,
+                    ChannelCode = row.IsManual ? "" : row.PartyKey["CH:".Length..],
+                    Period = CurrentPeriod,
+                });
+
+                if (row.ClosingId != null) _closingRepo.MarkPublished(row.ClosingId.Value, docHistoryId);
+                successCount++;
+                lastFilePath = filePath;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{row.PartyName}: {ExportHelper.DescribeSaveError(ex)}");
+            }
+        }
+
+        RefreshBoard();
+
+        if (successCount == 1 && lastFilePath != null)
+        {
+            ExportHelper.ShowPostExportDialog(this, lastFilePath);
+        }
+
+        var msg = $"{successCount}건 발행 완료.";
+        if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
+        if (skippedNotConfirmed > 0) msg += $" ({skippedNotConfirmed}건은 미확정이라 제외)";
+        _statusLabel.Text = msg;
     }
 
     private void OnToggleFavoriteClick(object? sender, EventArgs e)
