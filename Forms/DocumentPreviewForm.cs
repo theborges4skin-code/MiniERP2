@@ -25,12 +25,12 @@ public class DocumentPreviewForm : Form
 
         var grid = BuildGrid();
         grid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "Date", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "품목", Name = "ItemName", Width = 200 },
-            new DataGridViewTextBoxColumn { HeaderText = "규격", Name = "Spec", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "공급가", Name = "SupplyAmount", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "Date", DataPropertyName = "Date", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "품목", Name = "ItemName", DataPropertyName = "ItemName", Width = 200 },
+            new DataGridViewTextBoxColumn { HeaderText = "규격", Name = "Spec", DataPropertyName = "Spec", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", DataPropertyName = "UnitPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "공급가", Name = "SupplyAmount", DataPropertyName = "SupplyAmount", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         var rows = doc.Lines
             .Where(l => !string.IsNullOrWhiteSpace(l.ItemName) || l.Qty != 0 || l.UnitPrice != 0)
@@ -61,18 +61,19 @@ public class DocumentPreviewForm : Form
 
     public static DocumentPreviewForm ForSalesLedger(SalesLedgerDoc doc)
     {
-        var form = new DocumentPreviewForm("미리보기 — 매출장(내부검토용)");
+        var vatLabel = doc.IsVatExcluded ? "VAT 별도" : "VAT 포함";
+        var form = new DocumentPreviewForm($"미리보기 — 매출장({vatLabel}, 내부검토용)");
 
         var grid = BuildGrid();
         grid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "Date", Width = 90 },
-            new DataGridViewTextBoxColumn { HeaderText = "품목", Name = "ItemName", Width = 180 },
-            new DataGridViewTextBoxColumn { HeaderText = "규격", Name = "Spec", Width = 80 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "공급가", Name = "SupplyAmount", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "원가", Name = "CostPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "ProfitAmount", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+            new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "Date", DataPropertyName = "Date", Width = 90 },
+            new DataGridViewTextBoxColumn { HeaderText = "품목", Name = "ItemName", DataPropertyName = "ItemName", Width = 180 },
+            new DataGridViewTextBoxColumn { HeaderText = "규격", Name = "Spec", DataPropertyName = "Spec", Width = 80 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", DataPropertyName = "UnitPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "공급가", Name = "SupplyAmount", DataPropertyName = "SupplyAmount", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "ProfitAmount", DataPropertyName = "ProfitAmount", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         var rows = doc.Lines
             .Where(l => !string.IsNullOrWhiteSpace(l.ItemName) || l.Qty != 0 || l.UnitPrice != 0)

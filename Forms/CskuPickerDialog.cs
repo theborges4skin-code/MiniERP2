@@ -1,4 +1,5 @@
 using MiniERP2.Database;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -106,7 +107,9 @@ public class CskuPickerDialog : Form
         {
             items.TryGetValue(c.Msku, out var item);
             string itemName = !string.IsNullOrWhiteSpace(c.InvoiceDisplayName) ? c.InvoiceDisplayName! : (item?.ItemName ?? c.Msku);
-            decimal cost = item?.CostPrice ?? 0m;
+            // 매입처 맥락이 없는 범용 검색 화면이라 CostResolver의 3단계 중 뒤 2단계만 적용한다
+            // (개별관리 오버라이드 > 마스터 대표원가). §4.4/§5 참고.
+            decimal cost = c.CostPriceOverride ?? item?.CostPrice ?? 0m;
             string channelName = channelNames.TryGetValue(c.ChannelCode, out var name) ? name : c.ChannelCode;
             return new PickerRow(c.ChannelCode, channelName, c.CskuCode, c.Msku, itemName, c.SupplyPrice, cost, c.Unit, c.Packing);
         })
@@ -179,7 +182,7 @@ public class CskuPickerDialog : Form
         }
 
         using var dialog = new NewCskuRegistrationDialog(channelCode, _searchBox.Text.Trim());
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.ResultCskuCode == null) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.ResultCskuCode == null) return;
 
         SelectedItemName = dialog.ResultItemName;
         SelectedUnitPrice = dialog.ResultUnitPrice;

@@ -4,6 +4,7 @@ using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -458,7 +459,7 @@ public class PriceQuoteForm : Form
     private void OnAddChannelClick(object? sender, EventArgs e)
     {
         using var dialog = new AddChannelDialog(_channels);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         var newChannelCode = ChannelCodeGenerator.GenerateNext(_channels.Select(c => c.ChannelCode));
         var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = dialog.ChannelName };
@@ -578,7 +579,7 @@ public class PriceQuoteForm : Form
         }
 
         using var picker = new CskuPickerDialog(channel.ChannelCode);
-        if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
+        if (FormManager.ShowDialogSafe(picker, this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
 
         var line = new PriceQuoteLine
         {

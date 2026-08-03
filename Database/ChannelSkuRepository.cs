@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
 
@@ -42,13 +43,15 @@ public class ChannelSkuRepository
                 RecordFieldChange(connection, transaction, csku.ChannelCode, csku.CskuCode, "매칭된 마스터SKU", existing.Msku, csku.Msku, now);
                 RecordFieldChange(connection, transaction, csku.ChannelCode, csku.CskuCode, "송장표시명", existing.InvoiceDisplayName, csku.InvoiceDisplayName, now);
                 RecordFieldChange(connection, transaction, csku.ChannelCode, csku.CskuCode, "비고", existing.Note, csku.Note, now);
+                RecordFieldChange(connection, transaction, csku.ChannelCode, csku.CskuCode, "제조원가(개별관리)",
+                    FormatCostPriceOverrideForHistory(existing.CostPriceOverride), FormatCostPriceOverrideForHistory(csku.CostPriceOverride), now);
             }
 
             using var upsertCommand = connection.CreateCommand();
             upsertCommand.Transaction = transaction;
             upsertCommand.CommandText = """
-                INSERT INTO ChannelSkuTable (ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing)
-                VALUES ($channelCode, $cskuCode, $msku, $supplyPrice, $invoiceDisplayName, $note, $updatedAt, $unit, $packing)
+                INSERT INTO ChannelSkuTable (ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing, CostPriceOverride)
+                VALUES ($channelCode, $cskuCode, $msku, $supplyPrice, $invoiceDisplayName, $note, $updatedAt, $unit, $packing, $costPriceOverride)
                 ON CONFLICT(ChannelCode, CskuCode) DO UPDATE SET
                     Msku = excluded.Msku,
                     SupplyPrice = excluded.SupplyPrice,
@@ -56,7 +59,8 @@ public class ChannelSkuRepository
                     Note = excluded.Note,
                     UpdatedAt = excluded.UpdatedAt,
                     Unit = excluded.Unit,
-                    Packing = excluded.Packing
+                    Packing = excluded.Packing,
+                    CostPriceOverride = excluded.CostPriceOverride
                 """;
             upsertCommand.Parameters.AddWithValue("$channelCode", csku.ChannelCode);
             upsertCommand.Parameters.AddWithValue("$cskuCode", csku.CskuCode);
@@ -67,6 +71,7 @@ public class ChannelSkuRepository
             upsertCommand.Parameters.AddWithValue("$updatedAt", now);
             upsertCommand.Parameters.AddWithValue("$unit", csku.Unit);
             upsertCommand.Parameters.AddWithValue("$packing", csku.Packing ?? (object)DBNull.Value);
+            upsertCommand.Parameters.AddWithValue("$costPriceOverride", csku.CostPriceOverride ?? (object)DBNull.Value);
             upsertCommand.ExecuteNonQuery();
 
             transaction.Commit();
@@ -97,6 +102,109 @@ public class ChannelSkuRepository
         command.Parameters.AddWithValue("$newValue", (object?)newValue ?? DBNull.Value);
         command.Parameters.AddWithValue("$changedAt", changedAt);
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// CostPriceOverride를 이력 문자열로 바꾼다. NULL을 그냥 넘기면 RecordFieldChange가 빈 문자열로
+    /// 정규화해 "연동 상태"와 "빈 값"이 구분되지 않으므로, 괄호로 시작해 어떤 숫자 표기와도 겹치지
+    /// 않는 전용 문구로 표기한다(§4.3). 숫자는 로케일 의존을 피하려 InvariantCulture로 변환한다.
+    /// </summary>
+    private static string FormatCostPriceOverrideForHistory(decimal? value) =>
+        value.HasValue ? value.Value.ToString("0.####", CultureInfo.InvariantCulture) : "(마스터 연동)";
+
+    /// <summary>
+    /// CSKU 코드 자체를 바꾼다("임시 SKU 등록"으로 급하게 만든 CSKU에 정식 코드를 부여하는 흐름
+    /// 전용). CskuCode는 (ChannelCode, CskuCode) 기본키의 일부라 일반 Upsert로 새 코드를 저장하면
+    /// 옛 코드 행이 그대로 남아 고아가 된다 — 여기서는 기본키를 직접 UPDATE하고, 가격/필드 변경
+    /// 이력도 새 코드로 함께 옮겨 이력이 끊기지 않게 한다. 새 코드가 이미 다른 CSKU로 존재하면
+    /// 예외를 던진다(호출 측에서 사전에 걸러도 되지만, 동시성 대비로 여기서도 한 번 더 확인한다).
+    /// 매핑 규칙(RuleExact 등)이 옛 코드를 가리키고 있다면 별도로 MappingRepository.RetargetRules로
+    /// 함께 옮겨야 한다(이 메서드는 CSKU 테이블만 책임진다).
+    /// </summary>
+    public void RenameCsku(string channelCode, string oldCskuCode, ChannelSkuModel updated)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            var codeChanged = !string.Equals(oldCskuCode, updated.CskuCode, StringComparison.Ordinal);
+            if (codeChanged && GetByChannelAndCskuCode(connection, channelCode, updated.CskuCode) != null)
+                throw new InvalidOperationException($"CSKU 코드 '{updated.CskuCode}'가 이미 존재합니다.");
+
+            var existing = GetByChannelAndCskuCode(connection, channelCode, oldCskuCode)
+                ?? throw new InvalidOperationException($"CSKU '{oldCskuCode}'를 찾을 수 없습니다.");
+            var now = DateTime.Now;
+
+            if (existing.SupplyPrice != updated.SupplyPrice)
+            {
+                using var historyCommand = connection.CreateCommand();
+                historyCommand.Transaction = transaction;
+                historyCommand.CommandText = """
+                    INSERT INTO ChannelSkuPriceHistory (ChannelCode, Msku, OldPrice, NewPrice, ChangedAt, Reason)
+                    VALUES ($channelCode, $cskuCode, $oldPrice, $newPrice, $changedAt, $reason)
+                    """;
+                historyCommand.Parameters.AddWithValue("$channelCode", channelCode);
+                historyCommand.Parameters.AddWithValue("$cskuCode", updated.CskuCode);
+                historyCommand.Parameters.AddWithValue("$oldPrice", existing.SupplyPrice);
+                historyCommand.Parameters.AddWithValue("$newPrice", updated.SupplyPrice);
+                historyCommand.Parameters.AddWithValue("$changedAt", now);
+                historyCommand.Parameters.AddWithValue("$reason", DBNull.Value);
+                historyCommand.ExecuteNonQuery();
+            }
+
+            if (codeChanged)
+            {
+                RecordFieldChange(connection, transaction, channelCode, oldCskuCode, "CSKU 코드", oldCskuCode, updated.CskuCode, now);
+
+                using var movePriceHistoryCmd = connection.CreateCommand();
+                movePriceHistoryCmd.Transaction = transaction;
+                movePriceHistoryCmd.CommandText = "UPDATE ChannelSkuPriceHistory SET Msku = $newCode WHERE ChannelCode = $channelCode AND Msku = $oldCode";
+                movePriceHistoryCmd.Parameters.AddWithValue("$newCode", updated.CskuCode);
+                movePriceHistoryCmd.Parameters.AddWithValue("$channelCode", channelCode);
+                movePriceHistoryCmd.Parameters.AddWithValue("$oldCode", oldCskuCode);
+                movePriceHistoryCmd.ExecuteNonQuery();
+
+                using var moveFieldHistoryCmd = connection.CreateCommand();
+                moveFieldHistoryCmd.Transaction = transaction;
+                moveFieldHistoryCmd.CommandText = "UPDATE ChannelSkuFieldHistory SET CskuCode = $newCode WHERE ChannelCode = $channelCode AND CskuCode = $oldCode";
+                moveFieldHistoryCmd.Parameters.AddWithValue("$newCode", updated.CskuCode);
+                moveFieldHistoryCmd.Parameters.AddWithValue("$channelCode", channelCode);
+                moveFieldHistoryCmd.Parameters.AddWithValue("$oldCode", oldCskuCode);
+                moveFieldHistoryCmd.ExecuteNonQuery();
+            }
+
+            RecordFieldChange(connection, transaction, channelCode, updated.CskuCode, "매칭된 마스터SKU", existing.Msku, updated.Msku, now);
+            RecordFieldChange(connection, transaction, channelCode, updated.CskuCode, "송장표시명", existing.InvoiceDisplayName, updated.InvoiceDisplayName, now);
+            RecordFieldChange(connection, transaction, channelCode, updated.CskuCode, "비고", existing.Note, updated.Note, now);
+
+            using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = """
+                UPDATE ChannelSkuTable
+                SET CskuCode = $newCskuCode, Msku = $msku, SupplyPrice = $supplyPrice, InvoiceDisplayName = $invoiceDisplayName,
+                    Note = $note, UpdatedAt = $updatedAt, Unit = $unit, Packing = $packing, CostPriceOverride = $costPriceOverride
+                WHERE ChannelCode = $channelCode AND CskuCode = $oldCskuCode
+                """;
+            updateCommand.Parameters.AddWithValue("$newCskuCode", updated.CskuCode);
+            updateCommand.Parameters.AddWithValue("$msku", updated.Msku);
+            updateCommand.Parameters.AddWithValue("$supplyPrice", updated.SupplyPrice);
+            updateCommand.Parameters.AddWithValue("$invoiceDisplayName", updated.InvoiceDisplayName ?? (object)DBNull.Value);
+            updateCommand.Parameters.AddWithValue("$note", updated.Note ?? (object)DBNull.Value);
+            updateCommand.Parameters.AddWithValue("$updatedAt", now);
+            updateCommand.Parameters.AddWithValue("$unit", updated.Unit);
+            updateCommand.Parameters.AddWithValue("$packing", updated.Packing ?? (object)DBNull.Value);
+            updateCommand.Parameters.AddWithValue("$costPriceOverride", updated.CostPriceOverride ?? (object)DBNull.Value);
+            updateCommand.Parameters.AddWithValue("$channelCode", channelCode);
+            updateCommand.Parameters.AddWithValue("$oldCskuCode", oldCskuCode);
+            updateCommand.ExecuteNonQuery();
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
     }
 
     public void Delete(string channelCode, string cskuCode)
@@ -166,7 +274,7 @@ public class ChannelSkuRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing
+            SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing, CostPriceOverride
             FROM ChannelSkuTable
             WHERE Msku = $msku
             """;
@@ -253,7 +361,7 @@ public class ChannelSkuRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing FROM ChannelSkuTable WHERE ChannelCode = $channelCode";
+        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing, CostPriceOverride FROM ChannelSkuTable WHERE ChannelCode = $channelCode";
         command.Parameters.AddWithValue("$channelCode", channelCode);
 
         var cskus = new List<ChannelSkuModel>();
@@ -290,7 +398,7 @@ public class ChannelSkuRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing FROM ChannelSkuTable";
+        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing, CostPriceOverride FROM ChannelSkuTable";
 
         var cskus = new List<ChannelSkuModel>();
         using var reader = command.ExecuteReader();
@@ -304,7 +412,7 @@ public class ChannelSkuRepository
     private static ChannelSkuModel? GetByChannelAndCskuCode(SqliteConnection connection, string channelCode, string cskuCode)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing FROM ChannelSkuTable WHERE ChannelCode = $channelCode AND CskuCode = $cskuCode";
+        command.CommandText = "SELECT ChannelCode, CskuCode, Msku, SupplyPrice, InvoiceDisplayName, Note, UpdatedAt, Unit, Packing, CostPriceOverride FROM ChannelSkuTable WHERE ChannelCode = $channelCode AND CskuCode = $cskuCode";
         command.Parameters.AddWithValue("$channelCode", channelCode);
         command.Parameters.AddWithValue("$cskuCode", cskuCode);
 
@@ -323,5 +431,6 @@ public class ChannelSkuRepository
         UpdatedAt = reader.IsDBNull(6) ? null : reader.GetDateTime(6),
         Unit = reader.IsDBNull(7) ? "kg" : reader.GetString(7),
         Packing = reader.IsDBNull(8) ? null : reader.GetString(8),
+        CostPriceOverride = reader.IsDBNull(9) ? null : reader.GetDecimal(9),
     };
 }

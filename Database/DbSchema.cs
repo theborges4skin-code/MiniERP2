@@ -638,6 +638,8 @@ public static class DbSchema
         EnsureColumn(connection, "ChannelSkuTable", "UpdatedAt", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "Unit", "TEXT NOT NULL DEFAULT 'kg'");
         EnsureColumn(connection, "ChannelSkuTable", "Packing", "TEXT");
+        // NULL=마스터DB 원가(ItemTable.CostPrice) 연동, 값 있음=이 CSKU만 개별 원가 관리(CSKU제조원가_개별관리_개발기획서.md §4.1).
+        EnsureColumn(connection, "ChannelSkuTable", "CostPriceOverride", "REAL");
         EnsureColumn(connection, "ChannelSkuPriceHistory", "Reason", "TEXT");
         EnsureColumn(connection, "ChannelSkuPriceHistory", "Note", "TEXT");
         EnsureColumn(connection, "ItemTable", "Unit", "TEXT NOT NULL DEFAULT 'kg'");

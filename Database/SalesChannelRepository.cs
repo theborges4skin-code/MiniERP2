@@ -53,6 +53,27 @@ public class SalesChannelRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
+        UpsertCore(command, channel);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 채널 일괄등록(엑셀) 커밋 전용. 호출 측이 연 트랜잭션 안에서 여러 채널을 한 번에 Upsert해,
+    /// 이어지는 DocParty 저장과 함께 하나의 SQLite 트랜잭션으로 묶을 수 있게 한다(기획서 §4.5).
+    /// </summary>
+    public void UpsertMany(IEnumerable<SalesChannel> channels, SqliteConnection connection, SqliteTransaction transaction)
+    {
+        foreach (var channel in channels)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            UpsertCore(command, channel);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    private static void UpsertCore(SqliteCommand command, SalesChannel channel)
+    {
         command.CommandText = """
             INSERT INTO SalesChannelTable (ChannelCode, ChannelName, GroupName, IsFavorite, DisplayOrder, IsPurchase, IsSales)
             VALUES ($channelCode, $channelName, $groupName, $isFavorite, $displayOrder, $isPurchase, $isSales)
@@ -71,7 +92,6 @@ public class SalesChannelRepository
         command.Parameters.AddWithValue("$displayOrder", channel.DisplayOrder);
         command.Parameters.AddWithValue("$isPurchase", channel.IsPurchase);
         command.Parameters.AddWithValue("$isSales", channel.IsSales);
-        command.ExecuteNonQuery();
     }
 
     public void Delete(string channelCode)

@@ -7,6 +7,7 @@ using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -71,15 +72,16 @@ public class OutboundHistoryForm : Form
     /// 거래처 마감보드(거래처마감보드_개발기획서.md §2)에서 "역으로 출고이력 추적"할 때 쓰는 생성자.
     /// 지정한 채널·날짜 근방으로 조회 조건을 미리 채우고 자동으로 조회한 뒤, 그 라인을 선택해
     /// 스크롤한다 — 마감보드의 라인 상세에는 없는 필드(운송장번호/수령인/상태 등)까지 여기서
-    /// 바로 이어서 확인·수정할 수 있게 하기 위함이다.
+    /// 바로 이어서 확인·수정할 수 있게 하기 위함이다. focusDetailId 없이 채널만 지정하면(마감보드
+    /// 거래처 목록에서 우클릭) 특정 라인 선택 없이 그 채널·기간으로만 필터링해서 연다.
     /// </summary>
-    public OutboundHistoryForm(long? focusDetailId, string? focusChannelCode = null, DateTime? focusDate = null)
+    public OutboundHistoryForm(long? focusDetailId, string? focusChannelCode = null, DateTime? focusDate = null, DateTime? rangeFrom = null, DateTime? rangeTo = null)
     {
         _focusDetailId = focusDetailId;
         InitializeComponent();
         FormClosing += OnFormClosing;
 
-        if (focusDetailId == null) return;
+        if (focusDetailId == null && string.IsNullOrEmpty(focusChannelCode)) return;
 
         if (!string.IsNullOrEmpty(focusChannelCode))
             _channelComboBox.SelectedValue = focusChannelCode;
@@ -88,10 +90,15 @@ public class OutboundHistoryForm : Form
             _fromDatePicker.Value = focusDate.Value.AddDays(-14);
             _toDatePicker.Value = focusDate.Value.AddDays(14);
         }
+        else if (rangeFrom != null && rangeTo != null)
+        {
+            _fromDatePicker.Value = rangeFrom.Value;
+            _toDatePicker.Value = rangeTo.Value;
+        }
         Load += (s, e) =>
         {
             OnLoadClick(this, EventArgs.Empty);
-            SelectAndScrollToDetail(focusDetailId.Value);
+            if (focusDetailId != null) SelectAndScrollToDetail(focusDetailId.Value);
         };
     }
 
@@ -445,18 +452,21 @@ public class OutboundHistoryForm : Form
         _statusLabel.Text = $"{_dirtyDetails.Count}건의 변경사항이 저장되지 않았습니다. '변경사항 저장'을 눌러주세요.";
     }
 
-    /// <summary>매입처 지정 시 그 매입가, 없으면 마스터DB 대표원가(CostPrice)를 원가/kg 스냅샷으로 반환한다.</summary>
+    /// <summary>매입처 지정 시 그 매입가, 아니면 CSKU 개별원가(오버라이드), 그 외엔 마스터DB
+    /// 대표원가(CostPrice) 순으로 원가/kg 스냅샷을 반환한다(CostResolver 참고).</summary>
     private decimal ResolveCostSnapshot(OutboundDetail detail)
     {
-        var masterSku = _channelSkuRepository.ResolveMasterSku(detail.ChannelCode, detail.MskuCode);
+        var csku = _channelSkuRepository.GetByChannelAndCskuCode(detail.ChannelCode, detail.MskuCode);
+        var masterSku = csku?.Msku ?? detail.MskuCode;
 
+        decimal? purchasePrice = null;
         if (!string.IsNullOrEmpty(detail.PurchaseChannelCode))
         {
-            var purchaseSku = _purchaseSkuRepository.GetByChannelAndMsku(detail.PurchaseChannelCode, masterSku);
-            if (purchaseSku != null) return purchaseSku.PurchasePrice;
+            purchasePrice = _purchaseSkuRepository.GetByChannelAndMsku(detail.PurchaseChannelCode, masterSku)?.PurchasePrice;
         }
 
-        return _itemRepository.GetBySku(masterSku)?.CostPrice ?? 0m;
+        var masterCostPrice = _itemRepository.GetBySku(masterSku)?.CostPrice ?? 0m;
+        return CostResolver.Resolve(purchasePrice, csku?.CostPriceOverride, masterCostPrice);
     }
 
     private void InvalidateRowsForShipment(string shipmentGroupKey)
@@ -529,20 +539,16 @@ public class OutboundHistoryForm : Form
         }
 
         using var courierDialog = new SelectCourierDialog();
-        if (courierDialog.ShowDialog(this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
+        if (FormManager.ShowDialogSafe(courierDialog, this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
         {
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("OutboundHistoryExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("OutboundHistoryExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("OutboundHistoryExport", Path.GetDirectoryName(filePath)!);
 
         var orderItems = selected.Select(d => new OfsOrderItem
@@ -635,7 +641,7 @@ public class OutboundHistoryForm : Form
         }
 
         using var courierDialog = new SelectCourierDialog();
-        if (courierDialog.ShowDialog(this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
+        if (FormManager.ShowDialogSafe(courierDialog, this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
         {
             return;
         }
@@ -764,7 +770,7 @@ public class OutboundHistoryForm : Form
                 // 이름만 같은 동명이인일 수 있음) 사용자가 직접 골라야 한다.
                 using var picker = new TrackingAssignDialog(group.Key.Name, group.Key.Addr, candidates, trackingNos);
                 var resolvedIds = new HashSet<long>();
-                if (picker.ShowDialog(this) == DialogResult.OK)
+                if (FormManager.ShowDialogSafe(picker, this) == DialogResult.OK)
                 {
                     foreach (var (detail, trackingNo) in picker.Assignments)
                     {
@@ -827,7 +833,7 @@ public class OutboundHistoryForm : Form
             : TrackingExportFieldDefs.Where(f => f.DefaultOn).Select(f => f.Key).ToHashSet();
 
         using var dialog = new TrackingFieldDialog(enabledKeys);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         var fieldKeys = dialog.SelectedKeys;
         _settingsService.SetLastFolder("TrackingExportFields", string.Join(",", fieldKeys));
@@ -838,22 +844,18 @@ public class OutboundHistoryForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"송장번호_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("TrackingExport")
-                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"송장번호_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("TrackingExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
 
-        _settingsService.SetLastFolder("TrackingExport", Path.GetDirectoryName(sfd.FileName)!);
+        _settingsService.SetLastFolder("TrackingExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
-            ExportTrackingToExcel(selected, fieldKeys, sfd.FileName);
+            ExportTrackingToExcel(selected, fieldKeys, filePath);
             _statusLabel.Text = $"송장번호 {selected.Count}건을 출력했습니다.";
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {

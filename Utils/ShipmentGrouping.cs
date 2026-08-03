@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using MiniERP2.Models;
 
@@ -123,15 +124,42 @@ public static class ShipmentGrouping
     {
         var effective = string.IsNullOrEmpty(template) ? DefaultQuantityFormat : template;
 
-        // 수량이 2개 이상이면 작업자가 한눈에 다건임을 알아볼 수 있도록, 수량만큼 '*'를 대괄호
-        // 바로 앞에 붙인다(예: "▶[##개]" + 수량 2 → "▶**[2개]", 수량 5 → "▶*****[5개]"). 대괄호가
-        // 없는 형식(기본형식 등)은 대상이 아니다(기존 표시 유지).
+        // 수량이 2개 이상이면 작업자가 한눈에 다건임을 알아볼 수 있도록, 수량을 소문자 로마자로
+        // 바꿔 대괄호 바로 앞에 붙인다(예: "▶[##개]" + 수량 2 → "▶ii[2개]", 수량 4 → "▶iv[4개]").
+        // 대괄호가 없는 형식(기본형식 등)은 대상이 아니다(기존 표시 유지).
         if (quantity >= 2)
         {
             var insertAt = effective.IndexOf('[');
-            if (insertAt >= 0) effective = effective.Insert(insertAt, new string('*', quantity));
+            if (insertAt >= 0) effective = effective.Insert(insertAt, ToLowerRoman(quantity));
         }
 
         return effective.Replace("##", quantity.ToString());
+    }
+
+    private static readonly (int Value, string Symbol)[] RomanNumerals =
+    [
+        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+        (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+        (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+    ];
+
+    /// <summary>
+    /// 수량을 소문자 로마자로 변환합니다(예: 2 → "ii", 4 → "iv"). 로마자 표기 관례상 의미가 없는
+    /// 범위(3899 초과)는 숫자를 그대로 반환합니다 — 실제 주문 수량에서는 발생하지 않는 방어 처리.
+    /// </summary>
+    private static string ToLowerRoman(int number)
+    {
+        if (number <= 0 || number > 3899) return number.ToString();
+
+        var sb = new StringBuilder();
+        foreach (var (value, symbol) in RomanNumerals)
+        {
+            while (number >= value)
+            {
+                sb.Append(symbol);
+                number -= value;
+            }
+        }
+        return sb.ToString();
     }
 }

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
@@ -32,10 +33,15 @@ public class OrderSkuMappingDialog : Form
     public string? ResultMappedSku { get; private set; }
     public string? ResultStatus { get; private set; }
 
+    // 검색창에 한 글자 입력할 때마다 마스터DB 전체를 다시 조회하지 않도록, 이 창이 떠있는 동안은
+    // 한 번만 읽어와 메모리에서 필터링한다(품목 수가 많아져도 타이핑마다 DB 왕복이 생기지 않는다).
+    private readonly List<ItemModel> _allItems;
+
     public OrderSkuMappingDialog(OfsOrderItem orderItem, string? channelCode)
     {
         _orderItem = orderItem;
         _channelCode = channelCode;
+        _allItems = _itemRepository.GetAll();
         InitializeComponent();
         RunSearch();
     }
@@ -118,12 +124,15 @@ public class OrderSkuMappingDialog : Form
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnClose = new Button { Text = "닫기", Width = 80 };
         var btnMap = new Button { Text = "이 SKU로 매핑", Width = 110 };
+        var btnNewMaster = new Button { Text = "새 마스터SKU 등록", Width = 140 };
         var btnTemp = new Button { Text = "임시 SKU 등록", Width = 110 };
         btnClose.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
         btnMap.Click += OnMapClick;
+        btnNewMaster.Click += OnRegisterNewMasterSkuClick;
         btnTemp.Click += OnRegisterTempSkuClick;
         buttonPanel.Controls.Add(btnClose);
         buttonPanel.Controls.Add(btnMap);
+        buttonPanel.Controls.Add(btnNewMaster);
         buttonPanel.Controls.Add(btnTemp);
 
         layout.Controls.Add(infoPanel, 0, 0);
@@ -181,11 +190,10 @@ public class OrderSkuMappingDialog : Form
     private void RunSearch()
     {
         var query = _searchBox.Text.Trim();
-        var allItems = _itemRepository.GetAll();
 
         var matches = string.IsNullOrEmpty(query)
-            ? allItems
-            : allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            ? _allItems
+            : _allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
 
         _candidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }
@@ -234,6 +242,27 @@ public class OrderSkuMappingDialog : Form
 
         ResultMappedSku = cskuCode;
         ResultStatus = "임시 매핑";
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    /// <summary>
+    /// "임시 SKU 등록"(원가 0, 나중에 보완 필요)과 달리, 실제 SKU코드/품명/제조원가/단위를 바로
+    /// 입력해 마스터DB(ItemTable)에 정식으로 등록하고, 그 자리에서 이 주문에 CSKU까지 붙인다.
+    /// </summary>
+    private void OnRegisterNewMasterSkuClick(object? sender, EventArgs e)
+    {
+        using var dlg = new NewMasterSkuDialog(_orderItem.ProductName);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.ResultSku == null) return;
+
+        var newSku = dlg.ResultSku;
+        var cskuCode = string.IsNullOrWhiteSpace(_txtCskuCode.Text) ? BuildDefaultCskuCode(newSku) : _txtCskuCode.Text.Trim();
+
+        SaveChannelSkuInfoIfEntered(cskuCode, newSku);
+        SaveAsExactRuleIfChecked(cskuCode);
+
+        ResultMappedSku = cskuCode;
+        ResultStatus = "신규 마스터SKU 등록";
         DialogResult = DialogResult.OK;
         Close();
     }

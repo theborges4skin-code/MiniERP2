@@ -1010,7 +1010,7 @@ public static class DocumentExporter
         int row = 1;
         row = WriteLedgerTitle(ws, row, layout);
         row = WriteLedgerPartyBlock(ws, row, doc.Supplier, doc.Buyer, layout);
-        row = WriteLedgerDataHeader(ws, row, layout);
+        row = WriteLedgerDataHeader(ws, row, layout, doc.IsVatExcluded);
         row = WriteLedgerDataRows(ws, row, doc, layout);
         row = WriteLedgerTotalRow(ws, row, doc, layout);
         if (!string.IsNullOrWhiteSpace(doc.FooterNote))
@@ -1156,7 +1156,7 @@ public static class DocumentExporter
         ws.Row(r).Height = 16;
     }
 
-    private static int WriteLedgerDataHeader(ExcelWorksheet ws, int row, LedgerLayout l)
+    private static int WriteLedgerDataHeader(ExcelWorksheet ws, int row, LedgerLayout l, bool vatExcluded)
     {
         void H(int col, string text)
         {
@@ -1172,8 +1172,11 @@ public static class DocumentExporter
 
         H(l.ColYear, "연"); H(l.ColMonth, "월"); H(l.ColDay, "일");
         H(l.ColItem, "품  목"); H(l.ColSpec, "규  격"); H(l.ColQty, "수량");
-        H(l.ColUnitPrice, "단  가"); H(l.ColSupply, "공급가액");
-        if (l.ColCost > 0) H(l.ColCost, "제조원가");
+        // VAT포함 모드에서는 값 자체가 CSKU 납품단가(VAT포함) 그대로라, 거래명세표의 "단가(VAT포함)"
+        // 헤더와 같은 방식으로 열 이름에 표기해 어느 기준인지 헷갈리지 않게 한다.
+        H(l.ColUnitPrice, vatExcluded ? "단  가" : "단가(VAT포함)");
+        H(l.ColSupply, vatExcluded ? "공급가액" : "공급가액(VAT포함)");
+        if (l.ColCost > 0) H(l.ColCost, vatExcluded ? "제조원가" : "제조원가(VAT포함)");
         if (l.ColProfit > 0) H(l.ColProfit, "이익액");
         H(l.ColNote, "비  고");
 

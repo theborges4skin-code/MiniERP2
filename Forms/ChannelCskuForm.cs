@@ -20,6 +20,7 @@ public class ChannelCskuForm : Form
     private readonly ChannelSkuRepository _cskuRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
     private readonly ItemRepository _itemRepository = new();
+    private readonly MappingRepository _mappingRepository = new();
     private readonly SettingsService _settingsService = new();
 
     private ComboBox _channelCombo = new();
@@ -66,16 +67,22 @@ public class ChannelCskuForm : Form
 
         var btnAddCsku = new Button { Text = "CSKU 추가", Size = new Size(90, 30) };
         btnAddCsku.Click += OnAddCskuClick;
+        var btnDeleteCsku = new Button { Text = "CSKU 삭제", Size = new Size(90, 30) };
+        btnDeleteCsku.Click += OnDeleteCskuClick;
         var btnSave = new Button { Text = "저장", Size = new Size(90, 30) };
         btnSave.Click += OnSaveClick;
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
         btnExport.Click += OnExportClick;
+        var btnFindOrphans = new Button { Text = "마스터SKU 미등록 CSKU 찾기", AutoSize = true };
+        btnFindOrphans.Click += OnFindOrphanCskuClick;
 
         toolStrip.Controls.Add(new Label { Text = "거래처:", AutoSize = true, Padding = new Padding(0, 7, 2, 0) });
         toolStrip.Controls.Add(_channelCombo);
         toolStrip.Controls.Add(btnAddCsku);
+        toolStrip.Controls.Add(btnDeleteCsku);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnFindOrphans);
         _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
         toolStrip.Controls.Add(_statusLabel);
 
@@ -91,6 +98,7 @@ public class ChannelCskuForm : Form
             new DataGridViewTextBoxColumn { Name = "CskuCode", HeaderText = "CSKU 코드", DataPropertyName = "CskuCode", Width = 150 },
             new DataGridViewTextBoxColumn { Name = "Msku", HeaderText = "마스터SKU", DataPropertyName = "Msku", Width = 130 },
             new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "제조원가", DataPropertyName = string.Empty, Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewCheckBoxColumn { Name = "IsOverride", HeaderText = "개별관리", DataPropertyName = string.Empty, Width = 60 },
             new DataGridViewTextBoxColumn { Name = "InvoiceDisplayName", HeaderText = "송장표시명", DataPropertyName = "InvoiceDisplayName", Width = 180 },
             new DataGridViewTextBoxColumn { Name = "SupplyPrice", HeaderText = "납품가", DataPropertyName = "SupplyPrice", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { Name = "Unit", HeaderText = "단위", DataPropertyName = "Unit", Width = 60 },
@@ -103,6 +111,14 @@ public class ChannelCskuForm : Form
         // 제안한다(CSkuForm의 ChannelCode 트리거와 같은 관례 — 여기선 채널이 이미 고정이라 Msku가 트리거).
         _cskuGrid.CellEndEdit += OnCskuGridCellEndEdit;
         _cskuGrid.CellFormatting += OnCskuGridCellFormatting;
+        _cskuGrid.CellBeginEdit += OnCskuGridCellBeginEdit;
+        _cskuGrid.CellValueChanged += OnCskuGridCellValueChanged;
+        _cskuGrid.CurrentCellDirtyStateChanged += (s, e) =>
+        {
+            // 체크박스 열은 클릭 즉시 커밋해야 CellValueChanged가 바로 발생한다(WinForms 관례).
+            if (_cskuGrid.CurrentCell is DataGridViewCheckBoxCell && _cskuGrid.IsCurrentCellDirty)
+                _cskuGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
 
         SetupContextMenu();
         _cskuGrid.UserDeletingRow += OnUserDeletingRow;
@@ -134,6 +150,12 @@ public class ChannelCskuForm : Form
         };
     }
 
+    /// <summary>
+    /// "임시 SKU 등록"으로 급하게 만든 CSKU(코드도 "채널_TEMP005"처럼 임시 형태)를 정식 마스터SKU에
+    /// 연결하고, 필요하면 CSKU 코드도 정식 값으로 함께 바꾼다. 기본키 변경이 걸려있어 그리드의
+    /// 일반 [저장] 흐름(Upsert)으로는 처리할 수 없으므로, 여기서는 확인 즉시 RenameCsku로 반영하고
+    /// 그 코드를 가리키던 매핑 규칙도 RetargetRules로 함께 옮긴다.
+    /// </summary>
     private void OnAssignMasterSkuClick(object? sender, EventArgs e)
     {
         if (_cskuGrid.SelectedRows.Count != 1) return;
@@ -141,13 +163,44 @@ public class ChannelCskuForm : Form
         if (selectedRow.IsNewRow) return;
         if (selectedRow.DataBoundItem is not ChannelSkuModel csku) return;
 
-        using var dlg = new AssignMasterSkuDialog(csku.Msku, csku.InvoiceDisplayName);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedSku == null) return;
+        var channel = SelectedChannel;
+        if (channel == null) return;
 
-        csku.Msku = dlg.SelectedSku;
-        _cskuGrid.InvalidateRow(selectedRow.Index);
-        _statusLabel.ForeColor = Color.DarkGreen;
-        _statusLabel.Text = $"마스터SKU를 '{dlg.SelectedSku}'(으)로 지정했습니다. [저장]을 눌러야 반영됩니다.";
+        using var dlg = new AssignMasterSkuDialog(csku.Msku, csku.InvoiceDisplayName, csku.CskuCode, channel.ChannelName);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.SelectedSku == null) return;
+
+        var oldCskuCode = csku.CskuCode;
+        var codeChanged = !string.Equals(oldCskuCode, dlg.SelectedCskuCode, StringComparison.Ordinal);
+        var updated = new ChannelSkuModel
+        {
+            ChannelCode = csku.ChannelCode,
+            CskuCode = dlg.SelectedCskuCode,
+            Msku = dlg.SelectedSku,
+            SupplyPrice = csku.SupplyPrice,
+            InvoiceDisplayName = csku.InvoiceDisplayName,
+            Note = csku.Note,
+            Unit = csku.Unit,
+            Packing = csku.Packing,
+            CostPriceOverride = csku.CostPriceOverride,
+        };
+
+        try
+        {
+            _cskuRepository.RenameCsku(channel.ChannelCode, oldCskuCode, updated);
+            if (codeChanged) _mappingRepository.RetargetRules(channel.ChannelCode, oldCskuCode, updated.CskuCode);
+
+            LoadData();
+            SelectRowByCskuCode(updated.CskuCode);
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = codeChanged
+                ? $"'{oldCskuCode}' → '{updated.CskuCode}'(으)로 정식 등록하고 마스터SKU '{dlg.SelectedSku}'를 연결했습니다."
+                : $"마스터SKU를 '{dlg.SelectedSku}'(으)로 지정했습니다.";
+        }
+        catch (Exception ex)
+        {
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = $"저장 중 오류가 발생했습니다: {ex.Message}";
+        }
     }
 
     /// <summary>
@@ -167,7 +220,7 @@ public class ChannelCskuForm : Form
         }
 
         using var dlg = new NewChannelCskuDialog(channel.ChannelCode, channel.ChannelName);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedMasterSku == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.SelectedMasterSku == null) return;
 
         _cskuRepository.Upsert(new ChannelSkuModel
         {
@@ -185,6 +238,32 @@ public class ChannelCskuForm : Form
         SelectRowByCskuCode(dlg.CskuCode);
         _statusLabel.ForeColor = Color.DarkGreen;
         _statusLabel.Text = $"CSKU '{dlg.CskuCode}'를 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 채널 불문하고 마스터SKU가 등록되지 않은(=원가를 조회할 수 없는) CSKU를 전부 찾아 보여준다
+    /// (§ 개선방안 4 — 기존 orphan 정리용 진단 도구). 목록에서 고르면 그 채널로 바로 이동한다.
+    /// </summary>
+    private void OnFindOrphanCskuClick(object? sender, EventArgs e)
+    {
+        var validMskus = _itemRepository.GetAll().Select(i => i.Sku).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var orphans = _cskuRepository.GetAll().Where(c => !validMskus.Contains(c.Msku)).ToList();
+
+        if (orphans.Count == 0)
+        {
+            MessageBox.Show("마스터SKU가 등록되지 않은 CSKU가 없습니다.", "확인", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new OrphanCskuFinderDialog(orphans, _salesChannelRepository.GetAll());
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.SelectedChannelCode == null || dlg.SelectedCskuCode == null) return;
+
+        if (_channelCombo.DataSource is List<SalesChannel> channels)
+        {
+            var channel = channels.FirstOrDefault(c => c.ChannelCode == dlg.SelectedChannelCode);
+            if (channel != null) _channelCombo.SelectedItem = channel;
+        }
+        SelectRowByCskuCode(dlg.SelectedCskuCode);
     }
 
     private void SelectRowByCskuCode(string cskuCode)
@@ -214,7 +293,7 @@ public class ChannelCskuForm : Form
 
         using var historyForm = new ChannelSkuHistoryForm(csku.ChannelCode, csku.CskuCode);
         FormManager.ApplyBoundsTracking(historyForm);
-        historyForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(historyForm, this);
     }
 
     private void LoadChannelCombo()
@@ -254,14 +333,103 @@ public class ChannelCskuForm : Form
 
     private void OnCskuGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
-        if (_cskuGrid.Columns[e.ColumnIndex].Name != "CostPrice") return;
         if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
         if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+        var columnName = _cskuGrid.Columns[e.ColumnIndex].Name;
+
+        if (columnName == "IsOverride")
+        {
+            e.Value = csku.CostPriceOverride.HasValue;
+            return;
+        }
+
+        if (columnName != "CostPrice") return;
 
         // FormattingApplied=true는 e.Value가 "이미 완성된 표시용 문자열"일 때만 써야 한다 — 이
         // 열은 DefaultCellStyle.Format="N0"로 숫자 서식을 그리드가 대신 입혀야 하므로, 원시
         // decimal 값만 넣고 FormattingApplied는 켜지 않는다(켜면 FormatException 발생).
-        e.Value = _costPriceByMsku.TryGetValue(csku.Msku, out var cost) ? cost : 0m;
+        var masterCost = _costPriceByMsku.TryGetValue(csku.Msku, out var cost) ? cost : 0m;
+        e.Value = csku.CostPriceOverride ?? masterCost;
+
+        // 마스터 연동 상태(개별관리 미체크)면 회색으로 표시해 "마스터 공유 값"임을 눈에 띄게 한다.
+        if (e.CellStyle != null) e.CellStyle.ForeColor = csku.CostPriceOverride.HasValue ? Color.Black : Color.Gray;
+    }
+
+    /// <summary>
+    /// 개별관리(체크 해제 상태)인 CSKU의 제조원가를 직접 고치려 하면, 그 값이 마스터DB 공유
+    /// 원가라서 저장 시 같은 마스터SKU를 쓰는 다른 채널/CSKU까지 함께 바뀐다는 것을 먼저 알리고
+    /// 선택하게 한다(CSKU제조원가_개별관리_개발기획서.md §4.5, 부작용 2.3-①·② 대응).
+    /// </summary>
+    private void OnCskuGridCellBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
+    {
+        if (_cskuGrid.Columns[e.ColumnIndex].Name != "CostPrice") return;
+        if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
+        if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+        if (csku.CostPriceOverride.HasValue) return; // 이미 개별관리 상태 — 그대로 편집 허용
+
+        e.Cancel = true;
+        if (string.IsNullOrWhiteSpace(csku.Msku)) return;
+
+        var masterCost = _costPriceByMsku.GetValueOrDefault(csku.Msku, 0m);
+        var affected = _cskuRepository.GetAllByMsku(csku.Msku);
+        var channelCount = affected.Select(a => a.ChannelCode).Distinct().Count();
+
+        var choice = MessageBox.Show(
+            $"이 값은 마스터DB 공유 원가입니다. 저장하면 이 마스터SKU('{csku.Msku}')를 사용하는 " +
+            $"{channelCount}개 채널 / {affected.Count}개 CSKU의 원가가 함께 바뀌고, 아직 원가 스냅샷이 없는 " +
+            "미확정 출고 라인의 손익도 재계산됩니다.\n\n" +
+            "[예] 마스터 원가를 변경합니다\n[아니오] 이 CSKU만 개별관리로 전환합니다\n[취소] 아무 것도 하지 않습니다",
+            "마스터 원가 수정", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+
+        if (choice == DialogResult.Yes)
+        {
+            using var prompt = new SimpleTextPromptDialog("마스터 원가 변경",
+                $"'{csku.Msku}' 마스터 원가 (현재 {masterCost:N0}원):", masterCost.ToString("0.####"), ValidateNumeric);
+            if (FormManager.ShowDialogSafe(prompt, this) != DialogResult.OK || !decimal.TryParse(prompt.Value, out var newCost)) return;
+
+            _costPriceByMsku[csku.Msku] = newCost;
+            _dirtyCostMskus.Add(csku.Msku);
+            _cskuGrid.InvalidateRow(e.RowIndex);
+        }
+        else if (choice == DialogResult.No)
+        {
+            csku.CostPriceOverride = masterCost;
+            _cskuGrid.InvalidateRow(e.RowIndex);
+        }
+    }
+
+    private static string? ValidateNumeric(string value) => decimal.TryParse(value, out _) ? null : "숫자를 입력하세요.";
+
+    /// <summary>개별관리 체크박스 토글: 켜면 현재 마스터 원가를 복사해 편집 가능 상태로 전환하고,
+    /// 끄면 확인 후 마스터 연동으로 되돌린다(§4.5).</summary>
+    private void OnCskuGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _cskuGrid.Rows.Count) return;
+        if (_cskuGrid.Columns[e.ColumnIndex].Name != "IsOverride") return;
+        if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
+
+        var isChecked = _cskuGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value is true;
+
+        if (isChecked && !csku.CostPriceOverride.HasValue)
+        {
+            csku.CostPriceOverride = _costPriceByMsku.GetValueOrDefault(csku.Msku, 0m);
+            _cskuGrid.InvalidateRow(e.RowIndex);
+        }
+        else if (!isChecked && csku.CostPriceOverride.HasValue)
+        {
+            var masterCost = _costPriceByMsku.GetValueOrDefault(csku.Msku, 0m);
+            var result = MessageBox.Show(
+                $"이 CSKU의 개별 원가를 삭제하고 마스터DB 원가({masterCost:N0}원)를 따르게 합니다.\n계속하시겠습니까?",
+                "연동 복귀 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                csku.CostPriceOverride = null;
+            }
+            // 취소 시 모델은 그대로 두고 다시 그려서 체크 표시를 원복한다(값을 직접 되돌리지 않음 —
+            // CellFormatting이 모델 상태를 기준으로 항상 다시 그리므로 이 방식이 재귀 위험이 없다).
+            _cskuGrid.InvalidateRow(e.RowIndex);
+        }
     }
 
     private void OnCskuGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
@@ -270,14 +438,14 @@ public class ChannelCskuForm : Form
         if (_cskuGrid.Rows[e.RowIndex].DataBoundItem is not ChannelSkuModel csku) return;
         var columnName = _cskuGrid.Columns[e.ColumnIndex].Name;
 
-        // "제조원가"는 ChannelSkuModel이 아니라 마스터SKU(ItemTable) 소속 값이라 저장 시점에 따로
-        // 반영한다(OnSaveClick 참고) — 여기서는 캐시만 갱신.
+        // "제조원가"는 개별관리(체크) 상태에서만 직접 편집이 여기까지 도달한다 — 연동 상태의
+        // 편집 시도는 OnCskuGridCellBeginEdit에서 먼저 가로채 취소하거나 마스터/개별관리 경로로
+        // 분기하기 때문이다. 개별관리 값은 ChannelSkuModel 소속이라 저장 시 CSKU Upsert에 함께 실린다.
         if (columnName == "CostPrice")
         {
-            if (string.IsNullOrWhiteSpace(csku.Msku)) return;
+            if (!csku.CostPriceOverride.HasValue) return;
             var raw = _cskuGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
-            _costPriceByMsku[csku.Msku] = decimal.TryParse(raw, out var parsed) ? parsed : 0m;
-            _dirtyCostMskus.Add(csku.Msku);
+            csku.CostPriceOverride = decimal.TryParse(raw, out var parsed) ? parsed : 0m;
             return;
         }
 
@@ -302,9 +470,22 @@ public class ChannelCskuForm : Form
 
         try
         {
+            // [CSKU 추가]/[마스터SKU 지정/변경] 다이얼로그는 마스터SKU 존재 여부를 검증하지만, 그리드에
+            // 직접 타이핑하는 이 저장 경로는 검증하지 않았다. 그 결과 존재하지 않는 마스터SKU 코드가
+            // 그대로 CSKU에 연결되면 매핑 규칙은 정상 동작하는데 정산/이익분석에서는 원가를 찾지 못해
+            // "원가 정보 없음"으로 남는 유령 CSKU가 생긴다(2026-08-03 실사례: TEMP005 → 존재하지 않는
+            // "mbc200x5"로 잘못 수정되어 저장됨). 다른 두 경로와 동일하게 여기서도 저장 전에 막는다.
+            var unregisteredCskus = new List<string>();
             foreach (var csku in _cskus)
             {
                 if (string.IsNullOrWhiteSpace(csku.Msku)) continue; // 마스터SKU 없이는 저장 대상이 아님(신규 빈 행 등)
+
+                if (_itemRepository.GetBySku(csku.Msku) == null)
+                {
+                    unregisteredCskus.Add(string.IsNullOrWhiteSpace(csku.CskuCode) ? csku.Msku : csku.CskuCode);
+                    continue;
+                }
+
                 csku.ChannelCode = channel.ChannelCode;
 
                 if (string.IsNullOrWhiteSpace(csku.CskuCode))
@@ -328,6 +509,11 @@ public class ChannelCskuForm : Form
             LoadData();
             _statusLabel.ForeColor = Color.DarkGreen;
             _statusLabel.Text = $"성공적으로 저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+            if (unregisteredCskus.Count > 0)
+            {
+                _statusLabel.ForeColor = Color.Red;
+                _statusLabel.Text += $" (저장 안 됨: {string.Join(", ", unregisteredCskus)} — 등록되지 않은 마스터SKU입니다. [마스터SKU 지정/변경] 또는 [새 마스터SKU 만들기]로 먼저 등록하세요)";
+            }
             if (unregisteredMskus.Count > 0)
             {
                 _statusLabel.ForeColor = Color.DarkOrange;
@@ -357,6 +543,42 @@ public class ChannelCskuForm : Form
             e.Cancel = true;
     }
 
+    /// <summary>
+    /// 그리드 행 선택 후 Delete 키로 지우는 방법(OnUserDeletingRow)이 잘 드러나지 않아, [CSKU 추가]와
+    /// 대칭으로 명시적인 버튼을 둔다. 여러 행을 한꺼번에 선택해 지울 수 있다.
+    /// </summary>
+    private void OnDeleteCskuClick(object? sender, EventArgs e)
+    {
+        var targets = _cskuGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow)
+            .Select(r => r.DataBoundItem as ChannelSkuModel)
+            .Where(c => c != null && !string.IsNullOrWhiteSpace(c!.CskuCode))
+            .Cast<ChannelSkuModel>()
+            .DistinctBy(c => (c.ChannelCode, c.CskuCode))
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            MessageBox.Show("삭제할 CSKU를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var codeList = string.Join(", ", targets.Select(c => c.CskuCode));
+        var result = MessageBox.Show(
+            $"CSKU {targets.Count}건을 삭제하시겠습니까?\n{codeList}\n관련된 모든 가격 변경 이력도 함께 삭제됩니다.",
+            "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (result != DialogResult.Yes) return;
+
+        foreach (var csku in targets)
+        {
+            _cskuRepository.Delete(csku.ChannelCode, csku.CskuCode);
+        }
+
+        LoadData();
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"CSKU {targets.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
     private void OnExportClick(object? sender, EventArgs e)
     {
         var channel = SelectedChannel;
@@ -366,14 +588,11 @@ public class ChannelCskuForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"CSKU_{channel.ChannelName}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("ChannelCskuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("ChannelCskuExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"CSKU_{channel.ChannelName}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("ChannelCskuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("ChannelCskuExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
@@ -398,8 +617,8 @@ public class ChannelCskuForm : Form
             }
             if (worksheet.Dimension != null) worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
 
-            ExportHelper.SaveExcel(package, sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.SaveExcel(package, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {

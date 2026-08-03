@@ -2,6 +2,7 @@ using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Services;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -403,7 +404,7 @@ public class MonthlyClosingForm : Form
         if (_currentRunId < 0) return;
 
         using var form = new UnmappedQueueForm(_currentRunId, _periodBox.Text.Trim(), _orchestrator);
-        form.ShowDialog(this);
+        FormManager.ShowDialogSafe(form, this);
 
         // 재계산 후 그리드 갱신
         var updated = _runRepo.GetStagedFiles(_currentRunId);

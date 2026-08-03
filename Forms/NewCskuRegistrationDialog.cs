@@ -3,6 +3,7 @@ using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -187,7 +188,7 @@ public class NewCskuRegistrationDialog : Form
     private void OnNewMasterSkuClick(object? sender, EventArgs e)
     {
         using var dialog = new NewMasterSkuDialog(_searchBox.Text.Trim());
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.ResultSku == null) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.ResultSku == null) return;
 
         RunSearch();
         _selectedMaster = _itemRepository.GetBySku(dialog.ResultSku);

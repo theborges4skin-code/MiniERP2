@@ -173,7 +173,7 @@ public class MasterSkuForm : Form
 
         using var historyForm = new CostHistoryForm(item.Sku);
         FormManager.ApplyBoundsTracking(historyForm);
-        historyForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(historyForm, this);
     }
 
     private void OnGridCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -210,7 +210,7 @@ public class MasterSkuForm : Form
         // CSKU 관리창을 모달 다이얼로그로 엽니다.
         using var cskuForm = new CSkuForm(sku);
         FormManager.ApplyBoundsTracking(cskuForm);
-        cskuForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(cskuForm, this);
         LoadData(); // CSKU 추가/삭제로 "연결 CSKU" 요약이 바뀌었을 수 있으므로 새로고침.
     }
 
@@ -230,7 +230,7 @@ public class MasterSkuForm : Form
 
         using var overviewForm = new PurchaseSalesOverviewForm(sku);
         FormManager.ApplyBoundsTracking(overviewForm);
-        overviewForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(overviewForm, this);
     }
 
     private void LoadData()
@@ -294,7 +294,7 @@ public class MasterSkuForm : Form
     private void OnAddNewMasterSkuClick(object? sender, EventArgs e)
     {
         using var dlg = new NewMasterSkuDialog();
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ResultSku == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.ResultSku == null) return;
 
         _searchBox.Text = ""; // 검색어가 걸려 있으면 방금 등록한 항목이 안 보일 수 있으므로 해제
         LoadData();
@@ -419,7 +419,7 @@ public class MasterSkuForm : Form
             if (package == null) return;
 
             using var mappingDialog = new MasterSkuImportMappingDialog(package);
-            if (mappingDialog.ShowDialog(this) != DialogResult.OK) return;
+            if (FormManager.ShowDialogSafe(mappingDialog, this) != DialogResult.OK) return;
 
             var worksheet = package.Workbook.Worksheets[mappingDialog.SheetName];
             var headerRow = mappingDialog.HeaderRow;
@@ -498,17 +498,13 @@ public class MasterSkuForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"MasterSKU_{DateTime.Now:yyyyMMdd}.xlsx",
-            // 기획서 2.4절: 기능별 마지막 폴더 위치 기억
-            InitialDirectory = _settingsService.GetLastFolder("MasterSkuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+        // 기획서 2.4절: 기능별 마지막 폴더 위치 기억
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"MasterSKU_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("MasterSkuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
-        if (sfd.ShowDialog() != DialogResult.OK) return;
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("MasterSkuExport", Path.GetDirectoryName(filePath)!);
 
         try

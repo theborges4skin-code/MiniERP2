@@ -152,15 +152,11 @@ public class DocStatementBrowserForm : Form
 
         var defaultSupplier = _partyRepo.GetDefaultSupplier() ?? new DocParty();
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"거래명세표_이관재현_{DateTime.Today:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("DocStatementExport")
-                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("DocStatementExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"거래명세표_이관재현_{DateTime.Today:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("DocStatementExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("DocStatementExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
@@ -171,8 +167,8 @@ public class DocStatementBrowserForm : Form
                 return new LegacyStatementExportItem(row.Statement, defaultSupplier, buyer, lines);
             }).ToList();
 
-            DocumentExporter.ExportLegacyStatements(items, sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            DocumentExporter.ExportLegacyStatements(items, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
             _statusLabel.Text = $"{items.Count}건 내보내기 완료.";
         }
         catch (Exception ex)

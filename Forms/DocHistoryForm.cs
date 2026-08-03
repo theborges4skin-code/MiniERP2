@@ -214,17 +214,15 @@ public class DocHistoryForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"문서이력_{DateTime.Now:yyyyMMdd}.xlsx",
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"문서이력_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
 
         try
         {
-            ExportToExcel(_records, sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportToExcel(_records, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {

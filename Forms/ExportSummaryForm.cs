@@ -5,6 +5,7 @@ using MiniERP2.DataLoaders;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -343,7 +344,7 @@ public class ExportSummaryForm : Form
     private void AddSalesFile()
     {
         using var dialog = new SalesFileLoaderDialog(_config.SalesMarkets, _config.Markets, _settingsService, source => _sources.Add(source));
-        dialog.ShowDialog(this);
+        FormManager.ShowDialogSafe(dialog, this);
     }
 
     private void AddRemittanceFile()
@@ -384,7 +385,7 @@ public class ExportSummaryForm : Form
     private void AddManualEntry()
     {
         using var dialog = new ExportSummaryManualEntryDialog(_config.Markets);
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Entries.Count == 0) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.Entries.Count == 0) return;
 
         foreach (var g in dialog.Entries.GroupBy(e => e.MarketCode))
         {
@@ -557,15 +558,10 @@ public class ExportSummaryForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"수출요약보고서_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("ExportSummary.Export") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-
-        var filePath = sfd.FileName;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"수출요약보고서_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("ExportSummary.Export") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
         _settingsService.SetLastFolder("ExportSummary.Export", Path.GetDirectoryName(filePath)!);
 
         try

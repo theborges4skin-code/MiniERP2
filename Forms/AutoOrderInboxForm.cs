@@ -152,7 +152,7 @@ public class AutoOrderInboxForm : Form
     private void OnSettingsClick(object? sender, EventArgs e)
     {
         using var dialog = new AutoOrderSettingsDialog();
-        dialog.ShowDialog(this);
+        FormManager.ShowDialogSafe(dialog, this);
     }
 
     private async void OnDownloadClick(object? sender, EventArgs e)

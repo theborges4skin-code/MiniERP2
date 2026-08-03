@@ -1209,7 +1209,7 @@ public class MappingForm : Form
 
         using var historyForm = new ChannelSkuHistoryForm(row.ChannelCode, row.TargetSku);
         FormManager.ApplyBoundsTracking(historyForm);
-        historyForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(historyForm, this);
     }
 
     /// <summary>
@@ -1563,7 +1563,7 @@ public class MappingForm : Form
 
         using var listForm = new ConditionRuleListForm(_mappingRepository, channelCode);
         FormManager.ApplyBoundsTracking(listForm);
-        if (listForm.ShowDialog(this) != DialogResult.OK || listForm.SelectedRuleId == null) return;
+        if (FormManager.ShowDialogSafe(listForm, this) != DialogResult.OK || listForm.SelectedRuleId == null) return;
 
         LoadConditionRules(channelCode);
         SelectConditionRuleById(listForm.SelectedRuleId.Value);

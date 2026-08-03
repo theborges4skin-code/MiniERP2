@@ -61,17 +61,37 @@ public class PartnerClosingDocumentBuilderTests
     }
 
     [TestMethod]
-    public void BuildSalesLedger_DefaultGroupsByDateAndCsku_AndAlwaysExcludesVat()
+    public void BuildSalesLedger_VatExcludedDefault_GroupsByDateAndCskuAndDividesOutVat()
     {
         var supplier = new DocParty { CompanyName = "공급자" };
         var buyer = new DocParty { CompanyName = "매입자" };
 
         var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(Summary(), supplier, buyer, ignoreDate: false);
 
+        Assert.IsTrue(doc.IsVatExcluded);
         Assert.HasCount(3, doc.Lines);
         Assert.AreEqual(65000m, doc.TotalSupply);
         Assert.AreEqual(13000m, doc.TotalCost); // (4+2)*2000 + 1*1000
         Assert.AreEqual(52000m, doc.TotalProfit);
+    }
+
+    [TestMethod]
+    public void BuildSalesLedger_VatIncluded_KeepsRawCskuPriceWithoutDividing()
+    {
+        // 사용자 요청: CSKU 납품단가(VAT포함)를 그대로 보고 싶을 때는 나누지 않아야 하고,
+        // 그래도 합계금액은 원본 라인 합계(11000*4+11000*2+5500*1=71500)와 정확히 맞아야 한다.
+        var supplier = new DocParty { CompanyName = "공급자" };
+        var buyer = new DocParty { CompanyName = "매입자" };
+
+        var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(Summary(), supplier, buyer, ignoreDate: false, vatExcluded: false);
+
+        Assert.IsFalse(doc.IsVatExcluded);
+        var jul1A = doc.Lines.Single(l => l.Day == 1 && l.Qty == 4);
+        Assert.AreEqual(11000m, jul1A.UnitPrice); // VAT포함이므로 나누지 않음
+        Assert.AreEqual(2200m, jul1A.CostPrice);
+        Assert.AreEqual(71500m, doc.TotalSupply);
+        Assert.AreEqual(14300m, doc.TotalCost); // (4+2)*2200 + 1*1100
+        Assert.AreEqual(57200m, doc.TotalProfit);
     }
 
     [TestMethod]

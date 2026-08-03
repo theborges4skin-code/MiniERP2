@@ -1,5 +1,6 @@
 using MiniERP2.Database;
 using MiniERP2.Utils;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -65,7 +66,7 @@ public class NewChannelCskuDialog : Form
         btnNew.Click += (s, e) =>
         {
             using var dlg = new NewMasterSkuDialog();
-            if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ResultSku == null) return;
+            if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.ResultSku == null) return;
             var label = $"{dlg.ResultSku} — {dlg.ResultItemName}";
             _skuCombo.Items.Add(label);
             _skuCombo.Text = dlg.ResultSku;

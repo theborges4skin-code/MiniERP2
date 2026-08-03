@@ -4,6 +4,7 @@ using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -290,7 +291,7 @@ public class ReportForm : Form
             form.DialogResult = DialogResult.OK;
         };
 
-        return form.ShowDialog(owner) == DialogResult.OK
+        return FormManager.ShowDialogSafe(form, owner) == DialogResult.OK
             ? (txtChannel.Text.Trim(), txtPeriod.Text.Trim())
             : null;
     }
@@ -509,17 +510,12 @@ public class ReportForm : Form
     private async void OnExportExcelClick(object? sender, EventArgs e)
     {
         ExcelLicense.Ensure();
-        using var sfd = new SaveFileDialog
-        {
-            Title = "종합보고서 엑셀 저장",
-            Filter = "Excel 파일 (*.xlsx)|*.xlsx",
-            FileName = $"종합보고서_{DateTime.Today:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("ReportExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("ReportExport", Path.GetDirectoryName(sfd.FileName)!);
-
-        var filePath = sfd.FileName;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel 파일 (*.xlsx)|*.xlsx",
+            $"종합보고서_{DateTime.Today:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("ReportExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "종합보고서 엑셀 저장");
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("ReportExport", Path.GetDirectoryName(filePath)!);
         var periods = GetChecked(_periodList);
         var selectedChannels = GetChecked(_channelList).ToHashSet();
         var selectedGroups = GetChecked(_groupList).ToHashSet();

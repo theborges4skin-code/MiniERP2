@@ -67,14 +67,34 @@ public class DocPartyRepository
 
     public void Save(DocParty party)
     {
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var transaction = conn.BeginTransaction();
+        SaveCore(conn, transaction, party);
+        transaction.Commit();
+    }
+
+    /// <summary>
+    /// 채널 일괄등록(엑셀) 커밋 전용. 호출 측이 연 트랜잭션 안에서 여러 거래처 정보를 한 번에
+    /// 저장해, SalesChannelRepository.UpsertMany와 함께 하나의 SQLite 트랜잭션으로 묶는다(§4.5).
+    /// </summary>
+    public void SaveMany(IEnumerable<DocParty> parties, SqliteConnection connection, SqliteTransaction transaction)
+    {
+        foreach (var party in parties)
+        {
+            SaveCore(connection, transaction, party);
+        }
+    }
+
+    private static void SaveCore(SqliteConnection conn, SqliteTransaction transaction, DocParty party)
+    {
         // 활성 상태는 채널 연결 여부로만 결정한다(수동 토글 없음) — 거래명세표_DB이식_개발스펙.md §2.1 정책.
         party.IsActive = !string.IsNullOrWhiteSpace(party.ChannelCode);
 
-        using var conn = SqliteConnectionFactory.OpenConnection();
         if (party.Id == 0)
         {
             party.CreatedAt ??= DateTime.Now;
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = """
                 INSERT INTO DocPartyTable (ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath)
                 VALUES ($pn, $rn, $cn, $ceo, $addr, $bt, $bi, $tel, $email, $sup, $chan, $active, $created, $stamp)
@@ -83,12 +103,14 @@ public class DocPartyRepository
             cmd.Parameters.AddWithValue("$created", party.CreatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss"));
             cmd.ExecuteNonQuery();
             using var idCmd = conn.CreateCommand();
+            idCmd.Transaction = transaction;
             idCmd.CommandText = "SELECT last_insert_rowid()";
             party.Id = (int)(long)idCmd.ExecuteScalar()!;
         }
         else
         {
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = """
                 UPDATE DocPartyTable SET ProfileName=$pn, RegNo=$rn, CompanyName=$cn, CeoName=$ceo,
                     Address=$addr, BizType=$bt, BizItem=$bi, Tel=$tel, Email=$email, IsDefaultSupplier=$sup,

@@ -285,8 +285,9 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 지정된 기간 구간(YYYY-MM, 양끝 포함) 안에 출고확정 활동이 있었던 채널코드 목록입니다
-    /// (거래처마감보드 §7 "최근 3개월 활동" 자동 판정용).
+    /// 지정된 기간 구간(YYYY-MM, 양끝 포함) 안에 출고 활동(확정 여부 무관)이 있었던 채널코드
+    /// 목록입니다(거래처마감보드 §7 "최근 3개월 활동" 자동 판정용). 출고확정을 깜빡 누락한 건도
+    /// 마감보드에서 재확인할 수 있어야 하므로, 미확정 건은 CreatedAt 기준으로 판정한다.
     /// </summary>
     public List<string> GetActiveChannelCodesBetween(string fromPeriodInclusive, string toPeriodInclusive)
     {
@@ -294,11 +295,10 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT DISTINCT ChannelCode FROM OutboundDetailTable
-            WHERE ConfirmedAt IS NOT NULL
-              AND (
-                    (ClosingPeriod <> '' AND ClosingPeriod BETWEEN $from AND $to)
-                 OR (ClosingPeriod = '' AND substr(ConfirmedAt, 1, 7) BETWEEN $from AND $to)
-                  )
+            WHERE
+                  (ClosingPeriod <> '' AND ClosingPeriod BETWEEN $from AND $to)
+               OR (ClosingPeriod = '' AND ConfirmedAt IS NOT NULL AND substr(ConfirmedAt, 1, 7) BETWEEN $from AND $to)
+               OR (ClosingPeriod = '' AND ConfirmedAt IS NULL AND substr(CreatedAt, 1, 7) BETWEEN $from AND $to)
             """;
         command.Parameters.AddWithValue("$from", fromPeriodInclusive);
         command.Parameters.AddWithValue("$to", toPeriodInclusive);
@@ -309,12 +309,16 @@ public class OutboundRepository
         return results;
     }
 
-    /// <summary>1회라도 출고확정 이력이 있었던 전체 채널코드입니다(§7 "전체 거래처 보기").</summary>
+    /// <summary>
+    /// 출고 이력이 1건이라도 있는 전체 채널코드입니다(§7 "전체 거래처 보기"). 출고확정 여부는
+    /// 따지지 않는다 — 마감보드는 확정을 깜빡한 건을 잡아내기 위한 화면이므로 미확정 채널도
+    /// 노출되어야 한다.
+    /// </summary>
     public List<string> GetAllActiveChannelCodesEver()
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT DISTINCT ChannelCode FROM OutboundDetailTable WHERE ConfirmedAt IS NOT NULL";
+        command.CommandText = "SELECT DISTINCT ChannelCode FROM OutboundDetailTable";
 
         var results = new List<string>();
         using var reader = command.ExecuteReader();

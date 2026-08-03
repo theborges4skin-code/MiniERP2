@@ -1,5 +1,7 @@
 using MiniERP2.Database;
+using MiniERP2.Forms;
 using MiniERP2.Models;
+using MiniERP2.UI;
 
 namespace MiniERP2.Controls;
 
@@ -12,6 +14,7 @@ public class QuickMappingPanel : Panel
     private readonly MappingRepository _mappingRepo = new();
     private readonly ItemRepository _itemRepo = new();
     private readonly ChannelSkuRepository _cskuRepo = new();
+    private readonly SalesChannelRepository _channelRepo = new();
 
     private string _channelCode = "";
     private bool _settlementMode;
@@ -20,6 +23,7 @@ public class QuickMappingPanel : Panel
     private const int MaxRecentMskus = 5;
 
     private Label _infoLabel = new();
+    private SplitContainer _mainSplit = new();
     private DataGridView _conditionGrid = new();
     private TextBox _skuSearchBox = new();
     private ListBox _skuResultList = new();
@@ -27,8 +31,18 @@ public class QuickMappingPanel : Panel
     private FlowLayoutPanel _recentPanel = new();
     private Button _saveCskuBtn = new();
     private Button _saveMskuBtn = new();
+    private Button _assignMasterSkuBtn = new();
     private Button _skipBtn = new();
     private Label _statusLabel = new();
+
+    // "원가 정보 없음" 행(=매핑 규칙/CSKU는 이미 정상 연결되어 있는데, 그 CSKU의 마스터SKU만 등록이
+    // 안 된 경우) 전용 화면. 새 매핑 규칙을 또 만들면 기존 규칙 위에 중복만 쌓이므로, 이 모드에서는
+    // 조건/검색 UI 대신 "기존 CSKU의 마스터SKU를 지금 연결하기" 한 가지 액션만 보여준다.
+    private Panel _orphanPanel = new();
+    private Label _orphanMessageLabel = new();
+    private bool _orphanMode;
+    private string? _orphanChannelCode;
+    private string? _orphanCskuCode;
 
     private List<ItemModel> _allItems = new();
 
@@ -54,6 +68,13 @@ public class QuickMappingPanel : Panel
 
     public void LoadItem(string productName, string optionName, int qty, decimal? revenue)
     {
+        _orphanMode = false;
+        _mainSplit.Visible = true;
+        _orphanPanel.Visible = false;
+        _assignMasterSkuBtn.Visible = false;
+        _saveMskuBtn.Visible = true;
+        _saveCskuBtn.Visible = !_settlementMode;
+
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(productName)) parts.Add($"상품명: {productName}");
         if (!string.IsNullOrWhiteSpace(optionName)) parts.Add($"옵션명: {optionName}");
@@ -68,6 +89,35 @@ public class QuickMappingPanel : Panel
         _cskuListBox.Items.Clear();
         _saveCskuBtn.Enabled = false;
         _saveMskuBtn.Enabled = false;
+        _statusLabel.Text = "";
+    }
+
+    /// <summary>
+    /// "원가 정보 없음" 행 전용 진입점. 매핑 규칙과 CSKU는 이미 정상 연결되어 있고, 그 CSKU의
+    /// 마스터SKU만 등록되어 있지 않은 경우를 위한 것 — 새 규칙을 만드는 대신 기존 CSKU를 그대로
+    /// 고쳐써서 규칙이 중복으로 쌓이지 않게 한다.
+    /// </summary>
+    public void LoadOrphanCsku(string channelCode, string cskuCode, string productName, string optionName, int qty)
+    {
+        _orphanMode = true;
+        _orphanChannelCode = channelCode;
+        _orphanCskuCode = cskuCode;
+
+        _mainSplit.Visible = false;
+        _orphanPanel.Visible = true;
+        _saveCskuBtn.Visible = false;
+        _saveMskuBtn.Visible = false;
+        _assignMasterSkuBtn.Visible = true;
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(productName)) parts.Add($"상품명: {productName}");
+        if (!string.IsNullOrWhiteSpace(optionName)) parts.Add($"옵션명: {optionName}");
+        parts.Add($"수량: {qty:N0}");
+        _infoLabel.Text = string.Join("  |  ", parts);
+
+        _orphanMessageLabel.Text =
+            $"CSKU '{cskuCode}'는 매핑 규칙에 정상 연결되어 있지만, 연결된 마스터SKU가 등록되어 있지 않아 " +
+            "원가를 알 수 없습니다. 아래 버튼으로 이 CSKU에 마스터SKU를 연결하세요(새 매핑 규칙을 만들 필요는 없습니다).";
         _statusLabel.Text = "";
     }
 
@@ -258,11 +308,12 @@ public class QuickMappingPanel : Panel
         outer.Controls.Add(_infoLabel, 0, 0);
 
         // Row 1: main split
-        var mainSplit = new SplitContainer
+        _mainSplit = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
         };
+        var mainSplit = _mainSplit;
         mainSplit.SplitterMoved += (s, e) => { };
 
         // Left: condition grid
@@ -361,24 +412,76 @@ public class QuickMappingPanel : Panel
 
         outer.Controls.Add(mainSplit, 0, 1);
 
+        // Row 1 (alt): "원가 정보 없음" 전용 안내 패널. mainSplit과 같은 셀에 두고 Visible로 전환한다.
+        _orphanMessageLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(10),
+            ForeColor = Color.DarkRed,
+            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold),
+        };
+        _orphanPanel = new Panel { Dock = DockStyle.Fill, Visible = false };
+        _orphanPanel.Controls.Add(_orphanMessageLabel);
+        outer.Controls.Add(_orphanPanel, 0, 1);
+
         // Row 2: footer
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(4, 4, 0, 0) };
         _saveCskuBtn = new Button { Text = "저장 — CSKU 매핑", Size = new Size(145, 26), Enabled = false };
         _saveMskuBtn = new Button { Text = "MSKU로 저장 (정산용)", Size = new Size(160, 26), Enabled = false };
+        _assignMasterSkuBtn = new Button { Text = "이 CSKU에 마스터SKU 연결하기", AutoSize = true, Visible = false };
         _skipBtn = new Button { Text = "건너뛰기 >", Size = new Size(90, 26) };
         _statusLabel = new Label { AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
 
         _saveCskuBtn.Click += OnSaveCskuClick;
         _saveMskuBtn.Click += OnSaveMskuClick;
+        _assignMasterSkuBtn.Click += OnAssignMasterSkuClick;
         _skipBtn.Click += (s, e) => Skipped?.Invoke();
 
         footer.Controls.Add(_saveCskuBtn);
         footer.Controls.Add(_saveMskuBtn);
+        footer.Controls.Add(_assignMasterSkuBtn);
         footer.Controls.Add(_skipBtn);
         footer.Controls.Add(_statusLabel);
         outer.Controls.Add(footer, 0, 2);
 
         Controls.Add(outer);
+    }
+
+    /// <summary>
+    /// "이 CSKU에 마스터SKU 연결하기" — 기존 CSKU(매핑 규칙은 그대로 둠)의 Msku만 실제 등록된
+    /// 마스터SKU로 교체한다. ChannelCskuForm의 [마스터SKU 지정/변경(정식 등록)]과 동일한 다이얼로그를
+    /// 재사용해, 검증 없이 저장되는 경로를 새로 만들지 않는다.
+    /// </summary>
+    private void OnAssignMasterSkuClick(object? sender, EventArgs e)
+    {
+        if (!_orphanMode || _orphanChannelCode == null || _orphanCskuCode == null) return;
+
+        var existing = _cskuRepo.GetByChannelAndCskuCode(_orphanChannelCode, _orphanCskuCode);
+        if (existing == null)
+        {
+            _statusLabel.ForeColor = Color.Red;
+            _statusLabel.Text = "CSKU를 찾을 수 없습니다(이미 삭제되었을 수 있습니다).";
+            return;
+        }
+
+        var channelName = _channelRepo.GetAll().FirstOrDefault(c => c.ChannelCode == _orphanChannelCode)?.ChannelName ?? _orphanChannelCode;
+        using var dlg = new AssignMasterSkuDialog(existing.Msku, existing.InvoiceDisplayName, existing.CskuCode, channelName);
+        if (FormManager.ShowDialogSafe(dlg, FindForm()) != DialogResult.OK || dlg.SelectedSku == null) return;
+
+        var oldCskuCode = existing.CskuCode;
+        var codeChanged = !string.Equals(oldCskuCode, dlg.SelectedCskuCode, StringComparison.Ordinal);
+        existing.Msku = dlg.SelectedSku;
+        existing.CskuCode = dlg.SelectedCskuCode;
+        _cskuRepo.RenameCsku(_orphanChannelCode, oldCskuCode, existing);
+        if (codeChanged) _mappingRepo.RetargetRules(_orphanChannelCode, oldCskuCode, existing.CskuCode);
+
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = codeChanged
+            ? $"'{oldCskuCode}' → '{existing.CskuCode}'(으)로 정식 등록하고 마스터SKU '{dlg.SelectedSku}'를 연결했습니다."
+            : $"'{oldCskuCode}'에 마스터SKU '{dlg.SelectedSku}'를 연결했습니다.";
+        RuleSaved?.Invoke();
     }
 
     private void OnAddConditionRow(object? sender, EventArgs e)

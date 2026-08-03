@@ -314,6 +314,36 @@ public class MappingRepository
     }
 
     /// <summary>
+    /// 지정된 채널에서 TargetSku가 oldTargetSku인 모든 규칙(1:1/임시/예외/조건부)을 newTargetSku로
+    /// 옮깁니다. CSKU 코드를 정식 코드로 바꿀 때(ChannelSkuRepository.RenameCsku) 그 코드를 가리키던
+    /// 기존 매핑 규칙이 옛 코드에 남아 끊어지지 않도록 함께 옮기는 용도입니다.
+    /// </summary>
+    public void RetargetRules(string channelCode, string oldTargetSku, string newTargetSku)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            foreach (var table in new[] { "RuleExact", "RuleTemp", "RuleCondition", "RuleException" })
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"UPDATE {table} SET TargetSku = $newTarget WHERE ChannelCode = $channelCode AND TargetSku = $oldTarget";
+                command.Parameters.AddWithValue("$newTarget", newTargetSku);
+                command.Parameters.AddWithValue("$channelCode", channelCode);
+                command.Parameters.AddWithValue("$oldTarget", oldTargetSku);
+                command.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku/TargetMsku)만 갱신합니다. 상세조건은 건드리지 않습니다.
     /// </summary>
     public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku, string targetMsku = "")

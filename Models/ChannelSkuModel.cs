@@ -42,4 +42,11 @@ public class ChannelSkuModel
 
     /// <summary>포장 단위 설명입니다(예: "20kg/포대"). 견적서 출력 시 비고에 함께 표시됩니다.</summary>
     public string? Packing { get; set; }
+
+    /// <summary>
+    /// 이 CSKU 전용 제조원가입니다. NULL이면 마스터DB 원가(ItemTable.CostPrice)를 그대로 따르고
+    /// (연동), 값이 있으면 그 값이 이 CSKU의 제조원가이며 마스터 변경에 영향받지 않습니다(개별관리).
+    /// 우선순위는 Utils/CostResolver 참고(매입처 매입가 > 이 값 > 마스터 대표원가).
+    /// </summary>
+    public decimal? CostPriceOverride { get; set; }
 }

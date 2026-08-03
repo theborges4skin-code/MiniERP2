@@ -103,7 +103,13 @@ public class PurchaseSalesOverviewForm : Form
 
         foreach (var s in sales.OrderByDescending(s => s.SupplyPrice))
         {
-            foreach (var (source, cost) in costOptions)
+            // "CSKU 개별원가"는 CSKU마다 있거나 없을 수 있는 값이라, Msku 전체에 공통인 costOptions에
+            // 정적으로 넣지 않고 이 CSKU 행에서만 조합한다(CSKU제조원가_개별관리_개발기획서.md §5).
+            var rowCostOptions = s.CostPriceOverride.HasValue
+                ? costOptions.Append(("CSKU 개별원가", s.CostPriceOverride.Value))
+                : costOptions;
+
+            foreach (var (source, cost) in rowCostOptions)
             {
                 var margin = s.SupplyPrice - cost;
                 var rate = s.SupplyPrice == 0 ? 0 : margin / s.SupplyPrice;

@@ -114,21 +114,57 @@ public static class ProfitCalculator
     }
 
     /// <summary>
-    /// 11번가 채널의 특수 규칙: 수량=0인 행(배송비 전용 행)을 제거하고 매출액을 보정합니다.
+    /// 11번가 채널의 특수 규칙: 수량=0인 행(배송비 전용 행)의 배송비를 같은 주문의 상품 행으로
+    /// 옮긴 뒤 목록에서 제거합니다.
     /// <para>
-    /// 11번가 정산파일은 매출액(Revenue)에 배송비가 중복 포함되므로, 상품 행마다
-    /// Revenue -= Shipping 보정을 적용합니다. 수량=0인 순수 배송비 행은 목록에서 제거합니다.
+    /// 11번가 정산파일은 한 주문을 상품 행(수량&gt;0, 선결제배송비=0)과 배송비 전용 행(수량=0,
+    /// 선결제배송비에 실제 금액 기재)으로 나눠서 내보낸다. 배송비 전용 행을 그냥 삭제하면 배송비가
+    /// 통째로 사라지므로, 같은 주문번호(OrderNo)의 상품 행 수만큼 균등 분배한 뒤 제거한다.
+    /// 배송비 전용 행의 정산금액(실수령액)은 이익분석에서 버린다(요청사항 — 배송비만 보존).
     /// </para>
+    /// 주문번호가 매핑되지 않은 경우 — 기존 동작 유지: 전체 배송비를 합산해 첫 상품 행에만 표기한다.
     /// 채널 유형이 11번가가 아니면 아무 동작도 하지 않습니다.
     /// </summary>
     public static void ApplyElevenStreetFilter(ChannelType channelType, List<SettlementData> rows)
     {
         if (channelType != ChannelType.ElevenStreet || rows.Count == 0) return;
 
-        rows.RemoveAll(r => r.Qty == 0);
+        var shippingRows = rows.Where(r => r.Qty == 0).ToList();
+        var productRows = rows.Where(r => r.Qty != 0).ToList();
 
-        foreach (var row in rows)
-            row.Revenue -= row.Shipping;
+        bool hasOrderNo = rows.Any(r => !string.IsNullOrEmpty(r.OrderNo));
+        if (hasOrderNo)
+        {
+            var shippingByOrder = shippingRows
+                .Where(r => !string.IsNullOrEmpty(r.OrderNo))
+                .GroupBy(r => r.OrderNo!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Sum(r => r.Shipping), StringComparer.OrdinalIgnoreCase);
+
+            var productCountByOrder = productRows
+                .Where(r => !string.IsNullOrEmpty(r.OrderNo))
+                .GroupBy(r => r.OrderNo!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in productRows)
+            {
+                if (!string.IsNullOrEmpty(row.OrderNo) &&
+                    shippingByOrder.TryGetValue(row.OrderNo, out var totalShipping) &&
+                    productCountByOrder.TryGetValue(row.OrderNo, out var count) && count > 0)
+                {
+                    row.Shipping = totalShipping / count;
+                }
+            }
+        }
+        else if (productRows.Count > 0)
+        {
+            var total = shippingRows.Sum(r => r.Shipping);
+            for (int i = 1; i < productRows.Count; i++)
+                productRows[i].Shipping = 0m;
+            productRows[0].Shipping = total;
+        }
+
+        rows.Clear();
+        rows.AddRange(productRows);
     }
 
     /// <summary>

@@ -31,6 +31,9 @@ public static class CourierFieldResolver
         nameof(OfsOrderItem.Address),
         nameof(OfsOrderItem.DeliveryMessage),
         nameof(OfsOrderItem.TrackingNo),
+        // "고객주문번호" 등 OrderNo에 매핑된 헤더도 미리보기에서 직접 고칠 수 있어야 한다(사용자
+        // 요청 — 발송 직전 오탈자 수정 등).
+        nameof(OfsOrderItem.OrderNo),
     };
 
     /// <summary>

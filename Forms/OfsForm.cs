@@ -233,7 +233,7 @@ public class OfsForm : Form
 
         // 파일을 읽기 전에 어떤 채널의 설정으로 읽을지 사용자에게 묻습니다.
         using var channelDialog = new SelectChannelDialog();
-        if (channelDialog.ShowDialog(this) != DialogResult.OK || channelDialog.SelectedChannel == null)
+        if (FormManager.ShowDialogSafe(channelDialog, this) != DialogResult.OK || channelDialog.SelectedChannel == null)
         {
             _statusLabel.Text = "채널이 선택되지 않아 작업을 취소했습니다.";
             return;
@@ -317,7 +317,7 @@ public class OfsForm : Form
                     .ToHashSet();
 
                 using var picker = new CumulativeOrderSelectionDialog(recentItems, windowDays, alreadyShippedOrderNos);
-                if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedItems.Count == 0)
+                if (FormManager.ShowDialogSafe(picker, this) != DialogResult.OK || picker.SelectedItems.Count == 0)
                 {
                     _statusLabel.Text = "선택한 항목이 없어 추가되지 않았습니다.";
                     return;
@@ -401,7 +401,7 @@ public class OfsForm : Form
         catch (EncryptedExcelFileException)
         {
             using var dialog = new PasswordPromptDialog(Path.GetFileName(file));
-            if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+            if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return null;
 
             return await _orderLoader.LoadFromFileAsync(skuMapper, channelConfig, file, dialog.Password);
         }
@@ -451,7 +451,7 @@ public class OfsForm : Form
 
         using var dialog = new OrderSkuMappingDialog(item, item.ChannelCode);
         FormManager.ApplyBoundsTracking(dialog);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         item.MappedSku = dialog.ResultMappedSku;
         item.Status = dialog.ResultStatus;
@@ -501,7 +501,7 @@ public class OfsForm : Form
 
         // 1. 사용자에게 택배사 선택 요청
         using var courierDialog = new SelectCourierDialog();
-        if (courierDialog.ShowDialog(this) != DialogResult.OK || courierDialog.SelectedCourier == null)
+        if (FormManager.ShowDialogSafe(courierDialog, this) != DialogResult.OK || courierDialog.SelectedCourier == null)
         {
             _statusLabel.Text = "택배사가 선택되지 않아 내보내기를 취소했습니다.";
             return;
@@ -515,16 +515,12 @@ public class OfsForm : Form
         var exportChannelPrefix = exportChannelName.Length > 0 ? exportChannelName[..Math.Min(5, exportChannelName.Length)] + "_" : "";
 
         // 2. 사용자에게 저장 위치 요청
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{exportChannelPrefix}{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("OfsExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"{exportChannelPrefix}{courier.CourierName}_출고_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("OfsExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("OfsExport", Path.GetDirectoryName(filePath)!);
 
         Cursor = Cursors.WaitCursor;
@@ -741,6 +737,12 @@ public class OfsForm : Form
             row.DefaultCellStyle.BackColor = Color.MistyRose;
             row.DefaultCellStyle.ForeColor = Color.Black;
         }
+        else if (item.Status == "메모")
+        {
+            // 실제 주문이 아니라 작업자 메모용 줄임을 한눈에 구분할 수 있게 한다(OnAddMemoRowClick).
+            row.DefaultCellStyle.BackColor = Color.LightYellow;
+            row.DefaultCellStyle.ForeColor = Color.Black;
+        }
         else if (item.Status.StartsWith("매핑(") || item.Status == "발주확정" || item.Status == "출고확정")
         {
             row.DefaultCellStyle.BackColor = Color.Honeydew;
@@ -903,12 +905,14 @@ public class OfsForm : Form
     {
         var menu = _ordersGrid.ContextMenuStrip!;
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("배송지 불러오기", null, OnLoadAddressBookClick);
         menu.Items.Add("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromOrderRowClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("합포장으로 묶기", null, OnMergeIntoOneShipmentClick);
         menu.Items.Add("분리배송으로 분리", null, OnSplitIntoNewShipmentClick);
         menu.Items.Add("묶음 해제", null, OnResetShipmentGroupClick);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("메모행 추가", null, OnAddMemoRowClick);
         menu.Items.Add("메모 보기", null, OnViewRemarkClick);
     }
 
@@ -924,6 +928,69 @@ public class OfsForm : Form
         MessageBox.Show(
             string.IsNullOrWhiteSpace(order.Remark) ? "메모가 없습니다." : order.Remark,
             "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// 실제 주문이 아니라 작업자가 남기는 메모만 담는 별도 줄을 추가한다. 예전엔 분리배송으로
+    /// 줄을 복제해 메모용으로 썼는데, 그 방식은 매핑된 CSKU가 그대로 복사돼 실제 주문처럼 보이는
+    /// 문제가 있었다(사용자 신고). 이 줄은 MappedSku를 절대 채우지 않으므로 미리보기/내보내기/
+    /// 저장이 전부 "MappedSku가 채워진 줄만" 기준으로 동작하는 덕분에 그 어디에도 끼어들지
+    /// 않는다. 선택한 줄 바로 아래에 추가하고(선택 없으면 맨 끝), "상품명" 칸에 메모 내용을 바로
+    /// 입력할 수 있게 편집 모드로 진입시킨다.
+    /// </summary>
+    private void OnAddMemoRowClick(object? sender, EventArgs e)
+    {
+        var selected = _ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem;
+        var memoRow = new OfsOrderItem
+        {
+            ChannelCode = selected?.ChannelCode ?? _lastChannelCode,
+            ProductName = "(메모) ",
+            Status = "메모",
+        };
+
+        var insertAt = selected != null ? _orders.IndexOf(selected) + 1 : _orders.Count;
+        _orders.Insert(insertAt, memoRow);
+
+        var gridRow = _ordersGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.DataBoundItem == memoRow);
+        if (gridRow != null)
+        {
+            _ordersGrid.CurrentCell = gridRow.Cells["ProductName"];
+            _ordersGrid.BeginEdit(true);
+        }
+
+        RefreshExportPreview();
+        _statusLabel.Text = "메모행을 추가했습니다. \"상품명\" 칸에 메모 내용을 입력하세요.";
+    }
+
+    /// <summary>
+    /// 배송지 주소록에서 골라 선택한 발주 행(들)의 수취인/연락처/주소를 채운다(배송지주소록_개발
+    /// 기획서_확정본.md §4.2, M2). 쿠팡풀필먼트처럼 1채널에 고정 입고지가 여러 곳인 발주에서,
+    /// 미리 등록해둔 배송지를 매번 손으로 치지 않고 골라 넣기 위한 기능이다. 여러 행을 선택했으면
+    /// 전부 같은 배송지로 채워진다.
+    /// </summary>
+    private void OnLoadAddressBookClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("배송지를 채울 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var priorityChannelCode = selected[0].ChannelCode ?? _lastChannelCode;
+        using var dialog = new AddressBookPickerDialog(priorityChannelCode);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+        foreach (var item in selected)
+        {
+            item.Recipient = dialog.SelectedReceiverName;
+            item.Phone = dialog.SelectedPhone;
+            item.Address = dialog.SelectedAddress;
+        }
+
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+        _statusLabel.Text = $"{selected.Count}건에 배송지를 채웠습니다.";
     }
 
     /// <summary>
@@ -1405,13 +1472,14 @@ public class OfsForm : Form
 
     /// <summary>
     /// 줄이 2개 이상인 묶음(합포장돼 있던 것)을 선택하면 각자 단독 묶음으로 풀어준다(기존 동작).
-    /// 줄이 1개뿐인 묶음은, 수량이 2개 이상이면 "분리배송 = 주문수량을 나누는 것"이라는 원칙에 따라
-    /// 수량만큼 1개씩 별도 송장으로 완전히 쪼갠다(예: 수량 2 → 수량 1짜리 송장 2건). 수량이 이미
-    /// 1개뿐이라 더 쪼갤 게 없으면(예전처럼) 통째로 복사해 새 별도 송장을 만들어주고 품목/수량은
-    /// 사용자가 그 다음에 직접 수동으로 나눠 입력하게 한다. 세 동작 모두 한 메뉴("분리배송 처리")로
-    /// 묶어 제공하며, 선택한 묶음마다 수량/줄 수에 따라 적합한 동작을 자동으로 고른다. 어느 경우든
-    /// 결과가 2건 이상의 송장이 되면, 수취인명이 같아 택배사 시스템에서 자동합포장되지 않도록
-    /// 뒤에 1,2,3...을 붙인다.
+    /// 줄이 1개뿐인 묶음은 항상 새 송장 1건만 복제해 정확히 2건으로 나눈다 — 수량만큼(예: 20개면
+    /// 20건) 전부 쪼개던 이전 동작은 새 행이 너무 많이 생긴다는 신고를 받아 되돌렸다. 수량이 2개
+    /// 이상이면 두 송장 모두 원래 수량 그대로 보여 중복 발송처럼 보이는 문제(예전 버그)를 막기
+    /// 위해 반씩 나눠 시작하지만, 정확히 절반으로 나눌 필요가 없는 주문도 많으므로 이 값은
+    /// 시작점일 뿐 그리드에서 바로 수정하면 된다. 수량이 이미 1개뿐이면 그대로 복제만 하고
+    /// 품목/수량은 사용자가 직접 수동으로 나눠 입력한다. 두 동작 모두 한 메뉴("분리배송 처리")로
+    /// 묶어 제공하며, 결과가 2건 이상의 송장이 되면 수취인명이 같아 택배사 시스템에서
+    /// 자동합포장되지 않도록 뒤에 1,2,3...을 붙인다.
     /// </summary>
     private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
     {
@@ -1444,36 +1512,28 @@ public class OfsForm : Form
                 var baseId = ShipmentGrouping.GetEffectiveGroupId(template);
                 ClearStaleInvoiceLabelOverrides([template]);
 
+                var duplicate = CloneOrderItem(template);
+                duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
+                duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+
                 if (template.Quantity > 1)
                 {
-                    var unitCount = template.Quantity;
-                    var newShipments = new List<List<OfsOrderItem>> { new() { template } };
-                    var insertAt = _orders.IndexOf(template) + 1;
-                    for (int i = 1; i < unitCount; i++)
-                    {
-                        var duplicate = CloneOrderItem(template);
-                        duplicate.Quantity = 1;
-                        duplicate.TrackingNo = null;
-                        duplicate.InvoiceLabel = null;
-                        duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
-                        _orders.Insert(insertAt++, duplicate);
-                        newShipments.Add([duplicate]);
-                    }
-                    template.Quantity = 1;
+                    // 반씩 나눠 시작한다(예: 20개 → 10+10, 3개 → 2+1). 정확한 배분은 그리드에서
+                    // 바로 고치면 된다 — 목적은 항상 정확히 2건으로만 나누는 것.
+                    var firstQty = (template.Quantity + 1) / 2;
+                    duplicate.Quantity = template.Quantity - firstQty;
+                    template.Quantity = firstQty;
                     template.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
-                    ShipmentGrouping.RenumberSplitRecipients(newShipments);
-                    splitInvoiceCount += unitCount;
+                    splitInvoiceCount++;
                 }
                 else
                 {
-                    var duplicate = CloneOrderItem(template);
-                    duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
-                    duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
-                    duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
-                    _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
-                    ShipmentGrouping.RenumberSplitRecipients([[template], [duplicate]]);
                     duplicatedForManualEditCount++;
                 }
+
+                _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
+                ShipmentGrouping.RenumberSplitRecipients([[template], [duplicate]]);
             }
 
             _ordersGrid.Invalidate();
@@ -1481,7 +1541,7 @@ public class OfsForm : Form
 
             var messageParts = new List<string>();
             if (ungroupedCount > 0) messageParts.Add($"{ungroupedCount}개 묶음을 분리배송 처리");
-            if (splitInvoiceCount > 0) messageParts.Add($"{splitInvoiceCount}건으로 수량을 분리");
+            if (splitInvoiceCount > 0) messageParts.Add($"{splitInvoiceCount}건을 수량 절반씩 나눠 2건으로 분리");
             if (duplicatedForManualEditCount > 0) messageParts.Add($"{duplicatedForManualEditCount}건을 복사해 새 송장으로 분리(품목/수량을 직접 수정하세요)");
             _statusLabel.Text = $"{string.Join(", ", messageParts)}했습니다. ({DateTime.Now:HH:mm:ss})";
         });

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using MiniERP2.Controls;
 using MiniERP2.Database;
@@ -25,6 +26,7 @@ public class PartnerClosingForm : Form
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
+    private CheckBox _vatExcludedCheck = new();
     private Label _statusSummaryLabel = new();
     private Label _statusLabel = new();
 
@@ -90,6 +92,14 @@ public class PartnerClosingForm : Form
         var btnCancelClosing = new Button { Text = "확정취소", Size = new Size(80, 28) };
         btnCancelClosing.Click += OnCancelClosingClick;
 
+        // 명세표/매출장 공통 VAT 기준 — 이전에는 미리보기/발행마다 매번 물었으나(명세표만, 매출장은
+        // 항상 VAT별도로 고정), 한 번 골라두면 계속 유지되는 체크박스로 바꿨다(사용자 요청).
+        _vatExcludedCheck = new CheckBox { Text = "VAT 별도", AutoSize = true, Checked = true, Padding = new Padding(10, 5, 0, 0) };
+        // 명세표/매출장 발행뿐 아니라 좌측 거래처 목록(공급가/이익)과 우측 라인 상세(단가/원가/이익)도
+        // 이 체크박스 기준으로 즉시 다시 보여준다(사용자 요청). 전체 재조회(RefreshBoard) 대신
+        // 그리드만 다시 그려서, 토글해도 현재 선택된 거래처가 풀리지 않게 한다.
+        _vatExcludedCheck.CheckedChanged += (s, e) => { _partyGrid.Invalidate(); LoadLineGrid(); };
+
         var btnPreviewStatement = new Button { Text = "명세표 미리보기", Size = new Size(100, 28) };
         btnPreviewStatement.Click += (s, e) => OnPreviewClick(isLedger: false);
 
@@ -113,6 +123,7 @@ public class PartnerClosingForm : Form
         toolbar.Controls.Add(btnAddManualOrder);
         toolbar.Controls.Add(btnConfirm);
         toolbar.Controls.Add(btnCancelClosing);
+        toolbar.Controls.Add(_vatExcludedCheck);
         toolbar.Controls.Add(btnPreviewStatement);
         toolbar.Controls.Add(btnPreviewLedger);
         toolbar.Controls.Add(btnPublishStatement);
@@ -181,11 +192,32 @@ public class PartnerClosingForm : Form
         favoriteItem.Click += OnToggleFavoriteClick;
         menu.Items.Add(favoriteItem);
         var openHistoryItem = new ToolStripMenuItem("출고이력 관리창에서 열기");
-        openHistoryItem.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
+        openHistoryItem.Click += OnOpenPartyInHistoryClick;
         menu.Items.Add(openHistoryItem);
         grid.ContextMenuStrip = menu;
 
         return grid;
+    }
+
+    /// <summary>
+    /// 거래처 목록에서 우클릭 시, 그 채널·현재 조회 중인 기간으로 미리 필터링해서 출고이력
+    /// 관리창을 연다(수동 거래처거나 선택이 애매하면 빈 창으로 연다).
+    /// </summary>
+    private void OnOpenPartyInHistoryClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1 || selected[0].IsManual)
+        {
+            FormManager.Show<OutboundHistoryForm>();
+            return;
+        }
+
+        var row = selected[0];
+        var channelCode = row.PartyKey["CH:".Length..];
+        var periodStart = DateTime.ParseExact(CurrentPeriod, "yyyy-MM", CultureInfo.InvariantCulture);
+        var form = new OutboundHistoryForm(null, channelCode, null, periodStart, periodStart.AddMonths(1).AddDays(-1));
+        FormManager.ApplyBoundsTracking(form);
+        form.Show();
     }
 
     private ExcelLikeDataGridView BuildLineGrid()
@@ -201,6 +233,7 @@ public class PartnerClosingForm : Form
         };
         grid.Columns.AddRange(
             new DataGridViewTextBoxColumn { HeaderText = "일자", Name = "LineDateText", DataPropertyName = "LineDateText", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "StatusText", DataPropertyName = "StatusText", Width = 60, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 100, ReadOnly = true },
             // 마감 대조 중 CSKU 미등록 등으로 품목명이 비어있는 경우가 있어(§1) 여기서 바로 고칠 수
             // 있게 편집을 허용한다. 단가도 마찬가지 이유로 편집 허용(HandleUnitPriceEdit 참고).
@@ -211,17 +244,35 @@ public class PartnerClosingForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "Profit", DataPropertyName = "Profit", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         grid.CellEndEdit += OnLineGridCellEndEdit;
+        grid.CellFormatting += OnLineGridCellFormatting;
 
         var menu = new ContextMenuStrip();
         var reassignItem = new ToolStripMenuItem("귀속월 변경");
         reassignItem.Click += OnReassignPeriodClick;
         menu.Items.Add(reassignItem);
+        var markShippedItem = new ToolStripMenuItem("출고확정 처리");
+        markShippedItem.Click += OnMarkLinesShippedClick;
+        menu.Items.Add(markShippedItem);
+        var deleteItem = new ToolStripMenuItem("선택 라인 삭제");
+        deleteItem.Click += OnDeleteLinesClick;
+        menu.Items.Add(deleteItem);
         var openHistoryItem = new ToolStripMenuItem("이 라인 출고이력 관리창에서 열기(추적)");
         openHistoryItem.Click += OnOpenLineInHistoryClick;
         menu.Items.Add(openHistoryItem);
         grid.ContextMenuStrip = menu;
 
         return grid;
+    }
+
+    /// <summary>미출고 라인은 아직 확정 전이라는 걸 눈에 띄게 옅은 주황 배경으로 강조한다.</summary>
+    private void OnLineGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || _lineGrid.Rows[e.RowIndex].DataBoundItem is not LineRow line) return;
+        var (back, fore) = line.IsUnshipped
+            ? (Color.FromArgb(255, 228, 196), Color.Black)
+            : (_lineGrid.DefaultCellStyle.BackColor, _lineGrid.DefaultCellStyle.ForeColor);
+        _lineGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = back;
+        _lineGrid.Rows[e.RowIndex].DefaultCellStyle.ForeColor = fore;
     }
 
     /// <summary>
@@ -233,6 +284,17 @@ public class PartnerClosingForm : Form
     private void OnPartyGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         if (e.RowIndex < 0 || _partyGrid.Rows[e.RowIndex].DataBoundItem is not PartyRow row) return;
+
+        var columnName = _partyGrid.Columns[e.ColumnIndex].Name;
+        if (columnName == "TotalSupply")
+        {
+            e.Value = VatCalculator.ToDisplay(row.TotalSupply, _vatExcludedCheck.Checked);
+        }
+        else if (columnName == "TotalProfit")
+        {
+            e.Value = VatCalculator.ToDisplay(row.TotalProfit, _vatExcludedCheck.Checked);
+        }
+
         var (back, fore) = row.Status switch
         {
             "대조중" => (Color.LightYellow, Color.Black),
@@ -285,7 +347,11 @@ public class PartnerClosingForm : Form
             _lineGrid.DataSource = null;
             return;
         }
-        _lineGrid.DataSource = new BindingList<LineRow>(row.Source.Lines.Select(l => new LineRow(l)).ToList());
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var rows = row.Source.Lines.Select(l => new LineRow(l, isUnshipped: false, vatExcluded))
+            .Concat(row.Source.UnshippedLines.Select(l => new LineRow(l, isUnshipped: true, vatExcluded)))
+            .ToList();
+        _lineGrid.DataSource = new BindingList<LineRow>(rows);
     }
 
     private List<PartyRow> SelectedPartyRows() =>
@@ -299,7 +365,7 @@ public class PartnerClosingForm : Form
     private void OnAddManualPartnerClick(object? sender, EventArgs e)
     {
         using var dlg = new SimpleTextPromptDialog("수동 거래처 추가", "거래처명:");
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
         if (string.IsNullOrWhiteSpace(dlg.Value))
         {
             MessageBox.Show("거래처명을 입력하세요.", "입력 오류", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -326,7 +392,7 @@ public class PartnerClosingForm : Form
         }
 
         using var dlg = new PartnerManualEntryDialog(row.PartyName, row.IsManual, row.TotalQty, row.TotalSupply, row.TotalProfit, row.ReconcileNote);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
         if (row.IsManual)
             _closingRepo.SaveManualDraft(CurrentPeriod, row.PartyKey, row.PartyName, dlg.Qty, dlg.Supply, dlg.Profit, "대조중", dlg.Note);
@@ -353,7 +419,7 @@ public class PartnerClosingForm : Form
         var channelCode = row.PartyKey["CH:".Length..];
 
         using var dlg = new PartnerManualOrderDialog(channelCode, row.PartyName);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
         var detail = new OutboundDetail
         {
@@ -467,15 +533,10 @@ public class PartnerClosingForm : Form
         }
         var row = selected[0];
 
-        var docType = MiniERP2.Models.DocType.TradeStatementVatExcl;
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var docType = vatExcluded ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
         var ignoreDateForLedger = false;
-        if (!isLedger)
-        {
-            var vatChoice = MessageBox.Show("VAT 별도로 미리보시겠습니까?\n(아니오 = VAT 포함, 취소 = 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-            if (vatChoice == DialogResult.Cancel) return;
-            docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
-        }
-        else
+        if (isLedger)
         {
             var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (groupChoice == DialogResult.Cancel) return;
@@ -499,7 +560,7 @@ public class PartnerClosingForm : Form
 
         var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
         var previewForm = isLedger
-            ? DocumentPreviewForm.ForSalesLedger(PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger))
+            ? DocumentPreviewForm.ForSalesLedger(PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded))
             : DocumentPreviewForm.ForTradeStatement(PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer));
         previewForm.Show(this);
     }
@@ -522,7 +583,8 @@ public class PartnerClosingForm : Form
             return;
         }
 
-        var docType = MiniERP2.Models.DocType.TradeStatementVatExcl;
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var docType = vatExcluded ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
         var ignoreDateForLedger = false;
         if (!isLedger)
         {
@@ -531,9 +593,6 @@ public class PartnerClosingForm : Form
                 MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            var vatChoice = MessageBox.Show("VAT 별도로 발행합니까?\n(아니오 = VAT 포함, 취소 = 발행 중단)", "VAT 구분", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-            if (vatChoice == DialogResult.Cancel) return;
-            docType = vatChoice == DialogResult.Yes ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
         }
         else
         {
@@ -549,7 +608,7 @@ public class PartnerClosingForm : Form
                 if (combineChoice == DialogResult.Cancel) return;
                 if (combineChoice == DialogResult.Yes)
                 {
-                    RunCombinedLedgerExport(allSelected, selected, ignoreDateForLedger);
+                    RunCombinedLedgerExport(allSelected, selected, ignoreDateForLedger, vatExcluded);
                     return;
                 }
             }
@@ -602,9 +661,10 @@ public class PartnerClosingForm : Form
             }
             else
             {
-                using var sfd = new SaveFileDialog { Filter = "Excel Files (*.xlsx)|*.xlsx", FileName = fileName };
-                if (sfd.ShowDialog(this) != DialogResult.OK) continue;
-                filePath = sfd.FileName;
+                var picked = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx", fileName,
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+                if (picked == null) continue;
+                filePath = picked;
             }
 
             try
@@ -612,7 +672,7 @@ public class PartnerClosingForm : Form
                 decimal totalAmount;
                 if (isLedger)
                 {
-                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger);
+                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded);
                     DocumentExporter.ExportSalesLedger(doc, filePath);
                     totalAmount = doc.TotalSupply;
                 }
@@ -667,7 +727,7 @@ public class PartnerClosingForm : Form
     /// 마감확정 여부) + 확정된 거래처별 매출장 시트를 이어붙인다. 미확정 거래처는 현황표에만
     /// 나타나고 매출장 시트는 생기지 않는다.
     /// </summary>
-    private void RunCombinedLedgerExport(List<PartyRow> allSelected, List<PartyRow> confirmed, bool ignoreDateForLedger)
+    private void RunCombinedLedgerExport(List<PartyRow> allSelected, List<PartyRow> confirmed, bool ignoreDateForLedger, bool vatExcluded)
     {
         var supplier = _docPartyRepo.GetDefaultSupplier();
         if (supplier == null)
@@ -676,12 +736,10 @@ public class PartnerClosingForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"매출장_통합_{CurrentPeriod}_{DateTime.Now:yyyyMMdd}.xlsx",
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var combinedFilePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"매출장_통합_{CurrentPeriod}_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (combinedFilePath == null) return;
 
         var overviewRows = new List<SalesLedgerOverviewRow>();
         var ledgers = new List<(string PartyName, SalesLedgerDoc Doc)>();
@@ -692,14 +750,16 @@ public class PartnerClosingForm : Form
         {
             var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
             var isConfirmed = row.Status is "확정" or "발행완료";
+            // 같은 파일의 개별 매출장 시트가 vatExcluded 기준으로 변환되므로, "현황" 시트 합계도
+            // 같은 기준으로 맞춰야 두 시트를 비교할 때 금액이 어긋나 보이지 않는다.
             overviewRows.Add(new SalesLedgerOverviewRow
             {
                 PartyName = row.PartyName,
                 Status = row.Status,
                 IsConfirmed = isConfirmed,
                 TotalQty = summary.TotalQty,
-                TotalSupply = summary.TotalSupply,
-                TotalProfit = summary.TotalProfit,
+                TotalSupply = VatCalculator.ToDisplay(summary.TotalSupply, vatExcluded),
+                TotalProfit = VatCalculator.ToDisplay(summary.TotalProfit, vatExcluded),
             });
             if (!isConfirmed) continue;
 
@@ -712,7 +772,7 @@ public class PartnerClosingForm : Form
                 continue;
             }
 
-            ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger)));
+            ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded)));
             confirmedForHistory.Add((row, summary));
         }
 
@@ -724,10 +784,10 @@ public class PartnerClosingForm : Form
 
         try
         {
-            DocumentExporter.ExportSalesLedgersCombined(overviewRows, ledgers, sfd.FileName);
+            DocumentExporter.ExportSalesLedgersCombined(overviewRows, ledgers, combinedFilePath);
 
             byte[]? fileBytes = null;
-            try { fileBytes = File.ReadAllBytes(sfd.FileName); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
+            try { fileBytes = File.ReadAllBytes(combinedFilePath); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
 
             foreach (var (row, summary) in confirmedForHistory)
             {
@@ -737,7 +797,7 @@ public class PartnerClosingForm : Form
                     IssueDate = DateTime.Today,
                     BuyerName = row.PartyName,
                     TotalAmount = summary.TotalSupply,
-                    FilePath = sfd.FileName,
+                    FilePath = combinedFilePath,
                     CreatedAt = DateTime.Now,
                     FileBytes = fileBytes,
                     ChannelCode = row.IsManual ? "" : row.PartyKey["CH:".Length..],
@@ -747,7 +807,7 @@ public class PartnerClosingForm : Form
             }
 
             RefreshBoard();
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.ShowPostExportDialog(this, combinedFilePath);
 
             var msg = $"통합 매출장 출력 완료 — 현황 {overviewRows.Count}건, 매출장 시트 {ledgers.Count}건.";
             if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
@@ -782,11 +842,64 @@ public class PartnerClosingForm : Form
         }
 
         using var dlg = new SimpleTextPromptDialog("귀속월 변경", "새 귀속월 (YYYY-MM):", CurrentPeriod, SimpleTextPromptDialog.PeriodValidator);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
         _closingRepo.ReassignPeriod(ids, dlg.Value);
         RefreshBoard();
         _statusLabel.Text = $"{ids.Count}건의 귀속월을 {dlg.Value}(으)로 변경했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private List<LineRow> SelectedUnshippedLineRows() =>
+        _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as LineRow)
+            .Where(l => l != null && l.IsUnshipped && l.Source.OutboundDetailId != null)
+            .Cast<LineRow>()
+            .DistinctBy(l => l.Source.OutboundDetailId)
+            .ToList();
+
+    /// <summary>
+    /// 마감보드 라인 상세에 함께 보이는 미출고 건을 확정 처리 없이도(=출고이력 관리창을 따로 열지
+    /// 않고도) 바로 출고확정 시킨다. 확인 없이 누르면 되돌리기 번거로워질 수 있어 한 번 더 물어본다.
+    /// </summary>
+    private void OnMarkLinesShippedClick(object? sender, EventArgs e)
+    {
+        var lines = SelectedUnshippedLineRows();
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("출고확정 처리할 미출고 라인을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (MessageBox.Show($"선택한 {lines.Count}건을 출고확정 처리하시겠습니까?", "출고확정 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _outboundRepo.MarkAsShipped(lines.Select(l => l.Source.OutboundDetailId!.Value));
+
+        var partyKey = (_partyGrid.CurrentRow?.DataBoundItem as PartyRow)?.PartyKey;
+        RefreshBoard();
+        if (partyKey != null) SelectPartyByKey(partyKey);
+        _statusLabel.Text = $"{lines.Count}건을 출고확정 처리했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 미출고 건을 라인 상세에서 바로 삭제한다(이미 출고확정/마감확정된 라인은 대상에서 제외).
+    /// </summary>
+    private void OnDeleteLinesClick(object? sender, EventArgs e)
+    {
+        var lines = SelectedUnshippedLineRows();
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("삭제할 미출고 라인을 선택하세요(이미 출고확정된 라인은 여기서 삭제할 수 없습니다 — 출고이력 관리창을 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (MessageBox.Show($"선택한 {lines.Count}건을 삭제하시겠습니까? 되돌릴 수 없습니다.", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+
+        _outboundRepo.DeleteByIds(lines.Select(l => l.Source.OutboundDetailId!.Value));
+
+        var partyKey = (_partyGrid.CurrentRow?.DataBoundItem as PartyRow)?.PartyKey;
+        RefreshBoard();
+        if (partyKey != null) SelectPartyByKey(partyKey);
+        _statusLabel.Text = $"{lines.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     /// <summary>
@@ -826,11 +939,17 @@ public class PartnerClosingForm : Form
             return;
         }
         var channelCode = partyRow.PartyKey["CH:".Length..];
-        var newPrice = line.UnitPrice;
+        // 그리드에 표시/편집된 값은 체크박스 기준(VAT별도면 공급가 기준)이므로, 저장 전 항상
+        // VAT포함 원본 기준으로 환산한다 — CSKU/발주 데이터는 항상 VAT포함으로 저장하는 관례.
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var newPrice = vatExcluded
+            ? Math.Round(line.UnitPrice * VatCalculator.VatDivisor, 0, MidpointRounding.AwayFromZero)
+            : line.UnitPrice;
         var lineDate = (line.Source.LineDate ?? DateTime.Today).Date;
 
+        var priceLabel = vatExcluded ? $"{newPrice:N0}원(VAT포함, 입력한 VAT별도 값 {line.UnitPrice:N0}원 환산)" : $"{newPrice:N0}원";
         var choice = MessageBox.Show(
-            $"단가를 {newPrice:N0}원으로 변경합니다.\n\n" +
+            $"단가를 {priceLabel}으로 변경합니다.\n\n" +
             "[예] 이 건에만 적용\n" +
             $"[아니오] {lineDate:yyyy-MM-dd} 이후 이 CSKU({line.CskuCode}) 전체에 적용(등록 단가도 함께 갱신)\n" +
             "[취소] 변경 취소",
@@ -915,15 +1034,21 @@ public class PartnerClosingForm : Form
         }
     }
 
-    private sealed class LineRow(PartnerClosingLine source)
+    private sealed class LineRow(PartnerClosingLine source, bool isUnshipped, bool vatExcluded)
     {
         public PartnerClosingLine Source { get; } = source;
+        public bool IsUnshipped { get; } = isUnshipped;
+        public string StatusText { get; } = isUnshipped ? "미출고" : "확정";
         public string LineDateText { get; } = source.LineDate?.ToString("yyyy-MM-dd") ?? "";
         public string CskuCode { get; } = source.CskuCode;
         public string ItemName { get; set; } = source.ItemName;
         public decimal Qty { get; } = source.Qty;
-        public decimal UnitPrice { get; set; } = source.UnitPrice;
-        public decimal CostPrice { get; } = source.CostPrice;
-        public decimal Profit { get; } = source.Profit;
+
+        /// <summary>화면 표시/편집 값 — "VAT 별도" 체크 시 CSKU 원본(VAT포함) 값을 공급가 기준으로
+        /// 나눠 보여준다. 이 칸은 편집 가능하므로(HandleUnitPriceEdit), 저장할 때는 반드시 다시
+        /// VAT포함 원본 기준으로 환산해야 한다 — CSKU/발주 데이터는 항상 VAT포함으로 저장하는 관례.</summary>
+        public decimal UnitPrice { get; set; } = VatCalculator.ToDisplay(source.UnitPrice, vatExcluded);
+        public decimal CostPrice { get; } = VatCalculator.ToDisplay(source.CostPrice, vatExcluded);
+        public decimal Profit { get; } = VatCalculator.ToDisplay(source.Profit, vatExcluded);
     }
 }

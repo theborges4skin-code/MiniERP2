@@ -1,5 +1,6 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -93,7 +94,7 @@ public class PartyManagerForm : Form
     private void AddNew()
     {
         using var dlg = new PartyEditDialog(null);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Result == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.Result == null) return;
         _partyRepo.Save(dlg.Result);
         LoadData();
     }
@@ -103,7 +104,7 @@ public class PartyManagerForm : Form
         var party = SelectedParty();
         if (party == null) { MessageBox.Show("수정할 거래처를 선택하세요.", "알림"); return; }
         using var dlg = new PartyEditDialog(party);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Result == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.Result == null) return;
         _partyRepo.Save(dlg.Result);
         LoadData();
     }

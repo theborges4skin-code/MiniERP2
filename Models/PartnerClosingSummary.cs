@@ -28,6 +28,12 @@ public class PartnerClosingSummary
     public int UnshippedCount { get; set; }
 
     /// <summary>
+    /// 미출고 잔량 라인 상세(라이브 집계일 때만 채워짐). 마감보드 라인 상세에서 확정 라인과 함께
+    /// 보여줘 그 자리에서 수정·삭제·출고확정 처리를 할 수 있게 하기 위함이다.
+    /// </summary>
+    public List<PartnerClosingLine> UnshippedLines { get; set; } = [];
+
+    /// <summary>
     /// 세션 한정 런타임 해시로 생성된(=SourceRowKey 없는 수동 추가) ShipmentGroupKey를 가진 라인이
     /// 섞여 있으면 true(§10 — 마감 확정 전 집계가 흔들릴 수 있다는 경고 배지용).
     /// </summary>

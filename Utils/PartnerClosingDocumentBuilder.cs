@@ -11,13 +11,6 @@ namespace MiniERP2.Utils;
 /// </summary>
 public static class PartnerClosingDocumentBuilder
 {
-    /// <summary>
-    /// OutboundDetail.SupplyPrice(→PartnerClosingLine.UnitPrice)는 이 앱 전반에서 VAT포함 단가로
-    /// 취급된다(사용자 확인, 2026-07-30). VAT별도 문서를 만들 때는 이 값을 10/11로 나눠 공급가
-    /// 기준으로 역산해야 한다 — 그냥 곱해서 별도 세액을 얹으면 이중과세가 된다.
-    /// </summary>
-    private const decimal VatDivisor = 1.1m;
-
     public static TradeStatementDoc BuildTradeStatement(PartnerClosingSummary summary, DocType docType, DocParty supplier, DocParty buyer)
     {
         var vatExcluded = docType == DocType.TradeStatementVatExcl;
@@ -39,17 +32,19 @@ public static class PartnerClosingDocumentBuilder
                 ItemName = m.ItemName,
                 Spec = m.Spec,
                 Qty = m.Qty,
-                UnitPrice = vatExcluded ? m.UnitPrice / VatDivisor : m.UnitPrice,
+                UnitPrice = VatCalculator.ToDisplay(m.UnitPrice, vatExcluded),
             }).ToList(),
         };
     }
 
     /// <summary>
-    /// 매출장(내부 손익 검토용)은 항상 VAT를 제외한 공급가 기준으로 이익을 계산한다(부가세는 실제
-    /// 수익이 아니므로). <paramref name="ignoreDate"/>가 true면 날짜와 무관하게 CSKU 하나로 전체
-    /// 기간을 합산하고(§3 옵션), false(기본)면 명세표와 같은 "날짜·CSKU" 단위로 합산한다.
+    /// 매출장(내부 손익 검토용)의 단가/원가 기준을 <paramref name="vatExcluded"/>로 고른다 — CSKU
+    /// 납품단가는 VAT포함 기준이므로(VatCalculator 주석), true면 10/11로 나눠 공급가 기준으로 보여주고
+    /// (부가세는 실제 수익이 아니므로 기본값), false면 CSKU 값 그대로(VAT포함) 보여준다.
+    /// <paramref name="ignoreDate"/>가 true면 날짜와 무관하게 CSKU 하나로 전체 기간을 합산하고
+    /// (§3 옵션), false(기본)면 명세표와 같은 "날짜·CSKU" 단위로 합산한다.
     /// </summary>
-    public static SalesLedgerDoc BuildSalesLedger(PartnerClosingSummary summary, DocParty supplier, DocParty buyer, bool ignoreDate = false)
+    public static SalesLedgerDoc BuildSalesLedger(PartnerClosingSummary summary, DocParty supplier, DocParty buyer, bool ignoreDate = false, bool vatExcluded = true)
     {
         var merged = MergeByCskuAndDate(summary.Lines, summary.Period, ignoreDate);
 
@@ -59,6 +54,7 @@ public static class PartnerClosingDocumentBuilder
             Buyer = buyer,
             IssueDate = DateTime.Today,
             StampImagePath = supplier.StampImagePath,
+            IsVatExcluded = vatExcluded,
             Lines = merged.Select(m => new SalesLedgerLineItem
             {
                 Year = m.Year,
@@ -67,8 +63,8 @@ public static class PartnerClosingDocumentBuilder
                 ItemName = m.ItemName,
                 Spec = m.Spec,
                 Qty = m.Qty,
-                UnitPrice = m.UnitPrice / VatDivisor,
-                CostPrice = m.CostPrice / VatDivisor,
+                UnitPrice = VatCalculator.ToDisplay(m.UnitPrice, vatExcluded),
+                CostPrice = VatCalculator.ToDisplay(m.CostPrice, vatExcluded),
             }).ToList(),
         };
     }

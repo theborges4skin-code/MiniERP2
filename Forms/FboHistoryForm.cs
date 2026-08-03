@@ -227,7 +227,7 @@ public class FboHistoryForm : Form
         }
 
         using var dlg = new FboBoxItemEditDialog(fboNo, boxSeq, item.Csku, item.ItemName, item.Qty, item.ExpiryDate);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
         item.Csku = dlg.Csku;
         item.ItemName = dlg.ItemName;
@@ -342,19 +342,16 @@ public class FboHistoryForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"풀필먼트출고_{fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("FboOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("FboOrderExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"풀필먼트출고_{fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("FboOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FboOrderExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
-            FboOrderExporter.Export(order, channel, boxes, items, sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            FboOrderExporter.Export(order, channel, boxes, items, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
@@ -393,19 +390,16 @@ public class FboHistoryForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"풀필먼트입고_{fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("FboInboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("FboInboundExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"풀필먼트입고_{fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("FboInboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FboInboundExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
-            FboInboundExporter.Export(channel, boxes, items, sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            FboInboundExporter.Export(channel, boxes, items, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
@@ -459,7 +453,7 @@ public class FboHistoryForm : Form
 
         using var detailDialog = new FboOrderDetailDialog(order, boxes, items, channelName);
         FormManager.ApplyBoundsTracking(detailDialog);
-        detailDialog.ShowDialog(this);
+        FormManager.ShowDialogSafe(detailDialog, this);
     }
 
     /// <summary>과거에 발주확정한 건의 이송장 결과를 여기서 바로 반영한다(FboOrderForm을 열지 않아도

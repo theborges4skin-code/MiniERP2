@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -629,15 +630,10 @@ public class DocsForm : Form
         _lineGrid.EndEdit();
 
         string defaultName = DefaultFileName();
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = defaultName,
-            InitialDirectory = _settingsService.GetLastFolder("DocsExport")
-                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("DocsExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx", defaultName,
+            _settingsService.GetLastFolder("DocsExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("DocsExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
@@ -647,32 +643,32 @@ public class DocsForm : Form
                 case DocType.TradeStatementVatIncl:
                     var tsDoc = BuildTradeStatementDoc();
                     if (tsDoc == null) return;
-                    DocumentExporter.ExportTradeStatement(tsDoc, sfd.FileName);
+                    DocumentExporter.ExportTradeStatement(tsDoc, filePath);
                     break;
 
                 case DocType.QuoteBasic:
                 case DocType.QuoteWithQty:
                     var qDoc = BuildQuoteDoc();
                     if (qDoc == null) return;
-                    DocumentExporter.ExportQuote(qDoc, sfd.FileName);
+                    DocumentExporter.ExportQuote(qDoc, filePath);
                     break;
 
                 case DocType.PriceAdjustment:
                     var paDoc = BuildPriceAdjDoc();
                     if (paDoc == null) return;
-                    DocumentExporter.ExportPriceAdjustment(paDoc, sfd.FileName);
+                    DocumentExporter.ExportPriceAdjustment(paDoc, filePath);
                     break;
 
                 case DocType.SalesLedger:
                     var slDoc = BuildSalesLedgerDoc();
                     if (slDoc == null) return;
-                    DocumentExporter.ExportSalesLedger(slDoc, sfd.FileName);
+                    DocumentExporter.ExportSalesLedger(slDoc, filePath);
                     break;
             }
 
-            SetStatus($"저장 완료: {Path.GetFileName(sfd.FileName)}", true);
-            SaveHistory(sfd.FileName);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            SetStatus($"저장 완료: {Path.GetFileName(filePath)}", true);
+            SaveHistory(filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
@@ -886,7 +882,7 @@ public class DocsForm : Form
     private void OnManagePartiesClick(object? sender, EventArgs e)
     {
         using var dlg = new PartyManagerForm();
-        dlg.ShowDialog(this);
+        FormManager.ShowDialogSafe(dlg, this);
     }
 
     private void OnLoadPartyFromChannelClick(object? sender, EventArgs e)
@@ -906,7 +902,7 @@ public class DocsForm : Form
         }
 
         using var dlg = new ChannelPartySelectDialog(options);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
         if (dlg.NeedsChannelSetup != null)
         {
@@ -935,7 +931,7 @@ public class DocsForm : Form
         var parties = _partyRepo.GetAll();
         if (parties.Count == 0) { MessageBox.Show("저장된 거래처가 없습니다.", "알림"); return; }
         using var dlg = new PartySelectDialog(parties);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Selected == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.Selected == null) return;
         FillPartyFields(dlg.Selected, supplier);
     }
 
@@ -1008,7 +1004,7 @@ public class DocsForm : Form
         var phrases = _phraseRepo.GetAll();
         if (phrases.Count == 0) { MessageBox.Show("저장된 즐겨찾기 문구가 없습니다.", "알림"); return; }
         using var dlg = new FavoritePhraseDialog(phrases);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Selected == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.Selected == null) return;
         _adjBodyText.Text = dlg.Selected.Body;
     }
 
@@ -1027,7 +1023,7 @@ public class DocsForm : Form
         var cancel = new Button { Text = "취소", Left = 150, Top = 50, Width = 70, DialogResult = DialogResult.Cancel };
         catDlg.Controls.AddRange(new Control[] { combo, ok, cancel });
         catDlg.AcceptButton = ok; catDlg.CancelButton = cancel;
-        if (catDlg.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(catDlg, this) != DialogResult.OK) return;
 
         _phraseRepo.Save(new DocFavoritePhrase
         {
@@ -1045,7 +1041,7 @@ public class DocsForm : Form
     private void OnLoadCskuClick(object? sender, EventArgs e)
     {
         using var dlg = new CskuPickerDialog(_currentBuyerChannelCode);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedItemName == null) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.SelectedItemName == null) return;
 
         _lineGrid.EndEdit();
         var row = TargetLineRow();
@@ -1140,7 +1136,7 @@ public class DocsForm : Form
         }
 
         using var dlg = new OutboundHistoryPickerDialog(_currentBuyerChannelCode);
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedPicks.Count == 0) return;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.SelectedPicks.Count == 0) return;
 
         _lineGrid.EndEdit();
         foreach (var pick in dlg.SelectedPicks)
@@ -1252,7 +1248,7 @@ public class DocsForm : Form
         var no  = new Button { Text = "취소", Left = 230, Top = 60, Width = 70, DialogResult = DialogResult.Cancel };
         form.Controls.AddRange(new Control[] { lbl, tb, ok, no });
         form.AcceptButton = ok; form.CancelButton = no;
-        return form.ShowDialog() == DialogResult.OK ? tb.Text.Trim() : null;
+        return FormManager.ShowDialogSafe(form, null) == DialogResult.OK ? tb.Text.Trim() : null;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1324,7 +1320,7 @@ public class DocsForm : Form
     private void OnHistoryClick(object? sender, EventArgs e)
     {
         using var dlg = new DocHistoryForm(_historyRepo);
-        dlg.ShowDialog(this);
+        FormManager.ShowDialogSafe(dlg, this);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1337,16 +1333,12 @@ public class DocsForm : Form
 
         // PDF 저장 경로 먼저 확인
         string defaultPdf = DefaultFileName().Replace(".xlsx", ".pdf");
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "PDF 파일 (*.pdf)|*.pdf",
-            FileName = defaultPdf,
-            InitialDirectory = _settingsService.GetLastFolder("DocsPdf")
+        var pdfPath = ExportHelper.ShowSaveFileDialog(this, "PDF 파일 (*.pdf)|*.pdf", defaultPdf,
+            _settingsService.GetLastFolder("DocsPdf")
                 ?? _settingsService.GetLastFolder("DocsExport")
-                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("DocsPdf", Path.GetDirectoryName(sfd.FileName)!);
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (pdfPath == null) return;
+        _settingsService.SetLastFolder("DocsPdf", Path.GetDirectoryName(pdfPath)!);
 
         // 임시 XLSX 생성
         string tempXlsx = Path.Combine(Path.GetTempPath(), $"_doc_pdf_{Guid.NewGuid():N}.xlsx");
@@ -1379,12 +1371,12 @@ public class DocsForm : Form
                 default: return;
             }
 
-            ExportXlsxToPdf(tempXlsx, sfd.FileName);
-            SetStatus($"PDF 저장 완료: {Path.GetFileName(sfd.FileName)}", true);
+            ExportXlsxToPdf(tempXlsx, pdfPath);
+            SetStatus($"PDF 저장 완료: {Path.GetFileName(pdfPath)}", true);
 
             var res = MessageBox.Show("PDF를 열겠습니까?", "PDF 저장 완료", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.Yes)
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(sfd.FileName) { UseShellExecute = true });
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(pdfPath) { UseShellExecute = true });
         }
         catch (COMException cex)
         {

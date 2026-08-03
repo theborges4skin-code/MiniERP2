@@ -51,6 +51,38 @@ public class PartnerClosingRepositoryTests
     };
 
     [TestMethod]
+    public void GetSummary_CskuHasInvoiceDisplayName_PrefersItOverRawProductName()
+    {
+        // 발주서 원본 상품명은 채널/주문마다 표기가 제각각이라, CSKU에 등록된 송장출력용
+        // 상품명이 있으면 그걸 우선해야 한다(§투유/푸디 채널 품목명 미노출 문의).
+        new ChannelSkuRepository().Upsert(new ChannelSkuModel
+        {
+            ChannelCode = "CH01",
+            CskuCode = "CSKU-1",
+            Msku = "CSKU-1",
+            SupplyPrice = 10000m,
+            InvoiceDisplayName = "정리된 상품명",
+        });
+        _outboundRepo.SaveOutbound([Shipped("ORD-7", msku: "CSKU-1")]);
+
+        var period = DateTime.Now.ToString("yyyy-MM");
+        var summary = _closingRepo.GetSummary(period, "CH:CH01");
+
+        Assert.AreEqual("정리된 상품명", summary.Lines.Single().ItemName);
+    }
+
+    [TestMethod]
+    public void GetSummary_CskuHasNoInvoiceDisplayName_FallsBackToRawProductName()
+    {
+        _outboundRepo.SaveOutbound([Shipped("ORD-8", msku: "CSKU-NOREG")]);
+
+        var period = DateTime.Now.ToString("yyyy-MM");
+        var summary = _closingRepo.GetSummary(period, "CH:CH01");
+
+        Assert.AreEqual("테스트품목", summary.Lines.Single().ItemName);
+    }
+
+    [TestMethod]
     public void GetSummary_NoClosingYet_ComputesLiveTotalsFromOutboundDetail()
     {
         _outboundRepo.SaveOutbound([Shipped("ORD-1", qty: 2, supplyPrice: 10000m, purchasePrice: 4000m)]);

@@ -2,6 +2,7 @@ using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -246,7 +247,7 @@ public class ManualOrderDialog : Form
     private void OnSkuSearchClick(object? sender, EventArgs e)
     {
         using var picker = new CskuPickerDialog(_channelCode, preselectChannelFilter: false);
-        if (picker.ShowDialog(this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
+        if (FormManager.ShowDialogSafe(picker, this) != DialogResult.OK || picker.SelectedCskuCode == null) return;
 
         var cskuCode = picker.SelectedCskuCode;
         var productName = picker.SelectedItemName ?? cskuCode;
@@ -286,7 +287,7 @@ public class ManualOrderDialog : Form
 
         // 추가 모드: 수량 확인 팝업
         using var qtyDialog = new ManualOrderQuantityDialog(cskuCode, productName);
-        if (qtyDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(qtyDialog, this) != DialogResult.OK) return;
 
         var newItem = new OfsOrderItem
         {

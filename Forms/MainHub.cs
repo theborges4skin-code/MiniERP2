@@ -62,15 +62,18 @@ public class MainHub : Form
         ("기준정보", new()
         {
             ("마스터SKU 관리", (s, e) => FormManager.Show<MasterSkuForm>(), Keys.Control | Keys.D1),
+            ("거래처별 CSKU 관리", (s, e) => FormManager.Show<ChannelCskuForm>(), null),
             ("매핑 관리", (s, e) => FormManager.Show<MappingForm>(), Keys.Control | Keys.D5),
             ("채널 설정", (s, e) => FormManager.Show<ChannelConfigForm>(), Keys.Control | Keys.D2),
             ("견적·단가 관리", (s, e) => FormManager.Show<PriceQuoteForm>(), Keys.Control | Keys.F7),
+            ("배송지 주소록 관리", (s, e) => FormManager.Show<AddressBookForm>(), null),
         }),
         ("정산", new()
         {
             ("마감/이익분석", (s, e) => FormManager.Show<SettlementForm>(), Keys.Control | Keys.F1),
             ("광고비 분석", (s, e) => FormManager.Show<AdMappingForm>(), Keys.Control | Keys.F2),
             ("월별 마감 자동화", (s, e) => FormManager.Show<MonthlyClosingForm>(), Keys.Control | Keys.F3),
+            ("거래처 마감보드", (s, e) => FormManager.Show<PartnerClosingForm>(), null),
         }),
         ("보고서", new()
         {
@@ -79,7 +82,8 @@ public class MainHub : Form
         }),
         ("문서관리", new()
         {
-            ("기타/문서관리", (s, e) => FormManager.Show<DocsForm>(), Keys.Control | Keys.F5),
+            ("문서관리", (s, e) => FormManager.Show<DocLineHistoryForm>(), Keys.Control | Keys.F5),
+            ("전체 문서 작성(고급)", (s, e) => FormManager.Show<DocsForm>(), Keys.Control | Keys.F9),
             ("거래명세표 조회/내보내기", (s, e) => FormManager.Show<DocStatementBrowserForm>(), Keys.Control | Keys.F6),
         }),
         ("데이터관리", new()

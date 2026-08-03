@@ -162,6 +162,77 @@ public class ChannelSkuRepositoryTests
     }
 
     [TestMethod]
+    public void Upsert_WithoutCostPriceOverride_DefaultsToNullMeaningMasterLinked()
+    {
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-01", Msku = "MSKU-OVR-01", SupplyPrice = 1000m });
+
+        var saved = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-OVR-01");
+
+        Assert.IsNotNull(saved);
+        Assert.IsNull(saved!.CostPriceOverride);
+    }
+
+    [TestMethod]
+    public void Upsert_WithCostPriceOverride_PersistsIncludingZero()
+    {
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-02", Msku = "MSKU-OVR-02", SupplyPrice = 1000m, CostPriceOverride = 12345.5m });
+        var savedWithValue = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-OVR-02");
+        Assert.AreEqual(12345.5m, savedWithValue!.CostPriceOverride);
+
+        // 0은 "개별관리 상태에서 원가 0원"이라는 명시적 값이지 NULL(연동)이 아니다(§4.1) — 0도 그대로 저장되어야 한다.
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-02", Msku = "MSKU-OVR-02", SupplyPrice = 1000m, CostPriceOverride = 0m });
+        var savedWithZero = repository.GetByChannelAndCskuCode("COUPANG", "CSKU-OVR-02");
+        Assert.AreEqual(0m, savedWithZero!.CostPriceOverride);
+    }
+
+    [TestMethod]
+    public void Upsert_TogglingCostPriceOverride_RecordsFieldHistoryWithMasterLinkedPlaceholder()
+    {
+        // §4.3: NULL을 그냥 넘기면 RecordFieldChange가 빈 문자열로 정규화해 "연동 상태"와 "빈 값"이
+        // 구분되지 않으므로, "(마스터 연동)" 문구로 명시적으로 기록되어야 한다.
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-03", Msku = "MSKU-OVR-03", SupplyPrice = 1000m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-03", Msku = "MSKU-OVR-03", SupplyPrice = 1000m, CostPriceOverride = 500m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-03", Msku = "MSKU-OVR-03", SupplyPrice = 1000m, CostPriceOverride = null });
+
+        var history = repository.GetFieldHistory("COUPANG", "CSKU-OVR-03")
+            .Where(h => h.FieldName == "제조원가(개별관리)").ToList();
+
+        Assert.HasCount(2, history);
+        Assert.AreEqual("(마스터 연동)", history[0].OldValue);
+        Assert.AreEqual("500", history[0].NewValue);
+        Assert.AreEqual("500", history[1].OldValue);
+        Assert.AreEqual("(마스터 연동)", history[1].NewValue);
+    }
+
+    [TestMethod]
+    public void Upsert_UnchangedCostPriceOverride_DoesNotDuplicateFieldHistory()
+    {
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-04", Msku = "MSKU-OVR-04", SupplyPrice = 1000m, CostPriceOverride = 500m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-04", Msku = "MSKU-OVR-04", SupplyPrice = 1000m, CostPriceOverride = 500m });
+
+        var history = repository.GetFieldHistory("COUPANG", "CSKU-OVR-04").Where(h => h.FieldName == "제조원가(개별관리)");
+
+        Assert.IsEmpty(history);
+    }
+
+    [TestMethod]
+    public void GetAllByMsku_IncludesCostPriceOverride()
+    {
+        var repository = new ChannelSkuRepository();
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "COUPANG", CskuCode = "CSKU-OVR-05", Msku = "MSKU-OVR-05", SupplyPrice = 1000m, CostPriceOverride = 777m });
+        repository.Upsert(new ChannelSkuModel { ChannelCode = "11ST", CskuCode = "CSKU-OVR-06", Msku = "MSKU-OVR-05", SupplyPrice = 1100m });
+
+        var results = repository.GetAllByMsku("MSKU-OVR-05");
+
+        Assert.AreEqual(777m, results.Single(c => c.ChannelCode == "COUPANG").CostPriceOverride);
+        Assert.IsNull(results.Single(c => c.ChannelCode == "11ST").CostPriceOverride);
+    }
+
+    [TestMethod]
     public void Delete_RemovesChannelSkuAndHistory()
     {
         var repository = new ChannelSkuRepository();

@@ -108,7 +108,7 @@ public class ShipmentGroupingTests
 
         var result = ShipmentGrouping.BuildCombinedItemDescription(items, "   ▶[##개]");
 
-        Assert.AreEqual("A상품   ▶**[2개]", result);
+        Assert.AreEqual("A상품   ▶ii[2개]", result);
     }
 
     [TestMethod]
@@ -122,13 +122,13 @@ public class ShipmentGroupingTests
     }
 
     [TestMethod]
-    public void BuildCombinedItemDescription_QuantityOfFive_AddsFiveStarsBeforeBracket()
+    public void BuildCombinedItemDescription_QuantityOfFive_AddsRomanNumeralBeforeBracket()
     {
         var items = new[] { new OfsOrderItem { ProductName = "A상품", Quantity = 5 } };
 
         var result = ShipmentGrouping.BuildCombinedItemDescription(items, "▶[##개]");
 
-        Assert.AreEqual("A상품▶*****[5개]", result);
+        Assert.AreEqual("A상품▶v[5개]", result);
     }
 
     [TestMethod]
@@ -142,7 +142,7 @@ public class ShipmentGroupingTests
 
         var result = ShipmentGrouping.BuildCombinedItemDescription(items, "▶[##개]");
 
-        Assert.AreEqual("((A상품xx▶**[2개]xx))   +   ((B상품xx▶[1개]xx))", result);
+        Assert.AreEqual("((A상품xx▶ii[2개]xx))   +   ((B상품xx▶[1개]xx))", result);
     }
 
     [TestMethod]

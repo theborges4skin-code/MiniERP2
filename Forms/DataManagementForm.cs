@@ -177,7 +177,7 @@ public class DataManagementForm : Form
 
             using var cskuForm = new CSkuForm(sku);
             FormManager.ApplyBoundsTracking(cskuForm);
-            cskuForm.ShowDialog(this);
+            FormManager.ShowDialogSafe(cskuForm, this);
         };
     }
 
@@ -244,29 +244,27 @@ public class DataManagementForm : Form
     {
         var allColumns = context.Table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
         using var columnDialog = new ExportColumnSelectionDialog(allColumns);
-        if (columnDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(columnDialog, this) != DialogResult.OK) return;
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{context.Adapter.DisplayName}_{DateTime.Now:yyyyMMdd}.xlsx",
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"{context.Adapter.DisplayName}_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
 
         try
         {
-            var rowCount = ManagedTableExcelIO.Export(context.Table, columnDialog.SelectedColumns, columnDialog.FilterColumn, columnDialog.FilterValue, sfd.FileName);
+            var rowCount = ManagedTableExcelIO.Export(context.Table, columnDialog.SelectedColumns, columnDialog.FilterColumn, columnDialog.FilterValue, filePath);
 
             _exportLogRepository.Add(new ExportLogEntry
             {
                 TableName = context.Adapter.DisplayName,
-                FilePath = sfd.FileName,
+                FilePath = filePath,
                 RowCount = rowCount,
                 Headers = string.Join(", ", columnDialog.SelectedColumns),
             });
 
             _statusLabel.Text = $"'{context.Adapter.DisplayName}' {rowCount}건을 엑셀로 내보냈습니다.";
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
@@ -877,7 +875,7 @@ public class DataManagementForm : Form
             "거래명세표(엑셀) 마이그레이션",
             "과거 엑셀 거래명세표 파일들이 있는 폴더를 스캔해 거래처/발행건/품목라인을 DB로 이식합니다. " +
             "즉시 반영되지 않고 스캔 결과를 검토(포함/제외 체크)한 뒤 커밋하는 별도 창이 열립니다.",
-            "마이그레이션 열기...", (s, e) => new TradeStatementMigrationDialog().ShowDialog(this)), 0, 3);
+            "마이그레이션 열기...", (s, e) => FormManager.ShowDialogSafe(new TradeStatementMigrationDialog(), this)), 0, 3);
 
         tabPage.Controls.Add(layout);
         return tabPage;
@@ -1072,7 +1070,7 @@ public class DataManagementForm : Form
         dlg.AcceptButton = btnOk;
         dlg.CancelButton = btnCancel;
 
-        if (dlg.ShowDialog(this) != DialogResult.OK) return null;
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return null;
         return list.CheckedItems.Cast<string>().ToHashSet();
     }
         private void OnLegacyChannelConfigImportClick(object? sender, EventArgs e)

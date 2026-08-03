@@ -125,7 +125,7 @@ public class CSkuForm : Form
         // Open the history form as a dialog.
         using var historyForm = new ChannelSkuHistoryForm(csku.ChannelCode, csku.CskuCode);
         FormManager.ApplyBoundsTracking(historyForm);
-        historyForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(historyForm, this);
     }
 
     /// <summary>
@@ -299,16 +299,12 @@ public class CSkuForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"CSKU_{_masterSku}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("CSkuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"CSKU_{_masterSku}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("CSkuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("CSkuExport", Path.GetDirectoryName(filePath)!);
 
         try

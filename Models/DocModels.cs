@@ -118,6 +118,13 @@ public class SalesLedgerDoc
     public bool ShowCost { get; set; } = true;
     public bool ShowProfit { get; set; } = true;
 
+    /// <summary>
+    /// true(기본값)면 CSKU 납품단가(VAT포함 기준, §PartnerClosingDocumentBuilder)를 10/11로 나눈
+    /// 공급가 기준으로 단가/원가를 표시한다. false면 CSKU 값 그대로(VAT포함)를 표시한다.
+    /// 어느 쪽이든 합계금액이 원본 라인 합계와 어긋나지 않도록 라인 병합 후 변환한다.
+    /// </summary>
+    public bool IsVatExcluded { get; set; } = true;
+
     public const int MaxLines = 18;
 
     public decimal TotalQty => Lines.Where(l => !IsEmpty(l)).Sum(l => l.Qty);

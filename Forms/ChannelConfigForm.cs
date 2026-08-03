@@ -3,6 +3,7 @@ using System.Text.Json;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
+using MiniERP2.Exporters;
 using MiniERP2.Models;
 using MiniERP2.UI;
 using MiniERP2.Utils;
@@ -59,42 +60,7 @@ public class ChannelConfigForm : Form
     private TabControl _rightTabControl = new();
     private TabPage _partyInfoTabPage = new();
 
-    private static readonly StdField[] OrderMappingFields =
-    [
-        StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
-        StdField.Remark, StdField.ChannelHint,
-    ];
-
-    /// <summary>
-    /// 쿠팡그로스 외 모든 채널의 정산서 매핑 표준필드(2026-06-28 사용자 요청으로 전면 교체).
-    /// 매핑유무/채널/상품그룹/매핑SKU는 채널설정이 아니라 마감/이익분석 화면에서 자동으로
-    /// 채워지는 값이라 여기 목록에는 없다. 이익액은 일부러 빠져있다 — 이 앱이 원가기반으로
-    /// 자동 계산하므로 정산파일에서 읽어올 필요가 없다(마감/이익분석 결과에서만 도출됨).
-    /// 정산액은 손익계산의 기준값으로는 계속 쓰이지만, 식별용 그리드에는 더 이상 노출하지 않는다.
-    /// </summary>
-    private static readonly StdField[] SettlementMappingFieldsDefault =
-    [
-        StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Revenue, StdField.ShippingFee, StdField.SettlementAmount, StdField.TrackingNo,
-    ];
-
-    /// <summary>쿠팡그로스는 사용자 요청에 따라 기존 6필드/손익공식을 그대로 유지한다.</summary>
-    private static readonly StdField[] SettlementMappingFieldsCoupangGrowth =
-    [
-        StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Revenue, StdField.SettlementAmount, StdField.ShippingFee, StdField.HandlingFee,
-    ];
-
-    /// <summary>
-    /// 쿠팡로켓 전용 필드: TaxNo(계산서번호)를 추가로 매핑한다.
-    /// TaxDate(작성일자)는 계산서발행내역 JOIN으로 자동 채워지므로 여기서는 지정하지 않는다.
-    /// </summary>
-    private static readonly StdField[] SettlementMappingFieldsCoupangRocket =
-    [
-        StdField.ProductName, StdField.OptionName, StdField.Quantity,
-        StdField.Revenue, StdField.SettlementAmount, StdField.TrackingNo, StdField.TaxNo,
-    ];
+    private static readonly StdField[] OrderMappingFields = ChannelFieldSets.OrderMappingFields;
 
     private static readonly (AdStdField Field, string Label)[] AdMappingFields =
     [
@@ -109,12 +75,8 @@ public class ChannelConfigForm : Form
         (AdStdField.Note3, "비고3"),
     ];
 
-    private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) => config.ChannelType switch
-    {
-        ChannelType.CoupangGrowth => SettlementMappingFieldsCoupangGrowth,
-        ChannelType.CoupangRocket => SettlementMappingFieldsCoupangRocket,
-        _ => SettlementMappingFieldsDefault,
-    };
+    private static StdField[] ResolveSettlementMappingFields(ChannelConfig config) =>
+        ChannelFieldSets.ResolveSettlementMappingFields(config.ChannelType);
 
     public ChannelConfigForm()
     {
@@ -171,6 +133,18 @@ public class ChannelConfigForm : Form
         _statusLabel = new Label { AutoSize = true, Padding = new Padding(10, 7, 0, 0), ForeColor = Color.DarkGreen };
         buttonPanel.Controls.Add(_statusLabel);
 
+        // 채널 일괄등록(엑셀) — 기획서 §4.2.
+        var bulkImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
+        var btnExportBlank = new Button { Text = "엑셀 다운로드", Width = 100 };
+        var btnExportCurrent = new Button { Text = "현재 설정 내보내기", Width = 120 };
+        var btnBulkImport = new Button { Text = "엑셀 일괄 등록", Width = 100 };
+        btnExportBlank.Click += OnExportBlankTemplateClick;
+        btnExportCurrent.Click += OnExportCurrentSettingsClick;
+        btnBulkImport.Click += OnBulkImportClick;
+        bulkImportPanel.Controls.Add(btnExportBlank);
+        bulkImportPanel.Controls.Add(btnExportCurrent);
+        bulkImportPanel.Controls.Add(btnBulkImport);
+
         var courierPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
         var btnCourier = new Button { Text = "택배사 양식 관리", Width = 150 };
         btnCourier.Click += (s, e) => FormManager.Show<CourierConfigForm>();
@@ -181,10 +155,13 @@ public class ChannelConfigForm : Form
         btnLegacyImport.Click += OnLegacyChannelImportClick;
         legacyImportPanel.Controls.Add(btnLegacyImport);
 
+        leftPanel.RowCount = 5;
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.Controls.Add(_channelTreeView, 0, 0);
         leftPanel.Controls.Add(buttonPanel, 0, 1);
-        leftPanel.Controls.Add(courierPanel, 0, 2);
-        leftPanel.Controls.Add(legacyImportPanel, 0, 3);
+        leftPanel.Controls.Add(bulkImportPanel, 0, 2);
+        leftPanel.Controls.Add(courierPanel, 0, 3);
+        leftPanel.Controls.Add(legacyImportPanel, 0, 4);
 
         // Right Panel (Tabs: 기본 정보 / 발주서 매핑 / 정산서 매핑)
         _rightTabControl = new TabControl { Dock = DockStyle.Fill };
@@ -387,7 +364,7 @@ public class ChannelConfigForm : Form
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnHelp = new Button { Text = "도움말", Size = new Size(80, 25) };
-        btnHelp.Click += (s, e) => { using var dialog = new FieldMappingHelpDialog(); dialog.ShowDialog(this); };
+        btnHelp.Click += (s, e) => { using var dialog = new FieldMappingHelpDialog(); FormManager.ShowDialogSafe(dialog, this); };
         var btnLoadSample = new Button { Text = "샘플 파일 불러오기", AutoSize = true };
         toolbar.Controls.Add(btnHelp);
         toolbar.Controls.Add(btnLoadSample);
@@ -813,26 +790,7 @@ public class ChannelConfigForm : Form
         return new BindingList<FieldMappingRow>(rows);
     }
 
-    private static string GetStdFieldLabel(StdField field) => field switch
-    {
-        StdField.ProductName => "상품명",
-        StdField.OptionName => "옵션명",
-        StdField.ProductNo => "주문번호",
-        StdField.Quantity => "수량",
-        StdField.SettlementAmount => "정산액",
-        StdField.ShippingFee => "배송비",
-        StdField.HandlingFee => "입출고비",
-        StdField.Recipient => "수취인",
-        StdField.Phone => "연락처",
-        StdField.Address => "주소",
-        StdField.DeliveryMessage => "배송메세지",
-        StdField.OrderDate => "발주일(누적발주서용)",
-        StdField.Remark => "비고(내부관리용)",
-        StdField.ChannelHint => "채널힌트(자동발주 전용)",
-        StdField.Revenue => "매출액",
-        StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
-        _ => field.ToString(),
-    };
+    private static string GetStdFieldLabel(StdField field) => StdFieldLabels.GetLabel(field);
 
     private TabPage CreateCfsFeeTab()
     {
@@ -1078,7 +1036,7 @@ public class ChannelConfigForm : Form
         form.Controls.AddRange([lbl, txt, btnPanel]);
         form.AcceptButton = btnOk; form.CancelButton = btnCancel;
         txt.SelectAll();
-        return form.ShowDialog() == DialogResult.OK ? txt.Text.Trim() : null;
+        return FormManager.ShowDialogSafe(form, null) == DialogResult.OK ? txt.Text.Trim() : null;
     }
 
     private void OnAdFieldMappingGridCellChanged(DataGridViewCellEventArgs e)
@@ -1433,7 +1391,7 @@ public class ChannelConfigForm : Form
     private void OnAddClick(object? sender, EventArgs e)
     {
         using var dialog = new AddChannelDialog(_channels);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         var newChannelCode = ChannelCodeGenerator.GenerateNext(_channels.Select(c => c.ChannelCode));
         var newChannel = new SalesChannel { ChannelCode = newChannelCode, ChannelName = dialog.ChannelName };
@@ -1489,6 +1447,61 @@ public class ChannelConfigForm : Form
         LoadData();
     }
 
+    /// <summary>채널 일괄등록(엑셀) 기획서 §4.2 — 빈 템플릿 다운로드.</summary>
+    private void OnExportBlankTemplateClick(object? sender, EventArgs e)
+    {
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"채널_일괄등록_양식_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+
+        try
+        {
+            ChannelTemplateExporter.ExportBlank(filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"엑셀 다운로드 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>채널 일괄등록(엑셀) 기획서 §4.2/§4.6 — 등록된 전체 채널을 같은 양식으로 내보내기(라이트립 편집용).</summary>
+    private void OnExportCurrentSettingsClick(object? sender, EventArgs e)
+    {
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"채널_현재설정_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+
+        try
+        {
+            ChannelTemplateExporter.ExportCurrent(filePath, _channels, _channelConfigs, _docPartyRepository.GetAll());
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"내보내기 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>채널 일괄등록(엑셀) 기획서 §4.2/§4.3 — 파일 선택 후 미리보기 다이얼로그로 진입.</summary>
+    private void OnBulkImportClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            Title = "채널 일괄등록 파일을 선택하세요",
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        using var dialog = new ChannelBulkImportPreviewDialog(ofd.FileName, _channels, _channelConfigs, _docPartyRepository.GetAll());
+        if (FormManager.ShowDialogSafe(dialog, this) == DialogResult.OK)
+        {
+            LoadData();
+        }
+    }
+
     private void OnSaveClick(object? sender, EventArgs e)
     {
         FlushMatchColumns();
@@ -1538,7 +1551,7 @@ public class ChannelConfigForm : Form
         var currentGroupHint = channels.Count == 1 ? channels[0].GroupName ?? string.Empty : string.Empty;
 
         using var dialog = new MoveChannelToGroupDialog(existingGroups, currentGroupHint, description);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         foreach (var channel in channels)
         {

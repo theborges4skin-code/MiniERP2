@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Database;
 
@@ -113,7 +114,7 @@ public class PartnerClosingRepository
     {
         var channelCode = StripChannelPrefix(partyKey);
         var periodLines = _outboundRepo.GetForClosingPeriod(channelCode, period);
-        var unshippedCount = _outboundRepo.GetUnshippedForPeriod(channelCode, period).Count;
+        var unshippedDetails = _outboundRepo.GetUnshippedForPeriod(channelCode, period);
 
         var lines = periodLines.Select(BuildLine).ToList();
         var (freight, fallback) = AllocateFreight(periodLines);
@@ -130,7 +131,8 @@ public class PartnerClosingRepository
             TotalCost = lines.Sum(l => l.Qty * l.CostPrice),
             TotalProfit = lines.Sum(l => l.Profit) - freight,
             FreightAllocated = freight,
-            UnshippedCount = unshippedCount,
+            UnshippedCount = unshippedDetails.Count,
+            UnshippedLines = unshippedDetails.Select(BuildLine).ToList(),
             HasUnstableKeyLines = periodLines.Any(l => l.ShipmentGroupKey.StartsWith("__row_", StringComparison.Ordinal)),
             FreightFallbackByCount = fallback,
             Lines = lines,
@@ -181,16 +183,24 @@ public class PartnerClosingRepository
     private PartnerClosingLine BuildLine(OutboundDetail od)
     {
         var csku = !string.IsNullOrEmpty(od.CskuCode) ? od.CskuCode : od.MskuCode;
-        var masterSku = _channelSkuRepo.ResolveMasterSku(od.ChannelCode, csku);
-        var costPrice = od.PurchasePrice ?? _itemRepo.GetBySku(masterSku)?.CostPrice ?? 0m;
+        var channelSku = _channelSkuRepo.GetByChannelAndCskuCode(od.ChannelCode, csku);
+        var masterSku = channelSku?.Msku ?? csku;
+        var masterCostPrice = _itemRepo.GetBySku(masterSku)?.CostPrice ?? 0m;
+        var costPrice = CostResolver.Resolve(od.PurchasePrice, channelSku?.CostPriceOverride, masterCostPrice);
+
+        // 품목명은 CSKU의 송장출력용 상품명(InvoiceDisplayName)을 우선한다 — 발주서 원본 상품명은
+        // 채널/주문마다 표기가 제각각이라(같은 CSKU인데 "1개"/"1개 " 등 사소한 차이로 갈리기도 함)
+        // 명세표/매출장에 그대로 노출하면 지저분하다. 비어있으면 원본 상품명으로 대체한다
+        // (Utils/CourierFieldResolver·ShipmentGrouping과 같은 관례).
+        var itemName = !string.IsNullOrWhiteSpace(channelSku?.InvoiceDisplayName) ? channelSku.InvoiceDisplayName! : od.ProductName;
 
         return new PartnerClosingLine
         {
             OutboundDetailId = od.Id,
-            LineDate = od.ConfirmedAt,
+            LineDate = od.ConfirmedAt ?? od.CreatedAt,
             CskuCode = csku,
             MasterSku = masterSku,
-            ItemName = od.ProductName,
+            ItemName = itemName,
             Spec = "",
             Qty = od.Qty,
             UnitPrice = od.SupplyPrice,

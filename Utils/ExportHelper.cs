@@ -24,6 +24,40 @@ public static class ExportHelper
     }
 
     /// <summary>
+    /// SaveFileDialog를 표시하되, OS 기본 "덮어쓰기 확인" 팝업(OverwritePrompt) 대신 직접 구현한
+    /// MessageBox로 확인한다. 환경에 따라 SaveFileDialog 내장 덮어쓰기 확인 하위 대화상자가
+    /// WS_VISIBLE 없이 생성되어 화면에 전혀 나타나지 않으면서 앱 전체가 무한 대기 상태로 멈추는
+    /// 사례가 발견되어(2026-08-03, 마감/이익분석 내보내기), OS 팝업에 의존하지 않도록 한다.
+    /// </summary>
+    /// <returns>저장할 경로. 사용자가 취소했으면 null.</returns>
+    public static string? ShowSaveFileDialog(IWin32Window owner, string filter, string defaultFileName, string initialDirectory, string? title = null)
+    {
+        while (true)
+        {
+            using var sfd = new SaveFileDialog
+            {
+                Filter = filter,
+                FileName = defaultFileName,
+                InitialDirectory = initialDirectory,
+                OverwritePrompt = false,
+                Title = title ?? "다른 이름으로 저장",
+            };
+
+            if (sfd.ShowDialog(owner) != DialogResult.OK) return null;
+
+            if (File.Exists(sfd.FileName))
+            {
+                var result = MessageBox.Show(owner,
+                    $"'{Path.GetFileName(sfd.FileName)}' 파일이 이미 있습니다. 덮어쓰시겠습니까?",
+                    "다른 이름으로 저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (result != DialogResult.Yes) continue;
+            }
+
+            return sfd.FileName;
+        }
+    }
+
+    /// <summary>
     /// 파일 내보내기 완료 후 사용자에게 다음 행동을 묻는 다이얼로그를 표시하고,
     /// 선택에 따라 파일 또는 폴더를 엽니다.
     /// </summary>

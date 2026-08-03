@@ -172,7 +172,7 @@ public class PartnerManualOrderDialog : Form
     {
         using var cskuForm = new ChannelCskuForm(_channelCode);
         FormManager.ApplyBoundsTracking(cskuForm);
-        cskuForm.ShowDialog(this);
+        FormManager.ShowDialogSafe(cskuForm, this);
 
         var keepText = _cskuCombo.Text;
         LoadCskus();

@@ -344,7 +344,7 @@ public class FboOrderForm : Form
         }
 
         using var dialog = new FboOrderPickerDialog();
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.SelectedFboNo == null) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.SelectedFboNo == null) return;
 
         var (order, boxes, items) = _orderRepository.GetOrder(dialog.SelectedFboNo);
         if (order == null)
@@ -375,7 +375,7 @@ public class FboOrderForm : Form
         }
 
         using var dialog = new FboRecentCskuPickerDialog(recentGroups);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         foreach (var group in dialog.SelectedGroups) AddRecentCskuGroup(group);
         RecomputeBoxIdentifiers();
@@ -481,7 +481,7 @@ public class FboOrderForm : Form
         if (!EnsureChannelSelected(out _)) return;
 
         using var dialog = new FboCskuPickerDialog(_cskus);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         var boxCount = (int)_boxCountInput.Value;
         foreach (var csku in dialog.SelectedCskus) AddBoxesForCsku(csku, boxCount);
@@ -755,21 +755,18 @@ public class FboOrderForm : Form
         var (order, boxes, items) = _orderRepository.GetOrder(_fboNo);
         if (order == null || boxes.Count == 0) return;
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"풀필먼트출고_{_fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("FboOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("FboOrderExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"풀필먼트출고_{_fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("FboOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FboOrderExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
-            FboOrderExporter.Export(order, channel, boxes, items, sfd.FileName);
+            FboOrderExporter.Export(order, channel, boxes, items, filePath);
             order.Status = "발주서출력완료";
             _orderRepository.SaveOrder(order, boxes, items);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
@@ -843,21 +840,18 @@ public class FboOrderForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"풀필먼트입고_{_fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("FboInboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
-        _settingsService.SetLastFolder("FboInboundExport", Path.GetDirectoryName(sfd.FileName)!);
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"풀필먼트입고_{_fboNo}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("FboInboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FboInboundExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
-            FboInboundExporter.Export(channel, boxes, items, sfd.FileName);
+            FboInboundExporter.Export(channel, boxes, items, filePath);
             order.Status = "입고재고출력완료";
             _orderRepository.SaveOrder(order, boxes, items);
-            ExportHelper.ShowPostExportDialog(this, sfd.FileName);
+            ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {

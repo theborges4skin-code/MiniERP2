@@ -422,7 +422,7 @@ public class SettlementForm : Form
         }
 
         using var channelDialog = new SelectChannelDialog();
-        if (channelDialog.ShowDialog(this) != DialogResult.OK || channelDialog.SelectedChannel == null)
+        if (FormManager.ShowDialogSafe(channelDialog, this) != DialogResult.OK || channelDialog.SelectedChannel == null)
         {
             _statusLabel.Text = "채널이 선택되지 않아 작업을 취소했습니다.";
             return;
@@ -641,7 +641,7 @@ public class SettlementForm : Form
         catch (EncryptedExcelFileException)
         {
             using var dialog = new PasswordPromptDialog(Path.GetFileName(file));
-            if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+            if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return null;
 
             return await _settlementLoader.LoadFromFileAsync(skuMapper, _itemRepository, channelConfig, file, dialog.Password, _channelSkuRepository);
         }
@@ -698,7 +698,7 @@ public class SettlementForm : Form
         }
 
         using var periodDialog = new PeriodInputDialog(_activeChannelCode, _activeChannelName, _profitFactRepository);
-        if (periodDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(periodDialog, this) != DialogResult.OK) return;
         var period = periodDialog.SelectedPeriod;
 
         Cursor = Cursors.WaitCursor;
@@ -760,20 +760,16 @@ public class SettlementForm : Form
         var lastFolder = _settingsService.GetLastFolder("SettlementExport");
         DiagnosticsLogger.Log($"[이익분석 내보내기] SaveFileDialog 열기 전 — InitialDirectory: {lastFolder ?? "(Documents)"}");
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{exportChannelPrefix}이익분석_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = lastFolder ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"{exportChannelPrefix}이익분석_{DateTime.Now:yyyyMMdd}.xlsx",
+            lastFolder ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
-        if (sfd.ShowDialog(this) != DialogResult.OK)
+        if (filePath == null)
         {
             DiagnosticsLogger.Log("[이익분석 내보내기] SaveFileDialog 취소");
             return;
         }
 
-        var filePath = sfd.FileName;
         DiagnosticsLogger.Log($"[이익분석 내보내기] SaveFileDialog 완료 — 저장경로: {filePath}");
 
         _settingsService.SetLastFolder("SettlementExport", Path.GetDirectoryName(filePath)!);
@@ -1022,13 +1018,21 @@ public class SettlementForm : Form
         textBox.AutoCompleteCustomSource = source;
     }
 
-    /// <summary>등록된 마스터SKU 코드 + 현재 채널의 CSKU 코드를 합친, 중복 제거된 자동완성 후보 목록.</summary>
+    /// <summary>
+    /// 등록된 마스터SKU 코드 + 현재 채널의 CSKU 코드를 합친, 중복 제거된 자동완성 후보 목록.
+    /// 마스터SKU가 등록되어 있지 않은(=원가를 조회할 수 없는) "유령" CSKU는 후보에서 제외한다 —
+    /// 포함시키면 사용자가 모르고 그 CSKU를 다시 골라 1:1 규칙을 또 저장하면서 "원가 정보 없음"
+    /// 문제는 그대로인 채 중복 매핑 규칙만 쌓이게 된다.
+    /// </summary>
     private List<string> BuildSkuAutoCompleteSource(string? channelCode)
     {
-        var codes = _itemRepository.GetAll().Select(i => i.Sku).ToList();
+        var itemSkus = _itemRepository.GetAll().Select(i => i.Sku).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var codes = new List<string>(itemSkus);
         if (!string.IsNullOrEmpty(channelCode))
         {
-            codes.AddRange(_channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode));
+            codes.AddRange(_channelSkuRepository.GetAllByChannel(channelCode)
+                .Where(c => itemSkus.Contains(c.Msku))
+                .Select(c => c.CskuCode));
         }
         return codes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
@@ -1098,6 +1102,17 @@ public class SettlementForm : Form
         if (string.IsNullOrEmpty(channelCode)) { HideQuickMapPanel(); return; }
 
         _quickMapPanel.SetChannelCode(channelCode, settlementMode: true);
+
+        // "원가 정보 없음"은 매핑 규칙/CSKU는 이미 정상 연결되어 있고 그 CSKU의 마스터SKU만 빠진
+        // 경우다(§ 개선방안 3). 이때 새 매핑 규칙을 만드는 화면을 또 띄우면 기존 규칙 위에 중복
+        // 규칙만 쌓이므로, 기존 CSKU를 그대로 고쳐쓰는 전용 화면으로 보낸다.
+        if (data.Status == "원가 정보 없음" && !string.IsNullOrWhiteSpace(data.Msku))
+        {
+            _quickMapPanel.LoadOrphanCsku(channelCode, data.Msku, data.ProductName ?? "", data.OptionName ?? "", data.Qty);
+            ShowQuickMapPanel();
+            return;
+        }
+
         _quickMapPanel.LoadItem(data.ProductName ?? "", data.OptionName ?? "", data.Qty,
             data.Revenue > 0 ? data.Revenue : null);
         ShowQuickMapPanel();
@@ -1157,7 +1172,9 @@ public class SettlementForm : Form
 
         var skuMapper = new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository);
         SettlementLoader.ApplyMappingAndProfit(data, skuMapper, _itemRepository, channelConfig, _channelSkuRepository);
-        BeginInvoke(() => RefreshProfitAnalysisView());
+        // 파일을 다시 읽은 게 아니라 원본 열 구성이 바뀌지 않으므로, ReapplyMappingForAllRows와
+        // 같은 lite 경로를 쓴다(전체 경로는 열 재구성 때문에 건수가 많을수록 비용이 커진다).
+        BeginInvoke(() => RefreshProfitAnalysisView(liteRefresh: true));
     }
 
     /// <summary>
@@ -1260,7 +1277,16 @@ public class SettlementForm : Form
             var hit = _settlementGrid.HitTest(e.X, e.Y);
             if (hit.RowIndex < 0) return;
             var colIdx = hit.ColumnIndex >= 0 ? hit.ColumnIndex : 0;
-            _settlementGrid.CurrentCell = _settlementGrid.Rows[hit.RowIndex].Cells[colIdx];
+            try
+            {
+                _settlementGrid.CurrentCell = _settlementGrid.Rows[hit.RowIndex].Cells[colIdx];
+            }
+            catch (InvalidOperationException)
+            {
+                // 다른 셀의 편집을 커밋/취소할 수 없는 상태에서 우클릭한 경우(WinForms DataGridView
+                // 제약). 우클릭 셀 갱신만 건너뛰고 컨텍스트 메뉴는 그대로 띄운다 — 앱 전체가
+                // 처리되지 않은 예외로 죽는 것보다 낫다.
+            }
             _settlementGridClickedColumnName = _settlementGrid.Columns[colIdx].Name;
         };
     }
@@ -1285,7 +1311,7 @@ public class SettlementForm : Form
         var syntheticItem = new OfsOrderItem { ProductName = data.ProductName, OptionName = data.OptionName, Quantity = data.Qty };
         using var dialog = new OrderSkuMappingDialog(syntheticItem, data.ChannelCode);
         FormManager.ApplyBoundsTracking(dialog);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
         ReapplyMappingAndProfit(data);
     }
@@ -1348,7 +1374,7 @@ public class SettlementForm : Form
         if (data == null) return;
 
         using var dialog = new TextPromptDialog("임시 매핑으로 등록", $"'{data.ProductName} {data.OptionName}'을 매핑할 SKU/CSKU 코드를 입력하세요:");
-        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.Value)) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.Value)) return;
 
         var key = BuildExactMappingKey(data);
         _mappingRepository.UpsertRule(MappingRuleType.Temp, data.ChannelCode!, key, dialog.Value);
@@ -1511,16 +1537,12 @@ public class SettlementForm : Form
             return;
         }
 
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"출고내역_{DateTime.Now:yyyyMMdd}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("OutboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"출고내역_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("OutboundExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("OutboundExport", Path.GetDirectoryName(filePath)!);
 
         try

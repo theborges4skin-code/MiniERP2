@@ -7,6 +7,7 @@ using MiniERP2.Mapping;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
+using MiniERP2.UI;
 
 namespace MiniERP2.Forms;
 
@@ -349,7 +350,7 @@ public class AdMappingForm : Form
                 catch (EncryptedExcelFileException)
                 {
                     using var dialog = new PasswordPromptDialog(Path.GetFileName(fileName));
-                    if (dialog.ShowDialog(this) != DialogResult.OK) continue;
+                    if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) continue;
                     fileItems = await _adSpendLoader.LoadFromFileAsync(engine, channelCode, selectedLayout, fileName, dialog.Password);
                 }
                 allItems.AddRange(fileItems);
@@ -393,7 +394,7 @@ public class AdMappingForm : Form
         btnPanel.Controls.AddRange([btnCancel, btnOk]);
         form.Controls.AddRange([lbl, combo, btnPanel]);
         form.AcceptButton = btnOk; form.CancelButton = btnCancel;
-        return form.ShowDialog(this) == DialogResult.OK ? combo.SelectedItem as Models.AdFileLayout : null;
+        return FormManager.ShowDialogSafe(form, this) == DialogResult.OK ? combo.SelectedItem as Models.AdFileLayout : null;
     }
 
     private void ApplyUnmappedFilter()
@@ -467,7 +468,7 @@ public class AdMappingForm : Form
         var channelCode = _channelComboBox.SelectedValue as string ?? string.Empty;
         var channelName = (_channelComboBox.SelectedItem as SalesChannel)?.ChannelName ?? channelCode;
         using var periodDialog = new AdFactPeriodInputDialog(channelCode, channelName, _profitFactRepository);
-        if (periodDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (FormManager.ShowDialogSafe(periodDialog, this) != DialogResult.OK) return;
         var period = periodDialog.SelectedPeriod;
 
         Cursor = Cursors.WaitCursor;
@@ -509,15 +510,11 @@ public class AdMappingForm : Form
         }
 
         var channelName = (_channelComboBox.SelectedItem as SalesChannel)?.ChannelName ?? "채널";
-        using var sfd = new SaveFileDialog
-        {
-            Filter = "Excel Files (*.xlsx)|*.xlsx",
-            FileName = $"{channelName}_광고분析_{DateTime.Now:yyMM}.xlsx",
-            InitialDirectory = _settingsService.GetLastFolder("AdMappingExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (sfd.ShowDialog(this) != DialogResult.OK) return;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"{channelName}_광고분析_{DateTime.Now:yyMM}.xlsx",
+            _settingsService.GetLastFolder("AdMappingExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
 
-        var filePath = sfd.FileName;
         _settingsService.SetLastFolder("AdMappingExport", Path.GetDirectoryName(filePath)!);
 
         var itemsSnapshot = _loadedAdItems.ToList();
@@ -604,7 +601,7 @@ public class AdMappingForm : Form
         if (string.IsNullOrEmpty(channelCode)) return;
 
         using var dialog = new AdTargetGroupPromptDialog();
-        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.TargetGroup)) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.TargetGroup)) return;
 
         _adMappingRepository.UpsertTempRule(channelCode, AdMappingEngine.BuildKey(item), dialog.TargetGroup);
         LoadTempRules(channelCode);
@@ -620,7 +617,7 @@ public class AdMappingForm : Form
         if (string.IsNullOrEmpty(channelCode) || string.IsNullOrWhiteSpace(item.ProductName)) return;
 
         using var dialog = new AdTargetGroupPromptDialog();
-        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.TargetGroup)) return;
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.TargetGroup)) return;
 
         var details = new List<AdConditionDetail>
         {
