@@ -66,8 +66,17 @@ public class ConditionalMappingManagedTable : IManagedDataTable
         _repository.DeleteConditionRule(id);
     }
 
+    /// <summary>
+    /// HeaderField=Raw(정산파일 원본 열 조건)는 "Raw:실제열이름" 형태로 직렬화한다
+    /// (예: <c>AND Raw:sku Contains "ABC123"</c>). 그래야 데이터관리창에서 내보내기/가져오기를
+    /// 거쳐도 어떤 원본 열을 가리키는지 유실되지 않는다.
+    /// </summary>
     private static string SerializeConditions(List<MappingConditionDetail> details) =>
-        string.Join(" ; ", details.Select(d => $"{d.Logic} {d.HeaderField} {d.Operator} \"{d.TargetValue}\""));
+        string.Join(" ; ", details.Select(d =>
+        {
+            var fieldToken = d.HeaderField == StdField.Raw ? $"Raw:{d.RawFieldName}" : d.HeaderField.ToString();
+            return $"{d.Logic} {fieldToken} {d.Operator} \"{d.TargetValue}\"";
+        }));
 
     private static List<MappingConditionDetail> ParseConditions(string text)
     {
@@ -79,11 +88,24 @@ public class ConditionalMappingManagedTable : IManagedDataTable
             var parts = segment.Split(' ', 4, StringSplitOptions.TrimEntries);
             if (parts.Length < 4) continue;
             if (!Enum.TryParse<ConditionLogic>(parts[0], true, out var logic)) continue;
-            if (!Enum.TryParse<StdField>(parts[1], true, out var field)) continue;
             if (!Enum.TryParse<ConditionOperator>(parts[2], true, out var op)) continue;
 
             var value = parts[3].Trim().Trim('"');
-            details.Add(new MappingConditionDetail { HeaderField = field, Operator = op, TargetValue = value, Logic = logic });
+
+            string? rawFieldName = null;
+            StdField field;
+            if (parts[1].StartsWith("Raw:", StringComparison.OrdinalIgnoreCase))
+            {
+                field = StdField.Raw;
+                rawFieldName = parts[1]["Raw:".Length..];
+                if (string.IsNullOrWhiteSpace(rawFieldName)) continue;
+            }
+            else if (!Enum.TryParse(parts[1], true, out field))
+            {
+                continue;
+            }
+
+            details.Add(new MappingConditionDetail { HeaderField = field, RawFieldName = rawFieldName, Operator = op, TargetValue = value, Logic = logic });
         }
         return details;
     }

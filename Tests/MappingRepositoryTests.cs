@@ -48,6 +48,44 @@ public class MappingRepositoryTests
     }
 
     [TestMethod]
+    public void UpsertExactRuleWithQuantityPrice_NewCombo_InsertsFourFieldRule()
+    {
+        var repository = new MappingRepository();
+        repository.UpsertExactRuleWithQuantityPrice("CH1", "상품A옵션1", "SKU-4FIELD", quantity: 2, price: 10000m);
+
+        var rules = repository.GetRules(MappingRuleType.Exact, "CH1");
+        var rule = rules.Single(r => r.Key == "상품A옵션1");
+        Assert.AreEqual("SKU-4FIELD", rule.TargetSku);
+        Assert.AreEqual(2, rule.Quantity);
+        Assert.AreEqual(10000m, rule.Price);
+    }
+
+    [TestMethod]
+    public void UpsertExactRuleWithQuantityPrice_CoexistsWithLegacyRuleOfSameKey()
+    {
+        var repository = new MappingRepository();
+        repository.UpsertExactRule("CH1", "상품A옵션1", "SKU-LEGACY");
+        repository.UpsertExactRuleWithQuantityPrice("CH1", "상품A옵션1", "SKU-4FIELD", quantity: 2, price: 10000m);
+
+        var rules = repository.GetRules(MappingRuleType.Exact, "CH1").Where(r => r.Key == "상품A옵션1").ToList();
+        Assert.HasCount(2, rules);
+        Assert.IsTrue(rules.Any(r => r.TargetSku == "SKU-LEGACY" && r.Quantity == null && r.Price == null));
+        Assert.IsTrue(rules.Any(r => r.TargetSku == "SKU-4FIELD" && r.Quantity == 2 && r.Price == 10000m));
+    }
+
+    [TestMethod]
+    public void UpsertExactRuleWithQuantityPrice_SameChannelKeyQuantityPrice_UpdatesInPlaceWithoutDuplicating()
+    {
+        var repository = new MappingRepository();
+        repository.UpsertExactRuleWithQuantityPrice("CH1", "상품A옵션1", "SKU-OLD", quantity: 2, price: 10000m);
+        repository.UpsertExactRuleWithQuantityPrice("CH1", "상품A옵션1", "SKU-NEW", quantity: 2, price: 10000m);
+
+        var rules = repository.GetRules(MappingRuleType.Exact, "CH1").Where(r => r.Key == "상품A옵션1").ToList();
+        Assert.HasCount(1, rules);
+        Assert.AreEqual("SKU-NEW", rules.Single().TargetSku);
+    }
+
+    [TestMethod]
     public void UpsertRule_ExceptionType_InsertsIntoExceptionTableNotExact()
     {
         var repository = new MappingRepository();

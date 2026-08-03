@@ -1062,7 +1062,7 @@ public class SettlementForm : Form
     /// 계산한다(이미 같은 키로 저장된 규칙이 있으면 덮어쓴다 — UpsertExactRule은 멱등).
     /// 값을 비우면 매핑을 해제한다(규칙 자체를 삭제하지는 않음 — 다른 행에 영향 줄 수 있어서).
     /// </summary>
-    private void OnSettlementGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    private async void OnSettlementGridCellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
         if (_settlementGrid.Columns[e.ColumnIndex].Name != "Msku") return;
         if (_settlementGrid.Rows[e.RowIndex].DataBoundItem is not SettlementData data) return;
@@ -1082,7 +1082,7 @@ public class SettlementForm : Form
         if (string.IsNullOrWhiteSpace(key)) return;
 
         _mappingRepository.UpsertExactRule(data.ChannelCode, key, data.Msku.Trim());
-        ReapplyMappingAndProfit(data);
+        await ReapplyMappingAndProfitAsync(data);
         _statusLabel.Text = $"'{data.ProductName} {data.OptionName}' → '{data.Msku}' 1:1 매핑 규칙을 저장하고 적용했습니다.";
     }
 
@@ -1114,7 +1114,7 @@ public class SettlementForm : Form
         }
 
         _quickMapPanel.LoadItem(data.ProductName ?? "", data.OptionName ?? "", data.Qty,
-            data.Revenue > 0 ? data.Revenue : null);
+            data.Revenue > 0 ? data.Revenue : null, data.RawValues);
         ShowQuickMapPanel();
     }
 
@@ -1164,14 +1164,26 @@ public class SettlementForm : Form
     /// 채널/매핑 규칙이 바뀐 뒤 한 행만 다시 매핑·손익 계산한다. 정산파일을 다시 불러오지 않고도
     /// 즉석 매핑 결과가 바로 반영되도록 SettlementLoader의 행 단위 계산 로직을 재사용한다.
     /// </summary>
-    private void ReapplyMappingAndProfit(SettlementData data)
+    private async Task ReapplyMappingAndProfitAsync(SettlementData data)
     {
         if (string.IsNullOrEmpty(data.ChannelCode)) return;
         var channelConfig = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == data.ChannelCode);
         if (channelConfig == null) return;
 
-        var skuMapper = new SkuMapper(_mappingRepository, data.ChannelCode, _channelSkuRepository);
-        SettlementLoader.ApplyMappingAndProfit(data, skuMapper, _itemRepository, channelConfig, _channelSkuRepository);
+        var mappingRepository = _mappingRepository;
+        var channelSkuRepository = _channelSkuRepository;
+        var itemRepository = _itemRepository;
+        var channelCode = data.ChannelCode;
+
+        // SkuMapper 생성자는 DB 쿼리를 6회 실행한다(OnLoadSettlementClick에서 먼저 겪은 것과 같은
+        // 문제) — 매핑 규칙/CSKU가 쌓인 채널일수록 한 행만 다시 매핑하는 이 경로도 UI 스레드에서
+        // 동기 호출하면 눈에 띄게 멈추므로 백그라운드에서 생성/적용한다.
+        await Task.Run(() =>
+        {
+            var skuMapper = new SkuMapper(mappingRepository, channelCode, channelSkuRepository);
+            SettlementLoader.ApplyMappingAndProfit(data, skuMapper, itemRepository, channelConfig, channelSkuRepository);
+        });
+
         // 파일을 다시 읽은 게 아니라 원본 열 구성이 바뀌지 않으므로, ReapplyMappingForAllRows와
         // 같은 lite 경로를 쓴다(전체 경로는 열 재구성 때문에 건수가 많을수록 비용이 커진다).
         BeginInvoke(() => RefreshProfitAnalysisView(liteRefresh: true));
@@ -1302,18 +1314,24 @@ public class SettlementForm : Form
         return data;
     }
 
-    /// <summary>CSKU/납품가/송장표시명까지 한 번에 설정하거나 임시SKU를 새로 등록할 수 있는 기존 도우미를 재사용한다.</summary>
-    private void OnOpenMappingHelperFromSettlementRowClick(object? sender, EventArgs e)
+    /// <summary>통합 매핑창(MappingWorkbenchDialog)을 열어 1:1/조건부/제외/신규등록 중 골라 처리한다.</summary>
+    private async void OnOpenMappingHelperFromSettlementRowClick(object? sender, EventArgs e)
     {
         var data = GetSelectedSettlementRow();
         if (data == null) return;
 
-        var syntheticItem = new OfsOrderItem { ProductName = data.ProductName, OptionName = data.OptionName, Quantity = data.Qty };
-        using var dialog = new OrderSkuMappingDialog(syntheticItem, data.ChannelCode);
+        var syntheticItem = new OfsOrderItem
+        {
+            ProductName = data.ProductName,
+            OptionName = data.OptionName,
+            Quantity = data.Qty,
+            Revenue = data.Revenue > 0 ? data.Revenue : null,
+        };
+        using var dialog = new MappingWorkbenchDialog(syntheticItem, data.ChannelCode, settlementMode: true, rawValues: data.RawValues);
         FormManager.ApplyBoundsTracking(dialog);
         if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
-        ReapplyMappingAndProfit(data);
+        await ReapplyMappingAndProfitAsync(data);
     }
 
     /// <summary>
@@ -1368,7 +1386,7 @@ public class SettlementForm : Form
     }
 
     /// <summary>정확히 같은 (상품명+옵션명) 키에만 매칭되는 임시 매핑 규칙으로 등록한다.</summary>
-    private void OnAddTempRuleFromSettlementRowClick(object? sender, EventArgs e)
+    private async void OnAddTempRuleFromSettlementRowClick(object? sender, EventArgs e)
     {
         var data = GetSelectedSettlementRow();
         if (data == null) return;
@@ -1378,14 +1396,14 @@ public class SettlementForm : Form
 
         var key = BuildExactMappingKey(data);
         _mappingRepository.UpsertRule(MappingRuleType.Temp, data.ChannelCode!, key, dialog.Value);
-        ReapplyMappingAndProfit(data);
+        await ReapplyMappingAndProfitAsync(data);
         // 다이얼로그를 닫은 직후 모달을 띄우면 안 보이게 생성되는 같은 경쟁 상태를 피하려고
         // MessageBox 대신 상태표시줄로 안내한다.
         _statusLabel.Text = $"'{data.ProductName} {data.OptionName}' → '{dialog.Value}' 임시 매핑으로 등록하고 적용했습니다.";
     }
 
     /// <summary>이 (상품명+옵션명) 조합을 앞으로 계속 매핑 대상에서 제외하는 예외 규칙으로 저장한다(배송비/수수료 안내 행 등).</summary>
-    private void OnExcludeSettlementRowClick(object? sender, EventArgs e)
+    private async void OnExcludeSettlementRowClick(object? sender, EventArgs e)
     {
         var data = GetSelectedSettlementRow();
         if (data == null) return;
@@ -1397,7 +1415,7 @@ public class SettlementForm : Form
 
         var key = BuildExactMappingKey(data);
         _mappingRepository.UpsertRule(MappingRuleType.Exception, data.ChannelCode!, key, SkuMapper.ExcludedTargetSku);
-        ReapplyMappingAndProfit(data);
+        await ReapplyMappingAndProfitAsync(data);
     }
 
     // ===================== 마감 대조(수기) =====================

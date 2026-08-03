@@ -41,6 +41,13 @@ public enum StdField
     EventType,
 
     /// <summary>
+    /// 조건부매핑 상세조건에서 정산파일 원본 열(SettlementData.RawValues)을 가리키는 센티널.
+    /// 실제 열 이름은 이 값을 쓰지 않고 MappingConditionDetail.RawFieldName에 별도로 담는다
+    /// (예: 아마존 정산파일의 "sku" 열처럼 표준필드로 매핑되지 않은 원본 열을 조건으로 쓸 때).
+    /// </summary>
+    Raw,
+
+    /// <summary>
     /// 비고(내부관리용 참고 메모). 배송메시지(DeliveryMessage)와 달리 택배 송장에는 실리지 않고,
     /// OFS 그리드에는 유무만 표시되며 발주확정 시 OutboundDetail.Remark로 이력에 남는다.
     /// 자동발주(표준) 채널 프리셋의 "비고" 열에서 주로 쓰인다.

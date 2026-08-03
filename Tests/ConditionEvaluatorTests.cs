@@ -76,4 +76,29 @@ public class ConditionEvaluatorTests
         Assert.IsFalse(ConditionEvaluator.Matches(details, new SettlementData { ProductName = "면도기 3개입", OptionName = "세트구성" }));
         Assert.IsFalse(ConditionEvaluator.Matches(details, new SettlementData { ProductName = "샴푸", OptionName = "단품" }));
     }
+
+    [TestMethod]
+    public void Matches_RawFieldCondition_ReadsFromSettlementRawValues()
+    {
+        var details = new List<MappingConditionDetail>
+        {
+            new() { HeaderField = StdField.Raw, RawFieldName = "sku", Operator = ConditionOperator.Equals, TargetValue = "Vol50ampUS", Logic = ConditionLogic.And },
+        };
+        var matching = new SettlementData { RawValues = new Dictionary<string, string> { ["sku"] = "Vol50ampUS", ["marketplace"] = "amazon.com" } };
+        var nonMatching = new SettlementData { RawValues = new Dictionary<string, string> { ["sku"] = "egf10" } };
+
+        Assert.IsTrue(ConditionEvaluator.Matches(details, matching));
+        Assert.IsFalse(ConditionEvaluator.Matches(details, nonMatching));
+    }
+
+    [TestMethod]
+    public void Matches_RawFieldCondition_OfsOrderItemHasNoRawValues_ReturnsFalse()
+    {
+        var details = new List<MappingConditionDetail>
+        {
+            new() { HeaderField = StdField.Raw, RawFieldName = "sku", Operator = ConditionOperator.Equals, TargetValue = "Vol50ampUS", Logic = ConditionLogic.And },
+        };
+
+        Assert.IsFalse(ConditionEvaluator.Matches(details, new OfsOrderItem()));
+    }
 }

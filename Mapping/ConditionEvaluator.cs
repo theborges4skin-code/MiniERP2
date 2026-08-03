@@ -9,16 +9,16 @@ namespace MiniERP2.Mapping;
 public static class ConditionEvaluator
 {
     public static bool Matches(List<MappingConditionDetail> details, OfsOrderItem item) =>
-        Matches(details, field => GetFieldValue(item, field));
+        Matches(details, detail => GetFieldValue(item, detail));
 
     /// <summary>
     /// 마감/이익분석창에서 "예상 매칭 건수"를 정산파일 기준으로도 미리볼 수 있도록 SettlementData에
     /// 대해서도 같은 규칙을 평가한다(발주서가 없어도 정산파일만으로 미리보기가 가능해진다).
     /// </summary>
     public static bool Matches(List<MappingConditionDetail> details, SettlementData data) =>
-        Matches(details, field => GetFieldValue(data, field));
+        Matches(details, detail => GetFieldValue(data, detail));
 
-    private static bool Matches(List<MappingConditionDetail> details, Func<StdField, string?> getFieldValue)
+    private static bool Matches(List<MappingConditionDetail> details, Func<MappingConditionDetail, string?> getFieldValue)
     {
         if (details.Count == 0) return false;
 
@@ -41,9 +41,9 @@ public static class ConditionEvaluator
         return result;
     }
 
-    private static bool EvaluateSingle(MappingConditionDetail detail, Func<StdField, string?> getFieldValue)
+    private static bool EvaluateSingle(MappingConditionDetail detail, Func<MappingConditionDetail, string?> getFieldValue)
     {
-        var value = getFieldValue(detail.HeaderField) ?? string.Empty;
+        var value = getFieldValue(detail) ?? string.Empty;
         return detail.Operator switch
         {
             ConditionOperator.Contains => value.Contains(detail.TargetValue, StringComparison.OrdinalIgnoreCase),
@@ -53,8 +53,10 @@ public static class ConditionEvaluator
         };
     }
 
-    private static string? GetFieldValue(OfsOrderItem item, StdField field) => field switch
+    private static string? GetFieldValue(OfsOrderItem item, MappingConditionDetail detail) => detail.HeaderField switch
     {
+        // OFS 발주 항목은 표준필드로만 로드되고 원본 열(RawValues)을 따로 보관하지 않는다.
+        StdField.Raw => null,
         StdField.ProductName => item.ProductName,
         StdField.OptionName => item.OptionName,
         StdField.Quantity => item.Quantity.ToString(),
@@ -65,8 +67,11 @@ public static class ConditionEvaluator
         _ => null,
     };
 
-    private static string? GetFieldValue(SettlementData data, StdField field) => field switch
+    private static string? GetFieldValue(SettlementData data, MappingConditionDetail detail) => detail.HeaderField switch
     {
+        StdField.Raw => string.IsNullOrEmpty(detail.RawFieldName)
+            ? null
+            : data.RawValues?.GetValueOrDefault(detail.RawFieldName),
         StdField.ProductName => data.ProductName,
         StdField.OptionName => data.OptionName,
         StdField.Quantity => data.Qty.ToString(),

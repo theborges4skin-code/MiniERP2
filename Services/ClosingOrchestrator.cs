@@ -199,10 +199,16 @@ public class ClosingOrchestrator
 
         ct.ThrowIfCancellationRequested();
 
-        // 미매핑 항목 추출: "매핑 실패" / "매핑 키 없음" 상태 행을 집계
+        // 미매핑 항목 추출: "매핑 실패" / "매핑 키 없음" 상태 행을 집계. 발주서에 매출액(Revenue)이
+        // 매핑된 채널은 SkuMapper가 4필드(상품명+옵션명+수량+매출액) 1:1 매칭도 지원하므로, 같은
+        // 상품명+옵션명이라도 가격이 다른 옵션이 한 미매핑 행으로 뭉치지 않도록 4필드로 집계한다
+        // (매핑시스템 통합개편 기획서 §5/§10 — 판단 기준은 OrderFieldMappings에 Revenue 매핑 여부).
+        var priceMapped = cfg.OrderFieldMappings.ContainsKey(StdField.Revenue);
         var unmapped = rows
             .Where(r => r.Status != null && (r.Status.Contains("매핑 실패") || r.Status.Contains("매핑 키 없음")))
-            .GroupBy(r => $"{r.ProductName ?? ""}|{r.OptionName ?? ""}")
+            .GroupBy(r => priceMapped
+                ? $"{r.ProductName ?? ""}|{r.OptionName ?? ""}|{r.Qty}|{r.Revenue}"
+                : $"{r.ProductName ?? ""}|{r.OptionName ?? ""}")
             .Select(g => new ClosingUnmappedItem
             {
                 RunId = staged.RunId,
@@ -211,6 +217,8 @@ public class ClosingOrchestrator
                 SourceKey = g.Key,
                 OccurrenceCount = g.Count(),
                 SampleAmount = g.Max(r => r.Settlement),
+                Quantity = priceMapped ? g.First().Qty : null,
+                SampleRevenue = priceMapped ? g.Max(r => r.Revenue) : null,
             })
             .OrderByDescending(u => u.OccurrenceCount)
             .ToList();

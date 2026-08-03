@@ -11,6 +11,15 @@ public class OfsOrderItem
     public string? ProductName { get; set; }
     public string? OptionName { get; set; }
     public int Quantity { get; set; }
+
+    /// <summary>
+    /// 매출액(판매가). 채널설정 발주서 매핑에서 StdField.Revenue를 매핑한 채널만 채워지며,
+    /// 매핑이 없으면 null로 남는다(1:1 정확매핑을 상품명+옵션명+수량+매출액 4필드로 확장할 때
+    /// null인 채널은 자동으로 레거시 2필드/조건부매핑 경로로만 처리하기 위함 — 매핑시스템 통합개편
+    /// 기획서 §4.1/§6.1 참고).
+    /// </summary>
+    public decimal? Revenue { get; set; }
+
     public string? Recipient { get; set; }
     public string? Phone { get; set; }
     public string? Address { get; set; }

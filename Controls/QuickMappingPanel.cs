@@ -25,6 +25,9 @@ public class QuickMappingPanel : Panel
     private Label _infoLabel = new();
     private SplitContainer _mainSplit = new();
     private DataGridView _conditionGrid = new();
+    private DataGridViewComboBoxColumn _fieldCol = new();
+    private static readonly string[] FixedFieldNames = ["ProductName", "OptionName", "Quantity"];
+    private IReadOnlyDictionary<string, string>? _currentRawValues;
     private TextBox _skuSearchBox = new();
     private ListBox _skuResultList = new();
     private ListBox _cskuListBox = new();
@@ -66,7 +69,7 @@ public class QuickMappingPanel : Panel
         _saveMskuBtn.Text = settlementMode ? "MSKU로 저장 (정산용)" : "MSKU로 저장 (CSKU 없이)";
     }
 
-    public void LoadItem(string productName, string optionName, int qty, decimal? revenue)
+    public void LoadItem(string productName, string optionName, int qty, decimal? revenue, IReadOnlyDictionary<string, string>? rawValues = null)
     {
         _orphanMode = false;
         _mainSplit.Visible = true;
@@ -82,6 +85,8 @@ public class QuickMappingPanel : Panel
         if (revenue.HasValue && revenue.Value > 0) parts.Add($"매출액: {revenue.Value:N0}");
         _infoLabel.Text = string.Join("  |  ", parts);
 
+        _currentRawValues = rawValues;
+        RefreshFieldColumnItems();
         BuildDefaultConditions(productName, optionName);
 
         _skuSearchBox.Text = "";
@@ -119,6 +124,25 @@ public class QuickMappingPanel : Panel
             $"CSKU '{cskuCode}'는 매핑 규칙에 정상 연결되어 있지만, 연결된 마스터SKU가 등록되어 있지 않아 " +
             "원가를 알 수 없습니다. 아래 버튼으로 이 CSKU에 마스터SKU를 연결하세요(새 매핑 규칙을 만들 필요는 없습니다).";
         _statusLabel.Text = "";
+    }
+
+    /// <summary>
+    /// "필드" 콤보에 고정 항목(상품명/옵션명/수량)에 더해, 지금 선택된 정산파일 행의 원본 열
+    /// 이름을 전부 추가한다. 아마존의 sku 열처럼 표준필드로 매핑되지 않은 열도 조건으로 쓸 수
+    /// 있도록 하기 위함 — 채널마다 원본 열 구성이 다르므로 행이 바뀔 때마다 다시 채운다.
+    /// </summary>
+    private void RefreshFieldColumnItems()
+    {
+        _fieldCol.Items.Clear();
+        _fieldCol.Items.AddRange(FixedFieldNames);
+        if (_currentRawValues != null)
+        {
+            var rawKeys = _currentRawValues.Keys
+                .Where(k => !string.IsNullOrWhiteSpace(k) && !FixedFieldNames.Contains(k))
+                .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            _fieldCol.Items.AddRange(rawKeys);
+        }
     }
 
     private void BuildDefaultConditions(string productName, string optionName)
@@ -249,17 +273,26 @@ public class QuickMappingPanel : Panel
             var logicStr = row["Logic"]?.ToString() ?? "And";
 
             if (string.IsNullOrWhiteSpace(value)) continue;
-            if (!Enum.TryParse<StdField>(fieldStr, out var field)) continue;
             if (!Enum.TryParse<ConditionOperator>(opStr, out var op)) continue;
             if (!Enum.TryParse<ConditionLogic>(logicStr, out var logic)) logic = ConditionLogic.And;
 
-            details.Add(new MappingConditionDetail
+            // 필드 콤보는 고정 항목(ProductName/OptionName/Quantity) 외에 정산파일 원본 열 이름도
+            // 담고 있다. 고정 항목이면 표준필드로, 그 외 문자열이면 원본 열 조건(Raw)으로 취급한다.
+            MappingConditionDetail detail;
+            if (FixedFieldNames.Contains(fieldStr) && Enum.TryParse<StdField>(fieldStr, out var field))
             {
-                HeaderField = field,
-                Operator = op,
-                TargetValue = value,
-                Logic = logic,
-            });
+                detail = new MappingConditionDetail { HeaderField = field, Operator = op, TargetValue = value, Logic = logic };
+            }
+            else if (!string.IsNullOrWhiteSpace(fieldStr))
+            {
+                detail = new MappingConditionDetail { HeaderField = StdField.Raw, RawFieldName = fieldStr, Operator = op, TargetValue = value, Logic = logic };
+            }
+            else
+            {
+                continue;
+            }
+
+            details.Add(detail);
         }
         return details;
     }
@@ -345,7 +378,8 @@ public class QuickMappingPanel : Panel
         {
             Name = "Field", HeaderText = "필드", DataPropertyName = "Field", Width = 100, FlatStyle = FlatStyle.Flat,
         };
-        fieldCol.Items.AddRange("ProductName", "OptionName", "Quantity");
+        fieldCol.Items.AddRange(FixedFieldNames);
+        _fieldCol = fieldCol;
 
         var opCol = new DataGridViewComboBoxColumn
         {

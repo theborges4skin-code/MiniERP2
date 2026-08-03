@@ -42,10 +42,18 @@ public class ClosingUnmappedItem
     public long Id { get; set; }
     public long RunId { get; set; }
     public string ChannelCode { get; set; } = "";
-    public string SourceKey { get; set; } = "";     // "상품명|옵션명" 조합
+    // 가격 매핑 없는 채널: "상품명|옵션명". 가격 매핑 있는 채널: "상품명|옵션명|수량|매출액"
+    // (매핑시스템 통합개편 기획서 §5 — 같은 상품명+옵션명이라도 가격이 다른 옵션이 한 미매핑 행으로
+    // 뭉치지 않도록 4필드로 집계한다).
+    public string SourceKey { get; set; } = "";
     public int OccurrenceCount { get; set; } = 1;
     public decimal SampleAmount { get; set; }
     public string? MappedSku { get; set; }          // 사용자가 매핑한 SKU (null = 미매핑)
+
+    /// <summary>가격 매핑 채널에서만 채워짐(SourceKey의 4필드 집계와 짝을 이루는 대표 수량 샘플).</summary>
+    public int? Quantity { get; set; }
+    /// <summary>가격 매핑 채널에서만 채워짐(SourceKey의 4필드 집계와 짝을 이루는 대표 매출액 샘플).</summary>
+    public decimal? SampleRevenue { get; set; }
 
     // 런타임 전용
     public string ChannelName { get; set; } = "";

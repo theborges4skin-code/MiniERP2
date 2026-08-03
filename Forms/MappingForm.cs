@@ -1424,7 +1424,10 @@ public class MappingForm : Form
             Name = "HeaderField",
             HeaderText = "비교할 항목",
             DataPropertyName = "HeaderField",
-            DataSource = Enum.GetValues(typeof(StdField)),
+            // StdField.Raw(정산파일 원본 열 조건)는 이 창에 전용 입력 UI가 없어 여기 노출하면
+            // RawFieldName 없이 저장되어 절대 매칭되지 않는 죽은 조건이 된다 — 목록에서 제외.
+            // 원본 열 조건은 QuickMappingPanel(마감/이익분석창 인라인 패널)에서만 만들 수 있다.
+            DataSource = Enum.GetValues(typeof(StdField)).Cast<StdField>().Where(f => f != StdField.Raw).ToArray(),
             Width = 130,
         };
         var operatorColumn = new DataGridViewComboBoxColumn
@@ -1457,6 +1460,11 @@ public class MappingForm : Form
         {
             if (_conditionDetailGrid.IsCurrentCellDirty) _conditionDetailGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
+        // QuickMappingPanel에서 만든 StdField.Raw(원본 열) 조건은 이 창의 목록에서 제외되어 있어,
+        // 그런 규칙을 불러오면 콤보 셀 값이 Items에 없다는 DataError가 난다. 다른 화면(ChannelConfigForm
+        // 등)과 같은 패턴으로 억제 — 해당 행은 항목 콤보가 빈 채로 보이지만 저장 전까지는 원본 데이터가
+        // 그대로 유지된다(사용자가 그 행을 직접 편집하지 않는 한).
+        _conditionDetailGrid.DataError += (s, e) => { e.ThrowException = false; };
         _conditionDetailGrid.CellValueChanged += (s, e) => UpdateConditionPreview();
 
         var detailButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };

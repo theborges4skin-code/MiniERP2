@@ -694,6 +694,22 @@ public static class DbSchema
         // 보드에서 발행 실적을 역참조하기 위한 채널·귀속월 기록(문서 발행 시점에 채워짐).
         EnsureColumn(connection, "DocHistoryTable", "ChannelCode", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "DocHistoryTable", "Period", "TEXT NOT NULL DEFAULT ''");
+        // 조건부매핑 상세조건에서 정산파일 원본 열(HeaderField=Raw일 때 참조할 실제 열 이름)을 저장.
+        EnsureColumn(connection, "RuleConditionDetail", "RawFieldName", "TEXT");
+
+        // 매핑시스템 통합개편 Phase 1(§5): 1:1 정확매핑을 상품명+옵션명+수량+매출액 4필드로 확장하기
+        // 위한 스키마. 두 컬럼 모두 NULL이면 기존 2필드(상품명+옵션명) 레거시 규칙 그대로 동작하고,
+        // 채워지면 신규 4필드 규칙이 된다(신구 병행 — Phase 2에서 매칭 로직 결선 예정).
+        EnsureColumn(connection, "RuleExact", "Quantity", "INTEGER");
+        EnsureColumn(connection, "RuleExact", "Price", "REAL");
+        EnsureColumn(connection, "RuleTemp", "Quantity", "INTEGER");
+        EnsureColumn(connection, "RuleTemp", "Price", "REAL");
+        // 정산분석 이익분석 결과의 매출액(Revenue)을 영속화(기존엔 메모리 전용, Phase 2에서 실제 저장/조회 결선 예정).
+        EnsureColumn(connection, "SettlementData", "Revenue", "REAL NOT NULL DEFAULT 0");
+        // 가격 매핑이 있는 채널의 미매핑 집계를 상품명+옵션명+수량+매출액 4필드 키로 정밀화하기 위한 컬럼
+        // (Phase 2에서 집계 로직 결선 예정).
+        EnsureColumn(connection, "ClosingUnmapped", "Quantity", "INTEGER");
+        EnsureColumn(connection, "ClosingUnmapped", "SampleRevenue", "REAL");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

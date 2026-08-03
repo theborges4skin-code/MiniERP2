@@ -129,6 +129,66 @@ public class SkuMapperTests
     }
 
     [TestMethod]
+    public void ApplyMapping_FourFieldExactRule_TakesPriorityOverLegacyRuleWithSameKey()
+    {
+        // 상품명+옵션명은 같지만 가격으로 구분되는 두 옵션 — 매핑시스템 통합개편 기획서 §4.1.
+        var repository = new MappingRepository();
+        repository.SaveRules(MappingRuleType.Exact, "CH1",
+        [
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-LEGACY" },
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-4FIELD", Quantity = 2, Price = 10000m },
+        ]);
+
+        var mapper = new SkuMapper(repository, "CH1");
+        var item = new OfsOrderItem { ProductName = "상품A", OptionName = "옵션1", Quantity = 2, Revenue = 10000m };
+
+        mapper.ApplyMapping(item);
+
+        Assert.AreEqual("SKU-4FIELD", item.MappedSku);
+        Assert.AreEqual("매핑(1:1)", item.Status);
+    }
+
+    [TestMethod]
+    public void ApplyMapping_FourFieldExactRule_QuantityOrPriceMismatch_FallsBackToLegacyRule()
+    {
+        var repository = new MappingRepository();
+        repository.SaveRules(MappingRuleType.Exact, "CH1",
+        [
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-LEGACY" },
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-4FIELD", Quantity = 2, Price = 10000m },
+        ]);
+
+        var mapper = new SkuMapper(repository, "CH1");
+        // 수량은 규칙과 같지만(2) 매출액이 다름(9000 != 10000) → 4필드 규칙 불일치, 레거시로 폴백.
+        var item = new OfsOrderItem { ProductName = "상품A", OptionName = "옵션1", Quantity = 2, Revenue = 9000m };
+
+        mapper.ApplyMapping(item);
+
+        Assert.AreEqual("SKU-LEGACY", item.MappedSku);
+        Assert.AreEqual("매핑(1:1)", item.Status);
+    }
+
+    [TestMethod]
+    public void ApplyMapping_ItemWithNoRevenue_NeverMatchesFourFieldRule_UsesLegacyOnly()
+    {
+        // 발주서에 매출액 열이 매핑 안 된 채널(item.Revenue == null)은 애초에 4필드 후보가 될 수
+        // 없으므로 자동으로 레거시 경로로만 처리되어야 한다(기획서 §4.1).
+        var repository = new MappingRepository();
+        repository.SaveRules(MappingRuleType.Exact, "CH1",
+        [
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-LEGACY" },
+            new MappingRule { Key = "상품A옵션1", TargetSku = "SKU-4FIELD", Quantity = 2, Price = 10000m },
+        ]);
+
+        var mapper = new SkuMapper(repository, "CH1");
+        var item = new OfsOrderItem { ProductName = "상품A", OptionName = "옵션1", Quantity = 2, Revenue = null };
+
+        mapper.ApplyMapping(item);
+
+        Assert.AreEqual("SKU-LEGACY", item.MappedSku);
+    }
+
+    [TestMethod]
     public void ApplyMapping_MappedSkuHasNoInvoiceDisplayName_LeavesInvoiceDisplayNameNull()
     {
         var mappingRepository = new MappingRepository();

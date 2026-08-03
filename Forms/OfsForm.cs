@@ -246,8 +246,6 @@ public class OfsForm : Form
             return;
         }
 
-        // 선택된 채널의 매핑 규칙으로 SkuMapper를 생성합니다.
-        var skuMapper = new SkuMapper(_mappingRepository, channelConfig.ChannelCode, _channelSkuRepository);
         _lastChannelCode = channelConfig.ChannelCode;
         SyncChannelCombo(channelConfig.ChannelCode);
 
@@ -257,6 +255,15 @@ public class OfsForm : Form
 
         try
         {
+            // SkuMapper 생성자는 DB 쿼리를 6회 실행한다. UI 스레드에서 동기 호출하면 매핑규칙/CSKU가
+            // 누적된 채널일수록(파일을 여러 개 연달아 처리하며 조건부 규칙을 쌓아온 채널 등) 눈에 띄게
+            // 오래 걸려 "다른 파일을 연달아 로드하면 멈춘다"는 증상으로 나타난다(마감/이익분석 화면의
+            // OnLoadSettlementClick에서 먼저 겪고 고친 것과 같은 원인) — 백그라운드에서 생성한다.
+            var mappingRepository = _mappingRepository;
+            var channelSkuRepository = _channelSkuRepository;
+            var channelCode = channelConfig.ChannelCode;
+            var skuMapper = await Task.Run(() => new SkuMapper(mappingRepository, channelCode, channelSkuRepository));
+
             // 다음을 위해 선택된 파일의 폴더 위치를 저장합니다.
             if (ofd.FileNames.Length > 0)
             {
@@ -439,7 +446,7 @@ public class OfsForm : Form
         return false;
     }
 
-    private void OnMappingAssistantClick(object? sender, EventArgs e)
+    private async void OnMappingAssistantClick(object? sender, EventArgs e)
     {
         if (_ordersGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
         {
@@ -449,13 +456,14 @@ public class OfsForm : Form
 
         if (!EnsureMasterDbNotEmpty()) return;
 
-        using var dialog = new OrderSkuMappingDialog(item, item.ChannelCode);
+        using var dialog = new MappingWorkbenchDialog(item, item.ChannelCode);
         FormManager.ApplyBoundsTracking(dialog);
         if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
 
-        item.MappedSku = dialog.ResultMappedSku;
-        item.Status = dialog.ResultStatus;
-        _ordersGrid.Invalidate();
+        // MappingWorkbenchDialog는 1:1/조건부/제외/신규등록 중 어떤 탭을 썼든 규칙을 DB에 저장하고
+        // 닫힌다 — 조건부매핑은 이 행 외 다른 행에도 영향을 줄 수 있으므로, 이 항목만 개별
+        // 갱신하지 않고 전체를 다시 매핑해 일관되게 반영한다.
+        await ReapplyMappingForAllOrdersAsync();
         RefreshExportPreview();
     }
 
@@ -1104,9 +1112,9 @@ public class OfsForm : Form
         _quickMapPanel.Visible = false;
     }
 
-    private void OnQuickMapPanelRuleSaved()
+    private async void OnQuickMapPanelRuleSaved()
     {
-        ReapplyMappingForAllOrders();
+        await ReapplyMappingForAllOrdersAsync();
         RefreshExportPreview();
         AdvanceToNextUnmappedOrder();
     }
@@ -1132,13 +1140,35 @@ public class OfsForm : Form
     /// <summary>
     /// 매핑관리창에서 규칙이 저장되면 현재 발주 목록 전체를 다시 매핑한다.
     /// 수동 매핑(UpsertExactRule로 저장된 1:1 규칙)은 재매핑 시에도 동일 결과가 나오므로 건드린다.
+    /// MappingForm.MappingRulesChanged(Action 델리게이트)에 그대로 구독시킬 수 있도록 하는 async void
+    /// 래퍼 — 실제 작업은 <see cref="ReapplyMappingForAllOrdersAsync"/>에서 한다.
     /// </summary>
-    private void ReapplyMappingForAllOrders()
+    private async void ReapplyMappingForAllOrders()
+    {
+        await ReapplyMappingForAllOrdersAsync();
+    }
+
+    /// <summary>
+    /// SkuMapper 생성자는 DB 쿼리를 6회 실행한다. 매핑 규칙/CSKU가 쌓인 채널일수록(퀵매핑으로 계속
+    /// 규칙을 추가하며 한 파일을 처리하는 도중 등) UI 스레드에서 동기 호출 시 눈에 띄게 멈추는
+    /// 원인이 되므로(OnLoadOrdersClick에서 먼저 겪은 것과 같은 문제) 백그라운드에서 생성/적용한다.
+    /// </summary>
+    private async Task ReapplyMappingForAllOrdersAsync()
     {
         if (_orders.Count == 0 || string.IsNullOrEmpty(_lastChannelCode)) return;
-        var mapper = new SkuMapper(_mappingRepository, _lastChannelCode, _channelSkuRepository);
-        foreach (var order in _orders)
-            mapper.ApplyMapping(order);
+
+        var channelCode = _lastChannelCode;
+        var mappingRepository = _mappingRepository;
+        var channelSkuRepository = _channelSkuRepository;
+        var orders = _orders.ToList();
+
+        await Task.Run(() =>
+        {
+            var mapper = new SkuMapper(mappingRepository, channelCode, channelSkuRepository);
+            foreach (var order in orders)
+                mapper.ApplyMapping(order);
+        });
+
         _ordersGrid.Refresh();
         _statusLabel.Text = "매핑규칙 변경을 반영해 발주목록을 다시 매핑했습니다.";
     }

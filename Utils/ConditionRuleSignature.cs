@@ -13,7 +13,7 @@ public static class ConditionRuleSignature
     {
         var targetSkuPart = (targetSku ?? string.Empty).Trim().ToUpperInvariant();
         var detailParts = details
-            .Select(d => $"{d.HeaderField}:{d.Operator}:{(d.TargetValue ?? string.Empty).Trim().ToUpperInvariant()}:{d.Logic}")
+            .Select(d => $"{d.HeaderField}:{(d.RawFieldName ?? string.Empty).Trim().ToUpperInvariant()}:{d.Operator}:{(d.TargetValue ?? string.Empty).Trim().ToUpperInvariant()}:{d.Logic}")
             .OrderBy(s => s, StringComparer.Ordinal);
 
         return targetSkuPart + "|" + string.Join(";", detailParts);

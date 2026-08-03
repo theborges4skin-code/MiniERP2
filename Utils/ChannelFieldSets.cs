@@ -13,6 +13,9 @@ public static class ChannelFieldSets
         StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
         StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
         StdField.Remark, StdField.ChannelHint,
+        // 발주서에 매출액/판매가 열이 있는 채널만 매핑하면 됨(필수 아님). 1:1 정확매핑을
+        // 상품명+옵션명+수량+매출액 4필드로 확장하는 데 쓰인다(매핑시스템 통합개편 기획서 §4.1/§6.1).
+        StdField.Revenue,
     ];
 
     /// <summary>쿠팡그로스/쿠팡로켓 외 모든 채널의 정산서 매핑 표준필드.

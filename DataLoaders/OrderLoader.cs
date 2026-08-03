@@ -105,6 +105,14 @@ public class OrderLoader
                         string.IsNullOrWhiteSpace(worksheet.Cells[row, ci].Value?.ToString())))
                     continue;
 
+                // 매핑되어 있을 때만 읽는다(없으면 null 유지 → SkuMapper가 1:1 정확매핑을 4필드로
+                // 확장할 때 가격 정보 없는 채널로 자연스럽게 처리됨. 매핑시스템 통합개편 기획서 §6.1).
+                decimal? revenue = null;
+                if (stdFieldToIndexMap.ContainsKey(StdField.Revenue) || fixedValues.ContainsKey(StdField.Revenue))
+                {
+                    revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
+                }
+
                 var orderItem = new OfsOrderItem
                 {
                     // 각 속성에 대해 매핑된 열 인덱스를 사용하여 값을 가져옵니다.
@@ -114,6 +122,7 @@ public class OrderLoader
                     ProductName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName),
                     OptionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName),
                     Quantity = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qty) ? qty : 0,
+                    Revenue = revenue,
                     Recipient = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
                     Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
                     Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),

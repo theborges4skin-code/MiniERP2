@@ -12,4 +12,7 @@ public class MappingConditionDetail
     public ConditionOperator Operator { get; set; }
     public string TargetValue { get; set; } = string.Empty;
     public ConditionLogic Logic { get; set; } = ConditionLogic.And;
+
+    /// <summary>HeaderField가 StdField.Raw일 때만 쓰인다 — 참조할 정산파일 원본 열(헤더) 이름.</summary>
+    public string? RawFieldName { get; set; }
 }

@@ -149,14 +149,16 @@ public class ClosingRunRepository
         using var ins = conn.CreateCommand();
         ins.Transaction = tx;
         ins.CommandText = """
-            INSERT INTO ClosingUnmapped (RunId, ChannelCode, SourceKey, OccurrenceCount, SampleAmount)
-            VALUES (@rid, @cc, @key, @cnt, @amt)
+            INSERT INTO ClosingUnmapped (RunId, ChannelCode, SourceKey, OccurrenceCount, SampleAmount, Quantity, SampleRevenue)
+            VALUES (@rid, @cc, @key, @cnt, @amt, @qty, @rev)
             """;
         ins.Parameters.Add("@rid", SqliteType.Integer);
         ins.Parameters.Add("@cc", SqliteType.Text);
         ins.Parameters.Add("@key", SqliteType.Text);
         ins.Parameters.Add("@cnt", SqliteType.Integer);
         ins.Parameters.Add("@amt", SqliteType.Real);
+        ins.Parameters.Add("@qty", SqliteType.Integer);
+        ins.Parameters.Add("@rev", SqliteType.Real);
 
         foreach (var item in items)
         {
@@ -165,6 +167,8 @@ public class ClosingRunRepository
             ins.Parameters["@key"].Value = item.SourceKey;
             ins.Parameters["@cnt"].Value = item.OccurrenceCount;
             ins.Parameters["@amt"].Value = (double)item.SampleAmount;
+            ins.Parameters["@qty"].Value = (object?)item.Quantity ?? DBNull.Value;
+            ins.Parameters["@rev"].Value = item.SampleRevenue.HasValue ? (double)item.SampleRevenue.Value : DBNull.Value;
             ins.ExecuteNonQuery();
         }
 
@@ -177,7 +181,7 @@ public class ClosingRunRepository
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT u.Id, u.RunId, u.ChannelCode, u.SourceKey, u.OccurrenceCount, u.SampleAmount, u.MappedSku,
-                   c.ChannelName
+                   c.ChannelName, u.Quantity, u.SampleRevenue
             FROM ClosingUnmapped u
             LEFT JOIN SalesChannelTable c ON c.ChannelCode = u.ChannelCode
             WHERE u.RunId=@id AND u.MappedSku IS NULL
@@ -198,6 +202,8 @@ public class ClosingRunRepository
                 SampleAmount = (decimal)reader.GetDouble(5),
                 MappedSku = reader.IsDBNull(6) ? null : reader.GetString(6),
                 ChannelName = reader.IsDBNull(7) ? reader.GetString(2) : reader.GetString(7),
+                Quantity = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                SampleRevenue = reader.IsDBNull(9) ? null : (decimal)reader.GetDouble(9),
             });
         }
         return list;

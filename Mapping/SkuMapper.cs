@@ -72,12 +72,12 @@ public class SkuMapper
             item.MappedSku = sku;
             item.Status = "매핑(예외)";
         }
-        else if (TryMap(key, MappingRuleType.Exact, exactMatch: true, out sku))
+        else if (TryMapExactOrTemp(item, key, MappingRuleType.Exact, out sku))
         {
             item.MappedSku = sku;
             item.Status = "매핑(1:1)";
         }
-        else if (TryMap(key, MappingRuleType.Temp, exactMatch: true, out sku))
+        else if (TryMapExactOrTemp(item, key, MappingRuleType.Temp, out sku))
         {
             item.MappedSku = sku;
             item.Status = "매핑(임시)";
@@ -113,6 +113,42 @@ public class SkuMapper
             ? _rules[ruleType].FirstOrDefault(r => key.Equals(r.Key, StringComparison.OrdinalIgnoreCase))
             : _rules[ruleType].FirstOrDefault(r => key.Contains(r.Key, StringComparison.OrdinalIgnoreCase));
 
+        targetSku = match?.TargetSku;
+        return match != null;
+    }
+
+    /// <summary>
+    /// RuleExact/RuleTemp 전용 매칭(매핑시스템 통합개편 기획서 §4.1 우선순위):
+    /// (a) 같은 Key(상품명+옵션명)를 가진 규칙 중 Quantity·Price까지 모두 일치하는 신규 4필드
+    ///     규칙이 있으면 최우선 적용 — 상품명+옵션명은 같지만 가격으로만 구분되는 옵션을 가려낸다.
+    /// (b) 없으면 Quantity·Price가 둘 다 비어있는 레거시 2필드 규칙으로 폴백(기존 동작 그대로).
+    /// (c) 그래도 없으면 false를 반환해 호출 측이 다음 우선순위(임시매핑/조건부매핑)로 넘어가게 한다.
+    /// 가격 데이터가 없는 채널의 항목(item.Revenue == null)은 애초에 4필드 후보가 될 수 없으므로
+    /// 자동으로 (b) 레거시 경로로만 매칭된다.
+    /// </summary>
+    private bool TryMapExactOrTemp(OfsOrderItem item, string key, MappingRuleType ruleType, out string? targetSku)
+    {
+        var candidates = _rules[ruleType].Where(r => key.Equals(r.Key, StringComparison.OrdinalIgnoreCase));
+
+        MappingRule? fourFieldMatch = null;
+        MappingRule? legacyMatch = null;
+        foreach (var rule in candidates)
+        {
+            if (rule.Quantity.HasValue && rule.Price.HasValue)
+            {
+                if (fourFieldMatch == null && item.Revenue.HasValue &&
+                    rule.Quantity.Value == item.Quantity && rule.Price.Value == item.Revenue.Value)
+                {
+                    fourFieldMatch = rule;
+                }
+            }
+            else if (legacyMatch == null)
+            {
+                legacyMatch = rule;
+            }
+        }
+
+        var match = fourFieldMatch ?? legacyMatch;
         targetSku = match?.TargetSku;
         return match != null;
     }

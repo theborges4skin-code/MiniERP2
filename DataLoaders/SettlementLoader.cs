@@ -202,19 +202,24 @@ public class SettlementLoader
 
                 var productName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName);
                 var optionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName);
+                var qty = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qtyValue) ? qtyValue : 0;
+                var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
+                var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
+                var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
+                var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
 
-                if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName))
+                // 상품명/옵션명이 둘 다 비어 있어도, 배송비 전용 행처럼 다른 필드(매출액 등)에 실제
+                // 값이 있으면 서식만 남은 진짜 빈 행이 아니다 — 그런 행까지 여기서 걸러지면(예: 쿠팡일반
+                // "<기본배송료>" 마커가 옵션ID 등 매핑 안 된 열에만 있는 행) 배송비 데이터 자체가
+                // 통째로 유실된다. 숫자 필드까지 전부 0/빈 값일 때만 진짜 서식용 빈 행으로 간주한다.
+                if (string.IsNullOrWhiteSpace(productName) && string.IsNullOrWhiteSpace(optionName) &&
+                    qty == 0 && settlement == 0m && shipping == 0m && fee == 0m && revenue == 0m)
                 {
                     if (++consecutiveBlankRows >= maxConsecutiveBlankRows) break;
                     continue;
                 }
                 consecutiveBlankRows = 0;
 
-                var qty = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qtyValue) ? qtyValue : 0;
-                var settlement = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.SettlementAmount), out var settlementValue) ? settlementValue : 0m;
-                var shipping = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ShippingFee), out var shippingValue) ? shippingValue : 0m;
-                var fee = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.HandlingFee), out var feeValue) ? feeValue : 0m;
-                var revenue = decimal.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Revenue), out var revenueValue) ? revenueValue : 0m;
                 var trackingNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo);
                 var orderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderNo);
                 var taxNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TaxNo);
@@ -291,6 +296,11 @@ public class SettlementLoader
         {
             ProductName = data.ProductName,
             OptionName = data.OptionName,
+            Quantity = data.Qty,
+            // Revenue=0은 "매출액 정보 없음"인지 "실제 0원"인지 구분이 안 되므로, 4필드 매칭에서는
+            // 0을 미확정으로 보고 null로 넘긴다(4필드 규칙은 애초에 값이 채워진 규칙만 존재하므로
+            // 매출액 0인 정상 매칭 요청은 실무상 없다 — 매핑시스템 통합개편 기획서 §4.1).
+            Revenue = data.Revenue > 0 ? data.Revenue : null,
         };
         skuMapper.ApplyMapping(orderItem);
         data.Msku = orderItem.MappedSku;

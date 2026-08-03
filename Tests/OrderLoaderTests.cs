@@ -227,6 +227,56 @@ public class OrderLoaderTests
     }
 
     [TestMethod]
+    public async Task LoadFromFileAsync_RevenueMapped_FillsRevenue()
+    {
+        // 매핑시스템 통합개편 기획서 §6.1 — 발주서에 매출액 열이 매핑돼 있으면 읽어 채운다.
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "주문번호";
+            sheet.Cells[1, 2].Value = "상품명";
+            sheet.Cells[1, 3].Value = "매출액";
+            sheet.Cells[2, 1].Value = "ORDER-1";
+            sheet.Cells[2, 2].Value = "상품A";
+            sheet.Cells[2, 3].Value = 12000;
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var channelConfig = BuildChannelConfig();
+        channelConfig.OrderFieldMappings[StdField.Revenue] = new FieldMapping { HeaderRow = 1, Column = "매출액" };
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-A");
+        var items = await new OrderLoader().LoadFromFileAsync(skuMapper, channelConfig, _excelFilePath);
+
+        Assert.HasCount(1, items);
+        Assert.AreEqual(12000m, items[0].Revenue);
+    }
+
+    [TestMethod]
+    public async Task LoadFromFileAsync_RevenueNotMapped_LeavesRevenueNull()
+    {
+        // 매출액 열이 매핑 안 된 채널은 1:1 정확매핑을 4필드로 확장할 후보가 될 수 없으므로
+        // null로 남아야 한다(0이면 "실제 매출액 0원"과 구분이 안 됨).
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "주문번호";
+            sheet.Cells[1, 2].Value = "상품명";
+            sheet.Cells[2, 1].Value = "ORDER-1";
+            sheet.Cells[2, 2].Value = "상품A";
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-A");
+        var items = await new OrderLoader().LoadFromFileAsync(skuMapper, BuildChannelConfig(), _excelFilePath);
+
+        Assert.HasCount(1, items);
+        Assert.IsNull(items[0].Revenue);
+    }
+
+    [TestMethod]
     public void IsBlankRow_AllMappedFieldsBlank_ReturnsTrue()
     {
         Assert.IsTrue(OrderLoader.IsBlankRow(new OfsOrderItem { Quantity = 0 }));

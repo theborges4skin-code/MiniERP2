@@ -1,4 +1,5 @@
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Mapping;
 
@@ -168,14 +169,17 @@ public static class ProfitCalculator
     }
 
     /// <summary>
-    /// 쿠팡일반 채널의 특수 규칙: 수량=0인 행(배송비 전용 행)을 처리합니다.
+    /// 쿠팡일반 채널의 특수 규칙: 배송비를 집계합니다.
     /// <para>
-    /// OrderNo가 매핑된 경우 — 주문번호 단위로 처리합니다.
-    /// 수량=0인 행의 매출액(Revenue)을 해당 주문의 총 배송비로 간주하고,
-    /// 같은 주문의 상품 행 수로 나눠 균등 분배한 뒤 수량=0 행을 목록에서 제거합니다.
+    /// OrderNo가 매핑되어 있고 수량=0인 배송비 전용 행이 실제로 존재하는 경우 — 주문번호 단위로
+    /// 재배분합니다. 수량=0인 행의 매출액(Revenue)을 해당 주문의 총 배송비로 간주하고, 같은 주문의
+    /// 상품 행 수로 나눠 균등 분배한 뒤 수량=0 행을 목록에서 제거합니다.
     /// </para>
     /// <para>
-    /// OrderNo 미매핑인 경우 — 기존 동작 유지: 전체 Shipping을 합산하여 첫 행에만 표기합니다.
+    /// 그 외 모든 경우(OrderNo 미매핑이거나, 매핑되어 있어도 배송비 전용 행이 없는 실데이터) —
+    /// 검증된 레퍼런스(SalesManagerV2 Python analysis_engine.py)와 동일하게, 매핑된 배송비 필드를
+    /// 그대로 전체 합산해 첫 상품 행에 몰아서 표기합니다. 배송비 전용 행이 있다면 그 매출액(Revenue)도
+    /// 더하고 목록에서 제거합니다.
     /// </para>
     /// 채널 유형이 쿠팡일반이 아니면 아무 동작도 하지 않습니다.
     /// </summary>
@@ -183,12 +187,18 @@ public static class ProfitCalculator
     {
         if (channelType != ChannelType.CoupangGeneral || rows.Count == 0) return;
 
-        bool hasOrderNo = rows.Any(r => !string.IsNullOrEmpty(r.OrderNo));
-        if (hasOrderNo)
-        {
-            var shippingRows = rows.Where(r => r.Qty == 0).ToList();
-            var productRows = rows.Where(r => r.Qty != 0).ToList();
+        var shippingRows = rows.Where(r => r.Qty == 0).ToList();
+        var productRows = rows.Where(r => r.Qty != 0).ToList();
 
+        bool hasOrderNo = rows.Any(r => !string.IsNullOrEmpty(r.OrderNo));
+
+        DiagnosticsLogger.Log(
+            $"[ProfitCalculator] 쿠팡일반 배송비 집계 시작 — 전체 {rows.Count}건, Qty=0(배송비 후보) {shippingRows.Count}건" +
+            $"(매출액합 {shippingRows.Sum(r => r.Revenue):N0}), 상품 행 {productRows.Count}건" +
+            $"(자체Shipping합 {productRows.Sum(r => r.Shipping):N0}), OrderNo매핑={hasOrderNo}");
+
+        if (hasOrderNo && shippingRows.Count > 0)
+        {
             // 주문번호별 배송비 합산 (Qty=0 행의 매출액이 배송비)
             var shippingByOrder = shippingRows
                 .Where(r => !string.IsNullOrEmpty(r.OrderNo))
@@ -204,10 +214,10 @@ public static class ProfitCalculator
             foreach (var row in productRows)
             {
                 if (!string.IsNullOrEmpty(row.OrderNo) &&
-                    shippingByOrder.TryGetValue(row.OrderNo, out var totalShipping) &&
+                    shippingByOrder.TryGetValue(row.OrderNo, out var totalShippingForOrder) &&
                     productCountByOrder.TryGetValue(row.OrderNo, out var count) && count > 0)
                 {
-                    row.Shipping = totalShipping / count;
+                    row.Shipping = totalShippingForOrder / count;
                 }
             }
 
@@ -216,10 +226,19 @@ public static class ProfitCalculator
             return;
         }
 
-        // OrderNo 미매핑: 기존 동작 (전체 합산 → 첫 행)
-        var total = rows.Sum(r => r.Shipping);
-        for (int i = 1; i < rows.Count; i++)
-            rows[i].Shipping = 0m;
-        rows[0].Shipping = total;
+        // 배송비 전용 행(Qty=0)이 없으면(OrderNo 매핑 여부 무관) — 주문 단위 재배분을 할 대상 자체가
+        // 없으므로, 위 분기가 아무 것도 안 하고 그냥 리턴해버리면 배송비가 통째로 0으로 표시되는
+        // 버그가 있었다. 이 경우 검증된 레퍼런스 방식대로 매핑된 배송비 필드를 전체 합산해
+        // 첫 상품 행에 몰아준다(배송비 전용 행이 있다면 그 매출액도 함께 합산).
+        var total = shippingRows.Sum(r => r.Revenue) + productRows.Sum(r => r.Shipping);
+        var target = productRows.Count > 0 ? productRows : rows.ToList();
+
+        for (int i = 0; i < target.Count; i++)
+            target[i].Shipping = 0m;
+        if (target.Count > 0)
+            target[0].Shipping = total;
+
+        rows.Clear();
+        rows.AddRange(target);
     }
 }

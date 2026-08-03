@@ -12,11 +12,15 @@ public class MappingRepository
     {
         var tableName = GetTableName(ruleType);
         var isCondition = ruleType == MappingRuleType.Condition;
+        // RuleExact/RuleTemp만 4필드(수량+매출액) 확장 컬럼을 갖는다(§4.1) — RuleException은 현행 유지.
+        var hasQuantityPrice = ruleType is MappingRuleType.Exact or MappingRuleType.Temp;
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = isCondition
             ? $"SELECT Id, ChannelCode, Key, TargetSku, TargetMsku FROM {tableName} WHERE ChannelCode = $channelCode"
-            : $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName} WHERE ChannelCode = $channelCode";
+            : hasQuantityPrice
+                ? $"SELECT Id, ChannelCode, Key, TargetSku, Quantity, Price FROM {tableName} WHERE ChannelCode = $channelCode"
+                : $"SELECT Id, ChannelCode, Key, TargetSku FROM {tableName} WHERE ChannelCode = $channelCode";
         command.Parameters.AddWithValue("$channelCode", channelCode);
 
         var rules = new List<MappingRule>();
@@ -31,6 +35,8 @@ public class MappingRepository
                 Key = reader.GetString(2),
                 TargetSku = reader.GetString(3),
                 TargetMsku = isCondition ? reader.GetString(4) : "",
+                Quantity = hasQuantityPrice && !reader.IsDBNull(4) ? reader.GetInt32(4) : null,
+                Price = hasQuantityPrice && !reader.IsDBNull(5) ? reader.GetDecimal(5) : null,
             });
         }
         return rules;
@@ -127,19 +133,28 @@ public class MappingRepository
         deleteCommand.Parameters.AddWithValue("$channelCode", channelCode);
         deleteCommand.ExecuteNonQuery();
 
-        // 2. 새 규칙 삽입
+        // 2. 새 규칙 삽입. RuleExact/RuleTemp는 Quantity/Price도 함께 저장한다(설정 안 하면 NULL —
+        // 레거시 2필드 규칙 그대로 동작). 그 외 유형(RuleException)은 그 컬럼이 없다.
+        var hasQuantityPrice = ruleType is MappingRuleType.Exact or MappingRuleType.Temp;
         using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
-        insertCommand.CommandText = $"INSERT INTO {tableName} (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
-        
+        insertCommand.CommandText = hasQuantityPrice
+            ? $"INSERT INTO {tableName} (ChannelCode, Key, TargetSku, Quantity, Price) VALUES ($channelCode, $key, $targetSku, $quantity, $price)"
+            : $"INSERT INTO {tableName} (ChannelCode, Key, TargetSku) VALUES ($channelCode, $key, $targetSku)";
+
         foreach (var rule in rules)
         {
             if (string.IsNullOrWhiteSpace(rule.Key)) continue;
-            
+
             insertCommand.Parameters.Clear();
             insertCommand.Parameters.AddWithValue("$channelCode", channelCode);
             insertCommand.Parameters.AddWithValue("$key", rule.Key);
             insertCommand.Parameters.AddWithValue("$targetSku", rule.TargetSku);
+            if (hasQuantityPrice)
+            {
+                insertCommand.Parameters.AddWithValue("$quantity", (object?)rule.Quantity ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("$price", (object?)rule.Price ?? DBNull.Value);
+            }
             insertCommand.ExecuteNonQuery();
         }
 
@@ -154,7 +169,7 @@ public class MappingRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, RuleId, HeaderField, Operator, TargetValue, Logic
+            SELECT Id, RuleId, HeaderField, Operator, TargetValue, Logic, RawFieldName
             FROM RuleConditionDetail
             WHERE RuleId = $ruleId
             ORDER BY Id
@@ -173,6 +188,7 @@ public class MappingRepository
                 Operator = Enum.Parse<ConditionOperator>(reader.GetString(3)),
                 TargetValue = reader.GetString(4),
                 Logic = Enum.Parse<ConditionLogic>(reader.GetString(5)),
+                RawFieldName = reader.IsDBNull(6) ? null : reader.GetString(6),
             });
         }
         return details;
@@ -187,7 +203,7 @@ public class MappingRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT d.Id, d.RuleId, d.HeaderField, d.Operator, d.TargetValue, d.Logic
+            SELECT d.Id, d.RuleId, d.HeaderField, d.Operator, d.TargetValue, d.Logic, d.RawFieldName
             FROM RuleConditionDetail d
             JOIN RuleCondition r ON r.Id = d.RuleId
             WHERE r.ChannelCode = $channelCode
@@ -207,6 +223,7 @@ public class MappingRepository
                 Operator = Enum.Parse<ConditionOperator>(reader.GetString(3)),
                 TargetValue = reader.GetString(4),
                 Logic = Enum.Parse<ConditionLogic>(reader.GetString(5)),
+                RawFieldName = reader.IsDBNull(6) ? null : reader.GetString(6),
             };
 
             if (!result.TryGetValue(detail.RuleId, out var list))
@@ -246,8 +263,8 @@ public class MappingRepository
         using var insertDetailCommand = connection.CreateCommand();
         insertDetailCommand.Transaction = transaction;
         insertDetailCommand.CommandText = """
-            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic)
-            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic)
+            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic, RawFieldName)
+            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic, $rawFieldName)
             """;
         foreach (var detail in details)
         {
@@ -257,6 +274,7 @@ public class MappingRepository
             insertDetailCommand.Parameters.AddWithValue("$operator", detail.Operator.ToString());
             insertDetailCommand.Parameters.AddWithValue("$targetValue", detail.TargetValue);
             insertDetailCommand.Parameters.AddWithValue("$logic", detail.Logic.ToString());
+            insertDetailCommand.Parameters.AddWithValue("$rawFieldName", (object?)detail.RawFieldName ?? DBNull.Value);
             insertDetailCommand.ExecuteNonQuery();
         }
 
@@ -271,6 +289,51 @@ public class MappingRepository
     /// </summary>
     public void UpsertExactRule(string channelCode, string key, string targetSku)
         => UpsertRule(MappingRuleType.Exact, channelCode, key, targetSku);
+
+    /// <summary>
+    /// 1:1 정확매핑 규칙을 상품명+옵션명(Key)+수량+매출액 4필드로 저장합니다(매핑시스템 통합개편
+    /// 기획서 §4.1/§7 — 통합 매핑창의 신규 등록 전용 경로). 같은 채널+Key라도 수량·매출액이 다르면
+    /// 별개 규칙으로 공존해야 하므로(가격으로만 구분되는 옵션), UpsertRule(2필드)과 달리 채널+Key+
+    /// 수량+매출액이 모두 같을 때만 기존 행을 갱신하고 그 외에는 새로 추가합니다.
+    /// </summary>
+    public void UpsertExactRuleWithQuantityPrice(string channelCode, string key, string targetSku, int quantity, decimal price)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using var findCommand = connection.CreateCommand();
+        findCommand.Transaction = transaction;
+        findCommand.CommandText = "SELECT Id FROM RuleExact WHERE ChannelCode = $channelCode AND Key = $key AND Quantity = $quantity AND Price = $price";
+        findCommand.Parameters.AddWithValue("$channelCode", channelCode);
+        findCommand.Parameters.AddWithValue("$key", key);
+        findCommand.Parameters.AddWithValue("$quantity", quantity);
+        findCommand.Parameters.AddWithValue("$price", price);
+        var existingId = findCommand.ExecuteScalar();
+
+        if (existingId != null)
+        {
+            using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = "UPDATE RuleExact SET TargetSku = $targetSku WHERE Id = $id";
+            updateCommand.Parameters.AddWithValue("$targetSku", targetSku);
+            updateCommand.Parameters.AddWithValue("$id", existingId);
+            updateCommand.ExecuteNonQuery();
+        }
+        else
+        {
+            using var insertCommand = connection.CreateCommand();
+            insertCommand.Transaction = transaction;
+            insertCommand.CommandText = "INSERT INTO RuleExact (ChannelCode, Key, TargetSku, Quantity, Price) VALUES ($channelCode, $key, $targetSku, $quantity, $price)";
+            insertCommand.Parameters.AddWithValue("$channelCode", channelCode);
+            insertCommand.Parameters.AddWithValue("$key", key);
+            insertCommand.Parameters.AddWithValue("$targetSku", targetSku);
+            insertCommand.Parameters.AddWithValue("$quantity", quantity);
+            insertCommand.Parameters.AddWithValue("$price", price);
+            insertCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
 
     /// <summary>
     /// 1:1/예외 등 단순 규칙(Key/TargetSku만 갖는 유형)을 추가하거나(같은 채널+키가 없으면)
@@ -398,8 +461,8 @@ public class MappingRepository
         using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic)
-            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic)
+            INSERT INTO RuleConditionDetail (RuleId, HeaderField, Operator, TargetValue, Logic, RawFieldName)
+            VALUES ($ruleId, $headerField, $operator, $targetValue, $logic, $rawFieldName)
             """;
         foreach (var detail in details)
         {
@@ -411,6 +474,7 @@ public class MappingRepository
             insertCommand.Parameters.AddWithValue("$operator", detail.Operator.ToString());
             insertCommand.Parameters.AddWithValue("$targetValue", detail.TargetValue);
             insertCommand.Parameters.AddWithValue("$logic", detail.Logic.ToString());
+            insertCommand.Parameters.AddWithValue("$rawFieldName", (object?)detail.RawFieldName ?? DBNull.Value);
             insertCommand.ExecuteNonQuery();
         }
 
