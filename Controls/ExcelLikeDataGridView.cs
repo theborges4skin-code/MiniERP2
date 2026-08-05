@@ -12,6 +12,7 @@ public class ExcelLikeDataGridView : DataGridView
     private string _persistenceKey = string.Empty;
     private readonly ToolStripMenuItem _copyMenuItem;
     private readonly ToolStripMenuItem _pasteMenuItem;
+    private int _permanentItemCount;
 
     /// <summary>
     /// 레이아웃 설정을 저장하고 로드하는 데 사용할 고유 키입니다.
@@ -51,6 +52,19 @@ public class ExcelLikeDataGridView : DataGridView
 
         contextMenu.Items.AddRange(new ToolStripItem[] { _copyMenuItem, _pasteMenuItem });
         ContextMenuStrip = contextMenu;
+        _permanentItemCount = contextMenu.Items.Count;
+    }
+
+    /// <summary>
+    /// 파생 폼이 항상 표시되어야 하는 우클릭 메뉴 항목(예: 분리배송/합포장 등)을 추가할 때 쓴다.
+    /// 이 메서드 대신 ContextMenuStrip.Items.Add를 직접 쓰면, 메뉴가 열릴 때마다
+    /// OnContextMenuOpening이 복사/붙여넣기 이후 항목을 전부 지우고 "이 창의 기능"만 다시
+    /// 채우기 때문에 방금 추가한 항목이 곧바로 사라진다.
+    /// </summary>
+    public void AddPermanentContextMenuItems(params ToolStripItem[] items)
+    {
+        ContextMenuStrip!.Items.AddRange(items);
+        _permanentItemCount += items.Length;
     }
 
     /// <summary>
@@ -134,10 +148,10 @@ public class ExcelLikeDataGridView : DataGridView
     {
         if (sender is not ContextMenuStrip menu) return;
 
-        var fixedCount = menu.Items.Cast<ToolStripItem>().TakeWhile(i => i != _pasteMenuItem).Count() + 1;
-        // _pasteMenuItem이 이 메뉴에 없는 폼 전용 메뉴라면(파생 폼이 메뉴를 통째로 새로 만든 경우)
-        // 모든 기존 항목을 고정 항목으로 보고 그 뒤에만 추가한다.
-        if (!menu.Items.Contains(_pasteMenuItem)) fixedCount = menu.Items.Count;
+        // 이 메뉴가 생성자에서 만든 그 인스턴스면(복사/붙여넣기 + AddPermanentContextMenuItems로
+        // 추가된 항목) _permanentItemCount까지가 고정 항목이다. 파생 폼이 메뉴를 통째로 새로
+        // 만들어 갈아끼운 경우(_pasteMenuItem이 없음)는 그 시점의 기존 항목을 전부 고정으로 본다.
+        var fixedCount = menu.Items.Contains(_pasteMenuItem) ? _permanentItemCount : menu.Items.Count;
 
         while (menu.Items.Count > fixedCount) menu.Items.RemoveAt(fixedCount);
 

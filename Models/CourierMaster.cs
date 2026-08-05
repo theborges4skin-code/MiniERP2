@@ -14,6 +14,23 @@ public class CourierMaster
     public string TrackingImportTrackingNoHeader { get; set; } = string.Empty;
 
     /// <summary>
+    /// 아래 3개는 선택 항목입니다. 운송장번호 선택 적용 창(TrackingAssignDialog)에서 같은 수령인에
+    /// 대해 운송장번호가 여러 개 발견됐을 때, 어느 운송장번호가 어느 주문에 해당하는지 사용자가
+    /// 구분할 수 있도록 참고 정보로만 보여줍니다. 결과 파일에 해당 열이 없거나 설정하지 않으면
+    /// 비워두면 되고, 매칭 로직에는 전혀 영향을 주지 않습니다.
+    /// </summary>
+    public string TrackingImportOrderNoHeader { get; set; } = string.Empty;
+    public string TrackingImportAddressHeader { get; set; } = string.Empty;
+    public string TrackingImportProductNameHeader { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 아래 2개도 선택 항목입니다. 운송장 파일 누락건 점검(TrackingBackfillViewer)에서 접수일자/
+    /// 운임 통계와 뷰어 그리드 표시에 씁니다. 결과 파일에 해당 열이 없으면 비워두면 됩니다.
+    /// </summary>
+    public string TrackingImportReceivedDateHeader { get; set; } = string.Empty;
+    public string TrackingImportFreightCostHeader { get; set; } = string.Empty;
+
+    /// <summary>
     /// 송장표시명 뒤에 붙일 수량 표기 형식입니다. "##"이 실제 수량으로 치환됩니다(예: "   ▶[##개]" +
     /// 수량 2 → "   ▶**[2개]"). 비어있으면 기본형식(" ##개")을 씁니다. 수량이 2개 이상이면 대괄호
     /// 바로 앞에 수량만큼 "*"가 자동으로 붙고(예: 5개 → "▶*****[5개]"), 합포장(한 묶음에 품목이

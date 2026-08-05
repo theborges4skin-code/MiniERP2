@@ -69,6 +69,9 @@ public class DataManagementForm : Form
         _tabControl.TabPages.Add(CreateTableTab(new ConditionalMappingManagedTable()));
         _tabControl.TabPages.Add(CreateTableTab(new FboCskuManagedTable()));
         _tabControl.TabPages.Add(CreateTableTab(new FboChannelConfigManagedTable()));
+        _tabControl.TabPages.Add(CreateTableTab(new FbaCskuManagedTable()));
+        _tabControl.TabPages.Add(CreateTableTab(new FbaBoxSpecManagedTable()));
+        _tabControl.TabPages.Add(CreateTableTab(new FbaConfigManagedTable()));
         _tabControl.TabPages.Add(CreateBackupTab());
         _tabControl.TabPages.Add(CreateExportLogTab());
         _tabControl.TabPages.Add(CreateLegacyImportTab());

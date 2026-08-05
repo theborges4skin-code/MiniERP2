@@ -193,9 +193,19 @@ public class AdMappingForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
-        var btnLoad = new Button { Text = "광고비 파일 불러오기", Size = new Size(140, 30) };
+        var btnLoad = new Button
+        {
+            Text = "광고비 파일 불러오기",
+            Size = new Size(140, 30),
+        };
+        var loadTooltip = new ToolTip();
+        loadTooltip.SetToolTip(btnLoad, "파일을 여러 번 불러오면 이전에 불러온 항목에 누적됩니다(예: 쇼핑광고/성과형처럼 유형이 다른 파일을 각각 불러와 합산). 새로 시작하려면 \"불러온 항목 초기화\"를 누르세요.");
         btnLoad.Click += OnLoadAdFileClick;
         toolStrip.Controls.Add(btnLoad);
+
+        var btnResetLoaded = new Button { Text = "불러온 항목 초기화", Size = new Size(120, 30) };
+        btnResetLoaded.Click += OnResetLoadedAdItemsClick;
+        toolStrip.Controls.Add(btnResetLoaded);
 
         var btnExport = new Button { Text = "분석결과 내보내기", Size = new Size(120, 30) };
         btnExport.Click += OnExportAdResultClick;
@@ -207,7 +217,7 @@ public class AdMappingForm : Form
 
         _unmappedOnlyCheckBox = new CheckBox
         {
-            Text = "ubbf8ub9e4ud551ub9cc ubcf4uae30",
+            Text = "미매핑만 보기",
             AutoSize = true,
             Padding = new Padding(8, 6, 0, 0),
         };
@@ -244,6 +254,7 @@ public class AdMappingForm : Form
         menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => OnAddConditionRuleFromSelectedAdItem());
         menu.Items.Add("이 행 예외처리(계산 제외)", null, (s, e) => OnAddExceptionFromSelectedAdItem());
         _adDataGrid.ContextMenuStrip = menu;
+        _adDataGrid.RowPrePaint += OnAdGridRowPrePaint;
 
         _adSummaryLabel = new Label { Dock = DockStyle.Fill, Text = "광고비 파일을 불러오세요.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
@@ -368,7 +379,23 @@ public class AdMappingForm : Form
                 "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
-        _loadedAdItems = allItems;
+        // 쇼핑광고/성과형처럼 유형이 다른 파일을 각각 따로 불러와도(레이아웃이 여러 개 등록된 채널)
+        // 이전에 불러온 항목이 사라지지 않도록 교체 대신 누적한다 — "보고서에 저장"은 이 누적된
+        // 전체 항목을 한 번에 그룹핑해 저장하므로, 저장 시점엔 두 유형이 자연히 합산된다.
+        _loadedAdItems.AddRange(allItems);
+        ApplyUnmappedFilter();
+        UpdateAdSummary();
+        UpdateConditionPreview();
+    }
+
+    /// <summary>같은 채널 안에서 잘못 불러온 항목을 지우고 새로 시작할 수 있는 명시적 초기화.</summary>
+    private void OnResetLoadedAdItemsClick(object? sender, EventArgs e)
+    {
+        if (_loadedAdItems.Count == 0) return;
+        if (MessageBox.Show($"불러온 항목 {_loadedAdItems.Count}건을 모두 지우고 초기화하시겠습니까?", "초기화 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _loadedAdItems = [];
         ApplyUnmappedFilter();
         UpdateAdSummary();
         UpdateConditionPreview();
@@ -403,6 +430,27 @@ public class AdMappingForm : Form
             ? _loadedAdItems.Where(i => string.IsNullOrEmpty(i.MappedGroup) && i.MatchType != "예외처리").ToList()
             : _loadedAdItems;
         _adDataGrid.DataSource = new BindingList<AdSpendItem>(source);
+    }
+
+    /// <summary>마감/이익분석 화면(SettlementForm)과 동일한 방식으로 미매핑 행을 배경색으로 구분한다.</summary>
+    private void OnAdGridRowPrePaint(object? sender, DataGridViewRowPrePaintEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= _adDataGrid.Rows.Count) return;
+
+        var row = _adDataGrid.Rows[e.RowIndex];
+        if (row.DataBoundItem is not AdSpendItem item) return;
+
+        if (string.IsNullOrEmpty(item.MappedGroup) && item.MatchType != "예외처리")
+        {
+            // 다크모드에서 기본 글자색이 흰색으로 바뀌어도 강조 배경에서 글자가 보이도록 검은색으로 고정한다.
+            row.DefaultCellStyle.BackColor = Color.MistyRose;
+            row.DefaultCellStyle.ForeColor = Color.Black;
+        }
+        else
+        {
+            row.DefaultCellStyle.BackColor = _adDataGrid.DefaultCellStyle.BackColor;
+            row.DefaultCellStyle.ForeColor = _adDataGrid.DefaultCellStyle.ForeColor;
+        }
     }
     private void UpdateAdSummary()
     {

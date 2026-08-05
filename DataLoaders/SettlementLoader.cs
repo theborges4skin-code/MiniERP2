@@ -337,7 +337,7 @@ public class SettlementLoader
         }
 
         var cfsMode = channelConfig.GrowthCfsFee != null && channelConfig.ChannelType == ChannelType.CoupangGrowth;
-        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, channelConfig.ExchangeRate, cfsMode);
+        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, cfsMode);
     }
 
     /// <summary>

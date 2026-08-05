@@ -9,6 +9,7 @@ public class MainHub : Form
 {
     private readonly ItemRepository _itemRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly FbaBoxSpecRepository _fbaBoxSpecRepository = new();
     private readonly SettlementRepository _settlementRepository = new();
     private readonly AutoOrderInboxRepository _autoOrderInboxRepository = new();
     private readonly AutoOrderSettingsService _autoOrderSettingsService = new();
@@ -20,6 +21,7 @@ public class MainHub : Form
     {
         InitializeComponent();
         _salesChannelRepository.EnsureSampleChannel();
+        _fbaBoxSpecRepository.EnsureDefaultBoxSpecs();
         Load += OnMainHubLoad;
     }
 
@@ -59,6 +61,8 @@ public class MainHub : Form
             ("풀필먼트 발주 처리", (s, e) => FormManager.Show<FboOrderForm>(), Keys.Control | Keys.D6),
             ("풀필먼트 발주 이력", (s, e) => FormManager.Show<FboHistoryForm>(), Keys.Control | Keys.D7),
             ("자동발주처리", (s, e) => FormManager.Show<AutoOrderInboxForm>(), Keys.Control | Keys.D9),
+            ("FBA 발주 처리", (s, e) => FormManager.Show<FbaOrderForm>(), null),
+            ("FBA 발주 이력", (s, e) => FormManager.Show<FbaHistoryForm>(), null),
         }),
         ("기준정보", new()
         {

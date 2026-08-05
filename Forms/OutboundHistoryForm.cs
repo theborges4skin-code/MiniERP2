@@ -354,12 +354,12 @@ public class OutboundHistoryForm : Form
     /// <summary>선택 행의 비고(내부관리용 메모) 전체 내용을 보여준다.</summary>
     private void SetupRemarkContextMenu()
     {
-        var menu = _historyGrid.ContextMenuStrip!;
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("메모 보기", null, OnViewRemarkClick);
-        menu.Items.Add("메모 편집", null, OnEditRemarkClick);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("선택 이력 채널 이관", null, OnTransferChannelClick);
+        _historyGrid.AddPermanentContextMenuItems(
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("메모 보기", null, OnViewRemarkClick),
+            new ToolStripMenuItem("메모 편집", null, OnEditRemarkClick),
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("선택 이력 채널 이관", null, OnTransferChannelClick));
     }
 
     /// <summary>

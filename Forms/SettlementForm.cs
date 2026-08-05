@@ -1318,9 +1318,10 @@ public class SettlementForm : Form
     }
 
     /// <summary>
-    /// 미매핑 행에서 곧바로 매핑을 실행할 수 있는 우클릭 메뉴(1:1/조건부/임시/예외처리). 기본
-    /// 복사/붙여넣기 항목보다 앞에 끼워넣어, 그리드의 동적 "이 창의 기능" 메뉴 갱신 로직이
-    /// 이 항목들을 지우지 않도록 한다(ExcelLikeDataGridView.OnContextMenuOpening 참고).
+    /// 미매핑 행에서 곧바로 매핑을 실행할 수 있는 우클릭 메뉴(1:1/조건부/임시/예외처리).
+    /// AddPermanentContextMenuItems로 추가해야 한다 — ContextMenuStrip.Items에 직접 추가/삽입하면
+    /// 메뉴가 열릴 때마다 그리드의 동적 "이 창의 기능" 메뉴 갱신 로직이 이 항목들을 지운다
+    /// (ExcelLikeDataGridView.OnContextMenuOpening 참고).
     /// </summary>
     private static readonly Dictionary<string, StdField> SettlementColumnToStdField = new()
     {
@@ -1330,12 +1331,12 @@ public class SettlementForm : Form
 
     private void SetupSettlementGridContextMenu()
     {
-        var menu = _settlementGrid.ContextMenuStrip!;
-        menu.Items.Insert(0, new ToolStripSeparator());
-        menu.Items.Insert(0, new ToolStripMenuItem("이 행 예외처리(매핑 제외)", null, OnExcludeSettlementRowClick));
-        menu.Items.Insert(0, new ToolStripMenuItem("임시 매핑으로 등록", null, OnAddTempRuleFromSettlementRowClick));
-        menu.Items.Insert(0, new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromSettlementRowClick));
-        menu.Items.Insert(0, new ToolStripMenuItem("SKU 매핑 도우미", null, OnOpenMappingHelperFromSettlementRowClick));
+        _settlementGrid.AddPermanentContextMenuItems(
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("SKU 매핑 도우미", null, OnOpenMappingHelperFromSettlementRowClick),
+            new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromSettlementRowClick),
+            new ToolStripMenuItem("임시 매핑으로 등록", null, OnAddTempRuleFromSettlementRowClick),
+            new ToolStripMenuItem("이 행 예외처리(매핑 제외)", null, OnExcludeSettlementRowClick));
 
         // 우클릭한 셀을 기억해 조건부 매핑 시 그 열의 조건만 전달할 수 있게 한다.
         _settlementGrid.MouseDown += (s, e) =>

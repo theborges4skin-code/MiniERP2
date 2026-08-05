@@ -18,4 +18,11 @@ public class AddressBookEntry
 
     /// <summary>이 주소에 붙은 채널 태그(다대다, AddressChannelTagTable). 비어있으면 모든 채널에서 동일하게 노출된다.</summary>
     public List<string> ChannelTags { get; set; } = new();
+
+    /// <summary>
+    /// ListBox.DisplayMember="Label" 리플렉션 바인딩이 실패하면(타입 서술자 캐시 문제 등) 조용히
+    /// item.ToString()으로 폴백해 "MiniERP2.Models.AddressBookEntry"가 그대로 노출된다. 그 폴백
+    /// 경로에서도 라벨이 뜨도록 여기서 직접 오버라이드해둔다.
+    /// </summary>
+    public override string ToString() => Label;
 }

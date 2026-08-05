@@ -14,7 +14,9 @@ public class CourierRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader, QuantityNotationFormat
+            SELECT CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader, QuantityNotationFormat,
+                   TrackingImportOrderNoHeader, TrackingImportAddressHeader, TrackingImportProductNameHeader,
+                   TrackingImportReceivedDateHeader, TrackingImportFreightCostHeader
             FROM CourierMasterTable
             ORDER BY CourierName
             """;
@@ -33,14 +35,23 @@ public class CourierRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO CourierMasterTable (CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader, QuantityNotationFormat)
-            VALUES ($courierName, $headerMappingJson, $trackingImportHeaderRow, $trackingImportRecipientHeader, $trackingImportTrackingNoHeader, $quantityNotationFormat)
+            INSERT INTO CourierMasterTable (CourierName, HeaderMappingJson, TrackingImportHeaderRow, TrackingImportRecipientHeader, TrackingImportTrackingNoHeader, QuantityNotationFormat,
+                                             TrackingImportOrderNoHeader, TrackingImportAddressHeader, TrackingImportProductNameHeader,
+                                             TrackingImportReceivedDateHeader, TrackingImportFreightCostHeader)
+            VALUES ($courierName, $headerMappingJson, $trackingImportHeaderRow, $trackingImportRecipientHeader, $trackingImportTrackingNoHeader, $quantityNotationFormat,
+                    $trackingImportOrderNoHeader, $trackingImportAddressHeader, $trackingImportProductNameHeader,
+                    $trackingImportReceivedDateHeader, $trackingImportFreightCostHeader)
             ON CONFLICT(CourierName) DO UPDATE SET
                 HeaderMappingJson = excluded.HeaderMappingJson,
                 TrackingImportHeaderRow = excluded.TrackingImportHeaderRow,
                 TrackingImportRecipientHeader = excluded.TrackingImportRecipientHeader,
                 TrackingImportTrackingNoHeader = excluded.TrackingImportTrackingNoHeader,
-                QuantityNotationFormat = excluded.QuantityNotationFormat
+                QuantityNotationFormat = excluded.QuantityNotationFormat,
+                TrackingImportOrderNoHeader = excluded.TrackingImportOrderNoHeader,
+                TrackingImportAddressHeader = excluded.TrackingImportAddressHeader,
+                TrackingImportProductNameHeader = excluded.TrackingImportProductNameHeader,
+                TrackingImportReceivedDateHeader = excluded.TrackingImportReceivedDateHeader,
+                TrackingImportFreightCostHeader = excluded.TrackingImportFreightCostHeader
             """;
         command.Parameters.AddWithValue("$courierName", courier.CourierName);
         command.Parameters.AddWithValue("$headerMappingJson", courier.HeaderMappingJson);
@@ -48,6 +59,11 @@ public class CourierRepository
         command.Parameters.AddWithValue("$trackingImportRecipientHeader", courier.TrackingImportRecipientHeader);
         command.Parameters.AddWithValue("$trackingImportTrackingNoHeader", courier.TrackingImportTrackingNoHeader);
         command.Parameters.AddWithValue("$quantityNotationFormat", courier.QuantityNotationFormat);
+        command.Parameters.AddWithValue("$trackingImportOrderNoHeader", courier.TrackingImportOrderNoHeader);
+        command.Parameters.AddWithValue("$trackingImportAddressHeader", courier.TrackingImportAddressHeader);
+        command.Parameters.AddWithValue("$trackingImportProductNameHeader", courier.TrackingImportProductNameHeader);
+        command.Parameters.AddWithValue("$trackingImportReceivedDateHeader", courier.TrackingImportReceivedDateHeader);
+        command.Parameters.AddWithValue("$trackingImportFreightCostHeader", courier.TrackingImportFreightCostHeader);
         command.ExecuteNonQuery();
     }
 
@@ -68,5 +84,10 @@ public class CourierRepository
         TrackingImportRecipientHeader = reader.GetString(3),
         TrackingImportTrackingNoHeader = reader.GetString(4),
         QuantityNotationFormat = reader.GetString(5),
+        TrackingImportOrderNoHeader = reader.GetString(6),
+        TrackingImportAddressHeader = reader.GetString(7),
+        TrackingImportProductNameHeader = reader.GetString(8),
+        TrackingImportReceivedDateHeader = reader.GetString(9),
+        TrackingImportFreightCostHeader = reader.GetString(10),
     };
 }

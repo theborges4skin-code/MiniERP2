@@ -277,6 +277,7 @@ public class ClosingOrchestrator
             var channelConfigs = _configService.Load();
             var cfg = channelConfigs.FirstOrDefault(c => c.ChannelCode == channelCode);
             var channelType = cfg?.ChannelType;
+            var exchangeRate = cfg?.ExchangeRate ?? 1m;
 
             var facts = rows
                 .GroupBy(r => ResolveGroup(r, channelType))
@@ -285,8 +286,8 @@ public class ClosingOrchestrator
                 {
                     ProductGroup = g.Key,
                     Qty = g.Sum(r => r.Qty),
-                    Revenue = g.Sum(r => r.Revenue),
-                    GrossProfit = g.Sum(r => r.Profit),
+                    Revenue = ProfitCalculator.ToReportCurrency(channelType, g.Sum(r => r.Revenue), exchangeRate),
+                    GrossProfit = ProfitCalculator.ToReportCurrency(channelType, g.Sum(r => r.Profit), exchangeRate),
                 })
                 .ToList();
 

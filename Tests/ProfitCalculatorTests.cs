@@ -25,12 +25,28 @@ public class ProfitCalculatorTests
     }
 
     [TestMethod]
-    public void Calculate_AmazonUs_ConvertsCostToSupplyPriceAndAppliesExchangeRate()
+    public void Calculate_AmazonUs_ConvertsCostToSupplyPriceKeepsOriginalCurrency()
     {
-        // (100 - (11/1.1*2)) * 1300 = (100 - 20) * 1300 = 104000
-        var profit = ProfitCalculator.Calculate(ChannelType.AmazonUs, settlement: 100m, costPrice: 11m, qty: 2, shipping: 0m, fee: 0m, exchangeRate: 1300m);
+        // 100 - (11/1.1*2) = 100 - 20 = 80 — 환율은 곱하지 않는다(원래 통화 그대로 반환).
+        var profit = ProfitCalculator.Calculate(ChannelType.AmazonUs, settlement: 100m, costPrice: 11m, qty: 2, shipping: 0m, fee: 0m);
 
-        Assert.AreEqual(104000m, profit);
+        Assert.AreEqual(80m, profit);
+    }
+
+    [TestMethod]
+    public void ToReportCurrency_AmazonChannel_MultipliesByExchangeRate()
+    {
+        var converted = ProfitCalculator.ToReportCurrency(ChannelType.AmazonUs, amount: 80m, exchangeRate: 1300m);
+
+        Assert.AreEqual(104000m, converted);
+    }
+
+    [TestMethod]
+    public void ToReportCurrency_NonAmazonChannel_ReturnsAmountUnchanged()
+    {
+        var converted = ProfitCalculator.ToReportCurrency(ChannelType.CoupangGeneral, amount: 4000m, exchangeRate: 1300m);
+
+        Assert.AreEqual(4000m, converted);
     }
 
     [TestMethod]

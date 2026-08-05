@@ -24,6 +24,11 @@ public class CourierConfigForm : Form
     private NumericUpDown _numTrackingHeaderRow = new();
     private ComboBox _cmbTrackingRecipientHeader = new();
     private ComboBox _cmbTrackingNoHeader = new();
+    private ComboBox _cmbTrackingOrderNoHeader = new();
+    private ComboBox _cmbTrackingAddressHeader = new();
+    private ComboBox _cmbTrackingProductNameHeader = new();
+    private ComboBox _cmbTrackingReceivedDateHeader = new();
+    private ComboBox _cmbTrackingFreightCostHeader = new();
     private TextBox _txtQuantityNotationFormat = new();
     private Label _statusLabel = new();
 
@@ -53,7 +58,8 @@ public class CourierConfigForm : Form
     private void InitializeComponent()
     {
         Text = "택배사 양식 관리";
-        Size = new Size(900, 600);
+        Size = new Size(900, 680);
+        MinimumSize = new Size(760, 500);
         StartPosition = FormStartPosition.CenterScreen;
 
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
@@ -86,7 +92,7 @@ public class CourierConfigForm : Form
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
         var namePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -167,7 +173,10 @@ public class CourierConfigForm : Form
         // 발주/출고 이력 관리창에서 "운송장번호 불러오기" 시 이 설정으로 헤더 시작행과 수령인/
         // 운송장번호 열을 찾는다.
         var trackingImportGroup = new GroupBox { Text = "운송장 결과 가져오기 양식", Dock = DockStyle.Fill };
-        var trackingImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        // 헤더 항목이 늘어나 고정 높이 안에 다 안 들어갈 수 있어(선택 항목 5종) 스크롤을 허용한다 —
+        // 그렇지 않으면 아래쪽(접수일자/운임 헤더)이 잘려서 아예 안 보이고 저장은 되는데 편집 UI가 없는
+        // 상태가 된다.
+        var trackingImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5), AutoScroll = true };
 
         var btnLoadTrackingSample = new Button { Text = "샘플 양식 불러오기", Width = 130 };
         btnLoadTrackingSample.Click += OnLoadTrackingImportSampleClick;
@@ -184,6 +193,48 @@ public class CourierConfigForm : Form
         trackingImportPanel.Controls.Add(new Label { Text = "운송장번호 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
         _cmbTrackingNoHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
         trackingImportPanel.Controls.Add(_cmbTrackingNoHeader);
+
+        var trackingOptionalLabel = new Label
+        {
+            Text = "아래 3개는 선택 항목입니다 — 운송장이 여러 개 겹칠 때 선택창에서 참고용으로만 보여줍니다.",
+            AutoSize = true,
+            Padding = new Padding(10, 8, 0, 2),
+            ForeColor = Color.DimGray,
+        };
+        trackingImportPanel.SetFlowBreak(_cmbTrackingNoHeader, true);
+        trackingImportPanel.Controls.Add(trackingOptionalLabel);
+        trackingImportPanel.SetFlowBreak(trackingOptionalLabel, true);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "고객주문번호 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingOrderNoHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingOrderNoHeader);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "상세주소 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingAddressHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingAddressHeader);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "품목 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingProductNameHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingProductNameHeader);
+
+        var trackingOptionalLabel2 = new Label
+        {
+            Text = "아래 2개는 운송장 파일 누락건 점검(운임 통계·뷰어)에서만 씁니다 — 마찬가지로 선택 항목입니다.",
+            AutoSize = true,
+            Padding = new Padding(10, 8, 0, 2),
+            ForeColor = Color.DimGray,
+        };
+        trackingImportPanel.SetFlowBreak(_cmbTrackingProductNameHeader, true);
+        trackingImportPanel.Controls.Add(trackingOptionalLabel2);
+        trackingImportPanel.SetFlowBreak(trackingOptionalLabel2, true);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "접수일자 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingReceivedDateHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingReceivedDateHeader);
+
+        trackingImportPanel.Controls.Add(new Label { Text = "운임 헤더:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
+        _cmbTrackingFreightCostHeader = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDown };
+        trackingImportPanel.Controls.Add(_cmbTrackingFreightCostHeader);
 
         trackingImportGroup.Controls.Add(trackingImportPanel);
 
@@ -236,6 +287,11 @@ public class CourierConfigForm : Form
         _numTrackingHeaderRow.Value = Math.Clamp(courier.TrackingImportHeaderRow, (int)_numTrackingHeaderRow.Minimum, (int)_numTrackingHeaderRow.Maximum);
         _cmbTrackingRecipientHeader.Text = courier.TrackingImportRecipientHeader;
         _cmbTrackingNoHeader.Text = courier.TrackingImportTrackingNoHeader;
+        _cmbTrackingOrderNoHeader.Text = courier.TrackingImportOrderNoHeader;
+        _cmbTrackingAddressHeader.Text = courier.TrackingImportAddressHeader;
+        _cmbTrackingProductNameHeader.Text = courier.TrackingImportProductNameHeader;
+        _cmbTrackingReceivedDateHeader.Text = courier.TrackingImportReceivedDateHeader;
+        _cmbTrackingFreightCostHeader.Text = courier.TrackingImportFreightCostHeader;
         _txtQuantityNotationFormat.Text = courier.QuantityNotationFormat;
     }
 
@@ -266,6 +322,11 @@ public class CourierConfigForm : Form
         _numTrackingHeaderRow.Value = 1;
         _cmbTrackingRecipientHeader.Text = string.Empty;
         _cmbTrackingNoHeader.Text = string.Empty;
+        _cmbTrackingOrderNoHeader.Text = string.Empty;
+        _cmbTrackingAddressHeader.Text = string.Empty;
+        _cmbTrackingProductNameHeader.Text = string.Empty;
+        _cmbTrackingReceivedDateHeader.Text = string.Empty;
+        _cmbTrackingFreightCostHeader.Text = string.Empty;
         _txtQuantityNotationFormat.Text = string.Empty;
         _txtCourierName.Focus();
     }
@@ -299,8 +360,18 @@ public class CourierConfigForm : Form
             _cmbTrackingRecipientHeader.Items.AddRange(headers.Cast<object>().ToArray());
             _cmbTrackingNoHeader.Items.Clear();
             _cmbTrackingNoHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingOrderNoHeader.Items.Clear();
+            _cmbTrackingOrderNoHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingAddressHeader.Items.Clear();
+            _cmbTrackingAddressHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingProductNameHeader.Items.Clear();
+            _cmbTrackingProductNameHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingReceivedDateHeader.Items.Clear();
+            _cmbTrackingReceivedDateHeader.Items.AddRange(headers.Cast<object>().ToArray());
+            _cmbTrackingFreightCostHeader.Items.Clear();
+            _cmbTrackingFreightCostHeader.Items.AddRange(headers.Cast<object>().ToArray());
 
-            MessageBox.Show($"{headers.Count}개의 헤더를 읽었습니다. '수령인 헤더'/'운송장번호 헤더'에서 선택하세요.", "샘플 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"{headers.Count}개의 헤더를 읽었습니다. '수령인 헤더'/'운송장번호 헤더'에서 선택하세요(고객주문번호/상세주소/품목/접수일자/운임 헤더는 선택 항목입니다).", "샘플 불러오기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -415,6 +486,11 @@ public class CourierConfigForm : Form
             TrackingImportRecipientHeader = _cmbTrackingRecipientHeader.Text.Trim(),
             TrackingImportTrackingNoHeader = _cmbTrackingNoHeader.Text.Trim(),
             QuantityNotationFormat = _txtQuantityNotationFormat.Text,
+            TrackingImportOrderNoHeader = _cmbTrackingOrderNoHeader.Text.Trim(),
+            TrackingImportAddressHeader = _cmbTrackingAddressHeader.Text.Trim(),
+            TrackingImportProductNameHeader = _cmbTrackingProductNameHeader.Text.Trim(),
+            TrackingImportReceivedDateHeader = _cmbTrackingReceivedDateHeader.Text.Trim(),
+            TrackingImportFreightCostHeader = _cmbTrackingFreightCostHeader.Text.Trim(),
         });
 
         LoadCouriers();

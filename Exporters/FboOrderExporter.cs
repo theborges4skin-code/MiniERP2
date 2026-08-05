@@ -11,8 +11,6 @@ namespace MiniERP2.Exporters;
 /// </summary>
 public static class FboOrderExporter
 {
-    private const string QuantityTemplate = "▶[##개]";
-
     private static readonly string[] Headers =
     [
         "반품부성명", "반품부전화번호", "반품부기타연락처", "반품부주소", "배송메세지1",
@@ -54,7 +52,7 @@ public static class FboOrderExporter
             // 않는다 — 채널코드_CSKU_상품명 형식으로 나오면 택배송장에 불필요하게 길어진다는
             // 지적에 따라 표시명+수량 조합만 남긴다.
             var displayName = string.IsNullOrWhiteSpace(item.InvoiceDisplayName) ? item.ItemName : item.InvoiceDisplayName;
-            sheet.Cells[row, col++].Value = $"{displayName} {FormatQuantityTag(item.Qty)}";
+            sheet.Cells[row, col++].Value = $"{displayName} {QuantityTagFormatter.FormatQuantityTag(item.Qty)}";
             sheet.Cells[row, col++].Value = string.Empty;
             sheet.Cells[row, col++].Value = string.Empty;
             sheet.Cells[row, col++].Value = box.BoxType;
@@ -65,41 +63,5 @@ public static class FboOrderExporter
 
         sheet.Cells[sheet.Dimension.Address].AutoFitColumns();
         ExportHelper.SaveExcel(package, filePath);
-    }
-
-    /// <summary>수량이 2개 이상이면 대괄호 바로 앞에 강조 표시를 붙여 합포장임을 한눈에 알아볼 수
-    /// 있게 한다. 원래 수량만큼 '*'를 반복했으나(OFS와 같은 방식) 21개처럼 큰 수량에서 표시가
-    /// 지나치게 길어진다는 지적에 따라 소문자 로마숫자(i=1, v=5, x=10, ...)로 축약했다.
-    /// 예: 7개 → vii, 20개 → xx, 21개 → xxi.</summary>
-    private static string FormatQuantityTag(int qty)
-    {
-        var effective = QuantityTemplate;
-        if (qty >= 2)
-        {
-            var insertAt = effective.IndexOf('[');
-            if (insertAt >= 0) effective = effective.Insert(insertAt, ToLowerRomanNumeral(qty));
-        }
-        return effective.Replace("##", qty.ToString());
-    }
-
-    private static readonly (int Value, string Numeral)[] RomanNumeralMap =
-    [
-        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
-        (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
-        (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
-    ];
-
-    private static string ToLowerRomanNumeral(int number)
-    {
-        var result = new System.Text.StringBuilder();
-        foreach (var (value, numeral) in RomanNumeralMap)
-        {
-            while (number >= value)
-            {
-                result.Append(numeral);
-                number -= value;
-            }
-        }
-        return result.ToString();
     }
 }

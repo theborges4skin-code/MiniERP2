@@ -471,6 +471,110 @@ public static class DbSchema
 
             CREATE INDEX IF NOT EXISTS IX_FboBox_MatchKey ON FboBox (MatchKey);
 
+            -- 아마존 FBA 발주 관리(FBA발주관리_개발기획서.md): FBO를 레퍼런스로 하되, 박스=CSKU
+            -- 혼재(박스 우선 구성), 박스규격 마스터+치수 스냅샷, 고객주문번호 매칭키가 다르다(§2).
+            CREATE TABLE IF NOT EXISTS FbaCskuMaster (
+                Csku TEXT PRIMARY KEY,
+                ItemName TEXT NOT NULL DEFAULT '',
+                InvoiceDisplayName TEXT,
+                Asin TEXT NOT NULL DEFAULT '',
+                CommodityDescription TEXT NOT NULL DEFAULT '',
+                HsCode TEXT NOT NULL DEFAULT '',
+                ItemPrice REAL NOT NULL DEFAULT 0,
+                Volume TEXT NOT NULL DEFAULT '',
+                UnitWeightG REAL NOT NULL DEFAULT 0,
+                QtyPerLayer INTEGER NOT NULL DEFAULT 0,
+                IsActive INTEGER NOT NULL DEFAULT 1,
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            -- 초기 4건(실측)은 스키마 초기화가 아니라 FbaBoxSpecRepository.EnsureDefaultBoxSpecs()에서
+            -- MainHub 시작 시 1회만 시드한다(§10 수정사항 — 테스트가 매번 만드는 임시 DB까지 시드되어
+            -- 행 개수를 세는 기존 테스트가 깨지는 것을 방지, SalesChannelRepository.EnsureSampleChannel과 동일 이유).
+            CREATE TABLE IF NOT EXISTS FbaBoxSpec (
+                BoxName TEXT PRIMARY KEY,
+                WidthMm REAL NOT NULL DEFAULT 0,
+                DepthMm REAL NOT NULL DEFAULT 0,
+                HeightMm REAL NOT NULL DEFAULT 0,
+                SortOrder INTEGER NOT NULL DEFAULT 0,
+                IsActive INTEGER NOT NULL DEFAULT 1,
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS FbaConfig (
+                ConfigKey TEXT PRIMARY KEY DEFAULT 'DEFAULT',
+                ReceiverName TEXT NOT NULL DEFAULT '',
+                Phone TEXT NOT NULL DEFAULT '',
+                Phone2 TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                DeliveryMessage TEXT NOT NULL DEFAULT '',
+                BoxTypeLabel TEXT NOT NULL DEFAULT '중',
+                TransferType TEXT NOT NULL DEFAULT '',
+                Etc1 TEXT NOT NULL DEFAULT '',
+                OrderNoPrefix TEXT NOT NULL DEFAULT '#FBA'
+            );
+
+            CREATE TABLE IF NOT EXISTS FbaOrder (
+                FbaNo TEXT PRIMARY KEY,
+                OrderDate TEXT NOT NULL,
+                ShipmentId TEXT,
+                ReceiverName TEXT NOT NULL DEFAULT '',
+                Phone TEXT NOT NULL DEFAULT '',
+                Address TEXT NOT NULL DEFAULT '',
+                Status TEXT NOT NULL DEFAULT '작성중',
+                Memo TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS FbaBox (
+                FbaNo TEXT NOT NULL,
+                BoxSeq INTEGER NOT NULL,
+                BoxSpecName TEXT NOT NULL DEFAULT '',
+                WidthMm REAL NOT NULL DEFAULT 0,
+                DepthMm REAL NOT NULL DEFAULT 0,
+                HeightMm REAL NOT NULL DEFAULT 0,
+                IsCustomSize INTEGER NOT NULL DEFAULT 0,
+                WeightG REAL NOT NULL DEFAULT 0,
+                MatchKey TEXT NOT NULL DEFAULT '',
+                TrackingNo TEXT,
+                TrackingLoadedAt TEXT,
+                Status TEXT NOT NULL DEFAULT '대기',
+                PRIMARY KEY (FbaNo, BoxSeq)
+            );
+
+            CREATE TABLE IF NOT EXISTS FbaBoxItem (
+                FbaNo TEXT NOT NULL,
+                BoxSeq INTEGER NOT NULL,
+                ItemSeq INTEGER NOT NULL,
+                Csku TEXT NOT NULL,
+                ItemName TEXT NOT NULL DEFAULT '',
+                InvoiceDisplayName TEXT,
+                Asin TEXT NOT NULL DEFAULT '',
+                CommodityDescription TEXT NOT NULL DEFAULT '',
+                HsCode TEXT NOT NULL DEFAULT '',
+                ItemPrice REAL NOT NULL DEFAULT 0,
+                UnitWeightG REAL NOT NULL DEFAULT 0,
+                QtyPerLayer INTEGER NOT NULL DEFAULT 0,
+                Qty INTEGER NOT NULL DEFAULT 0,
+                ExpiryDate TEXT,
+                PRIMARY KEY (FbaNo, BoxSeq, ItemSeq)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_FbaBox_MatchKey ON FbaBox (MatchKey);
+
+            -- FBA 발주 작성 화면의 "미배정 품목" 임시저장 장바구니. 발주 1건과 무관한 단일 슬롯이며
+            -- 저장할 때마다 전체를 지우고 다시 채운다(FbaCartRepository.SaveAll — ExportSummaryDraftRepository와
+            -- 동일한 전체교체 패턴). 그때그때 발송 확정되는 품목을 담아뒀다가 박스 수량이 찰 때
+            -- 한꺼번에 박스 구성으로 넘기기 위함이다.
+            CREATE TABLE IF NOT EXISTS FbaCartItem (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Csku TEXT NOT NULL,
+                Qty INTEGER NOT NULL DEFAULT 0,
+                ExpiryDate TEXT,
+                SavedAt TEXT NOT NULL DEFAULT ''
+            );
+
             -- 견적/가격 기록 관리(견적기록관리_개발기획서_확정본.md §3.1~3.2): 견적 1건 = 1회 전달
             -- 단위(헤더) + 품목별 라인. 기존 ChannelSkuPriceHistory/PurchaseSkuPriceHistory는 Upsert가
             -- 만드는 감사로그라 "이번 달 단가표 1건 = N품목" 업무 단위를 담지 못해서 별도로 신설한다.
@@ -722,6 +826,8 @@ public static class DbSchema
         // (Phase 2에서 집계 로직 결선 예정).
         EnsureColumn(connection, "ClosingUnmapped", "Quantity", "INTEGER");
         EnsureColumn(connection, "ClosingUnmapped", "SampleRevenue", "REAL");
+        // FBA 품목마스터 관리용 필드: MOCRA(미국 화장품 규제) Listing No.
+        EnsureColumn(connection, "FbaCskuMaster", "MocraListingNo", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

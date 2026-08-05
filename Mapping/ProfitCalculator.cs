@@ -17,12 +17,16 @@ public static class ProfitCalculator
     /// <param name="qty">수량</param>
     /// <param name="shipping">배송비(쿠팡그로스의 그로스배송비 등, VAT 별도금액)</param>
     /// <param name="fee">입출고비 등 부가 수수료(VAT 별도금액)</param>
-    /// <param name="exchangeRate">환율(아마존 등 외화 채널에만 적용, 그 외 1)</param>
     /// <param name="cfsMode">
     /// true = 쿠팡그로스 CFS 모드. 배송비·입출고비가 이미 VAT포함 금액으로 저장되어 있으므로
     /// 공식에서 vatRate를 추가로 곱하지 않는다. false(기본) = 기존 GrowthAuxSource 방식.
     /// </param>
-    public static decimal Calculate(ChannelType channelType, decimal settlement, decimal costPrice, int qty, decimal shipping, decimal fee, decimal exchangeRate = 1m, bool cfsMode = false)
+    /// <remarks>
+    /// 아마존(미국/일본)은 원래 통화(달러) 그대로 반환한다 — 환율 환산은 여기서 하지 않는다.
+    /// 여러 채널을 원화로 통합 집계하는 보고서(ProfitFactTable/ReportForm)에 저장할 때만
+    /// <see cref="ToReportCurrency"/>로 별도 환산한다(화면에 보여주는 값은 원래 통화 그대로 유지).
+    /// </remarks>
+    public static decimal Calculate(ChannelType channelType, decimal settlement, decimal costPrice, int qty, decimal shipping, decimal fee, bool cfsMode = false)
     {
         const decimal vatRate = 1.1m;
 
@@ -40,11 +44,20 @@ public static class ProfitCalculator
                 settlement - (costPrice * qty) - (shipping * vatRate),
 
             ChannelType.AmazonUs or ChannelType.AmazonJp =>
-                (settlement - (costPrice / vatRate * qty)) * exchangeRate,
+                settlement - (costPrice / vatRate * qty),
 
             _ => settlement - (costPrice * qty),
         };
     }
+
+    /// <summary>
+    /// 다채널 통합 리포트(ReportForm)는 원화 단일 통화를 전제하므로, 원래 통화가 다른 채널(아마존)의
+    /// 매출액/이익액을 <see cref="Database.ProfitFactRepository.SaveProfitFacts"/>에 저장하기
+    /// 직전에만 원화로 환산한다. 화면에 보여주는 <see cref="SettlementData"/> 자체(Revenue/Profit)는
+    /// 원래 통화 그대로 둔다 — 화면 표시 통화는 <c>SettlementForm</c>의 별도 표시 토글이 담당한다.
+    /// </summary>
+    public static decimal ToReportCurrency(ChannelType? channelType, decimal amount, decimal exchangeRate) =>
+        channelType is ChannelType.AmazonUs or ChannelType.AmazonJp ? amount * exchangeRate : amount;
 
     /// <summary>
     /// 쿠팡그로스 CFS 집계 결과를 정산 행 목록에 배분합니다.

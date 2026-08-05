@@ -116,6 +116,7 @@ public class OfsForm : Form
 
         var btnLoadOrders = new Button { Text = "발주 파일 로드", Size = new Size(120, 30) };
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
+        var btnLoadAddressBook = new Button { Text = "배송지 불러오기", Size = new Size(120, 30) };
         var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
         var btnUnmappedBatch = new Button { Text = "미매핑 일괄 처리", Size = new Size(130, 30) };
         var btnSave = new Button { Text = "저장 (발주확정)", Size = new Size(130, 30) };
@@ -126,6 +127,7 @@ public class OfsForm : Form
         btnExport.Click += OnExportClick;
         btnSave.Click += OnSaveClick;
         btnAddManualOrder.Click += OnAddManualOrderClick;
+        btnLoadAddressBook.Click += OnLoadAddressBookClick;
         btnMappingAssistant.Click += OnMappingAssistantClick;
         btnUnmappedBatch.Click += OnUnmappedBatchClick;
         btnOutboundHistory.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
@@ -134,6 +136,7 @@ public class OfsForm : Form
         toolStrip.Controls.Add(_channelCombo);
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
+        toolStrip.Controls.Add(btnLoadAddressBook);
         toolStrip.Controls.Add(btnMappingAssistant);
         toolStrip.Controls.Add(btnUnmappedBatch);
         toolStrip.Controls.Add(btnSave);
@@ -498,7 +501,7 @@ public class OfsForm : Form
         var selected = GetSelectedOrderItems();
         var isPartialSelection = selected.Count > 0;
         var ordersToExport = (isPartialSelection ? selected : (IEnumerable<OfsOrderItem>)_orders)
-            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku))
+            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
             .ToList();
 
         if (ordersToExport.Count == 0)
@@ -567,7 +570,11 @@ public class OfsForm : Form
 
     private async void OnSaveClick(object? sender, EventArgs e)
     {
-        var ordersToSave = _orders.Where(o => !string.IsNullOrWhiteSpace(o.MappedSku)).ToList();
+        // 샘플(LineKinds.Sample) 라인은 판매용 CSKU가 애초에 없을 수밖에 없으므로, 매핑된 SKU가
+        // 없어도 저장 대상에 포함한다(그 외 구분/정상 거래는 기존대로 매핑 성공 건만 저장).
+        var ordersToSave = _orders
+            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
+            .ToList();
 
         if (ordersToSave.Count == 0)
         {
@@ -599,9 +606,13 @@ public class OfsForm : Form
             {
                 foreach (var order in ordersToSave)
                 {
-                    if (string.IsNullOrEmpty(order.ChannelCode) || string.IsNullOrEmpty(order.MappedSku)) continue;
+                    // 샘플 라인은 MappedSku가 비어있는 게 정상이라(위 필터 참고) 여기서는 채널만 확인한다.
+                    if (string.IsNullOrEmpty(order.ChannelCode)) continue;
+                    if (string.IsNullOrEmpty(order.MappedSku) && order.LineKind != LineKinds.Sample) continue;
 
-                    var csku = _channelSkuRepository.GetByChannelAndCskuCode(order.ChannelCode, order.MappedSku);
+                    var csku = string.IsNullOrEmpty(order.MappedSku)
+                        ? null
+                        : _channelSkuRepository.GetByChannelAndCskuCode(order.ChannelCode, order.MappedSku);
 
                     // CSKU 미등록이어도 발주이력에는 기록한다(납품가=0, 나중에 등록 후 수정 가능).
                     // 이력에서 제외하면 마감 대조 시 실제 발송 건이 누락돼 대조가 불가능하다.
@@ -611,7 +622,7 @@ public class OfsForm : Form
                         OrderNo = order.OrderNo ?? string.Empty,
                         ShipmentGroupKey = ShipmentGrouping.GetEffectiveGroupId(order),
                         TrackingNo = order.TrackingNo ?? string.Empty,
-                        MskuCode = order.MappedSku,
+                        MskuCode = order.MappedSku ?? string.Empty,
                         Qty = order.Quantity,
                         SupplyPrice = csku?.SupplyPrice ?? 0m,
                         // 운송장 결과를 나중에 수령인 기준으로 매칭하려면 이 시점의 수령인/주소/
@@ -623,7 +634,8 @@ public class OfsForm : Form
                         LineKind = order.LineKind ?? string.Empty,
                     });
 
-                    if (csku == null) failedOrders.Add(order); // 납품가 없음 표시는 그리드에 유지
+                    // 샘플 라인은 CSKU가 없는 게 정상이므로 "납품가 없음" 실패 처리에서 제외한다.
+                    if (csku == null && order.LineKind != LineKinds.Sample) failedOrders.Add(order);
                 }
 
                 if (outboundDetails.Any())
@@ -937,19 +949,6 @@ public class OfsForm : Form
 
     private void SetupShipmentGroupingContextMenu()
     {
-        var menu = _ordersGrid.ContextMenuStrip!;
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("배송지 불러오기", null, OnLoadAddressBookClick);
-        menu.Items.Add("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromOrderRowClick);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("합포장으로 묶기", null, OnMergeIntoOneShipmentClick);
-        menu.Items.Add("분리배송으로 분리", null, OnSplitIntoNewShipmentClick);
-        menu.Items.Add("묶음 해제", null, OnResetShipmentGroupClick);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("메모행 추가", null, OnAddMemoRowClick);
-        menu.Items.Add("메모 보기", null, OnViewRemarkClick);
-        menu.Items.Add("메모 편집", null, OnEditRemarkClick);
-        menu.Items.Add(new ToolStripSeparator());
         // 샘플발송이력관리_개발기획서.md §4.1(b): 다중 선택 일괄 적용.
         var lineKindMenu = new ToolStripMenuItem("구분 지정");
         lineKindMenu.DropDownItems.Add(LineKinds.Sample, null, (s, e) => ApplyLineKindToSelection(LineKinds.Sample));
@@ -957,7 +956,25 @@ public class OfsForm : Form
         lineKindMenu.DropDownItems.Add(LineKinds.Other, null, (s, e) => ApplyLineKindToSelection(LineKinds.Other));
         lineKindMenu.DropDownItems.Add(new ToolStripSeparator());
         lineKindMenu.DropDownItems.Add("해제", null, (s, e) => ApplyLineKindToSelection(""));
-        menu.Items.Add(lineKindMenu);
+
+        // AddPermanentContextMenuItems로 추가해야 한다 — ContextMenuStrip.Items.Add를 직접 쓰면
+        // 메뉴가 열릴 때마다 ExcelLikeDataGridView.OnContextMenuOpening이 복사/붙여넣기 이후
+        // 항목을 전부 지우고 "이 창의 기능"(폼 버튼 목록)만 다시 채우기 때문에, 여기서 추가한
+        // 항목들이 화면에 뜨기도 전에 사라진다.
+        _ordersGrid.AddPermanentContextMenuItems(
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("배송지 불러오기", null, OnLoadAddressBookClick),
+            new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromOrderRowClick),
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("합포장으로 묶기", null, OnMergeIntoOneShipmentClick),
+            new ToolStripMenuItem("분리배송으로 분리", null, OnSplitIntoNewShipmentClick),
+            new ToolStripMenuItem("묶음 해제", null, OnResetShipmentGroupClick),
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("메모행 추가", null, OnAddMemoRowClick),
+            new ToolStripMenuItem("메모 보기", null, OnViewRemarkClick),
+            new ToolStripMenuItem("메모 편집", null, OnEditRemarkClick),
+            new ToolStripSeparator(),
+            lineKindMenu);
 
         // 우클릭한 셀을 기억해 조건부 매핑 시 그 열의 조건만 전달할 수 있게 한다.
         _ordersGrid.MouseDown += (s, e) =>
@@ -1150,8 +1167,11 @@ public class OfsForm : Form
     {
         var item = _ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem;
 
-        // 수동 추가 행이면서 CSKU 미지정 → ManualOrderDialog를 교체 모드로 열기
-        if (item?.Status == "수동 추가" && string.IsNullOrWhiteSpace(item.MappedSku))
+        // 수동 추가 행이면서 CSKU 미지정 → ManualOrderDialog를 교체 모드로 열기.
+        // 샘플(LineKinds.Sample) 라인은 CSKU가 애초에 없는 게 정상이라(발주확정/내보내기도
+        // MappedSku 없이 허용) 이 자동 팝업 대상에서 제외한다 — 안 그러면 그 행을 클릭할
+        // 때마다 매번 다시 뜬다.
+        if (item?.Status == "수동 추가" && string.IsNullOrWhiteSpace(item.MappedSku) && item.LineKind != LineKinds.Sample)
         {
             HideQuickMapPanel();
             EnsureManualOrderDialog();
@@ -1275,11 +1295,23 @@ public class OfsForm : Form
         _statusLabel.Text = "매핑규칙 변경을 반영해 발주목록을 다시 매핑했습니다.";
     }
 
+    /// <summary>
+    /// RowHeaderSelect 모드라 행머리를 클릭하면 SelectedRows에 잡히지만, 셀만 클릭/드래그한
+    /// 경우(대부분의 실사용 패턴)는 SelectedRows가 비어있으므로 SelectedCells의 행 인덱스도
+    /// 같이 본다(GetSelectedPreviewRows와 같은 패턴).
+    /// </summary>
     private List<OfsOrderItem> GetSelectedOrderItems()
     {
-        return _ordersGrid.SelectedRows.Cast<DataGridViewRow>()
+        var rowIndices = _ordersGrid.SelectedRows.Cast<DataGridViewRow>()
             .Where(r => !r.IsNewRow)
-            .Select(r => r.DataBoundItem)
+            .Select(r => r.Index)
+            .Concat(_ordersGrid.SelectedCells.Cast<DataGridViewCell>()
+                .Where(c => !_ordersGrid.Rows[c.RowIndex].IsNewRow)
+                .Select(c => c.RowIndex))
+            .Distinct();
+
+        return rowIndices
+            .Select(i => _ordersGrid.Rows[i].DataBoundItem as OfsOrderItem)
             .OfType<OfsOrderItem>()
             .ToList();
     }
@@ -1736,7 +1768,7 @@ public class OfsForm : Form
         var courier = _previewCourierCombo.SelectedItem as CourierMaster;
 
         _previewRowModels = _orders
-            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku))
+            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
             .GroupBy(ShipmentGrouping.GetEffectiveGroupId)
             .Select(g => new ShipmentPreviewRow { Items = g.ToList() })
             .ToList();

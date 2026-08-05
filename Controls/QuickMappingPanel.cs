@@ -520,8 +520,16 @@ public class QuickMappingPanel : Panel
 
     private void OnAddConditionRow(object? sender, EventArgs e)
     {
-        if (_conditionGrid.DataSource is System.Data.DataTable dt)
+        if (_conditionGrid.DataSource is not System.Data.DataTable dt) return;
+        if (dt.Rows.Count > 0)
+        {
+            var last = dt.Rows[dt.Rows.Count - 1];
+            dt.Rows.Add(last["Field"], last["Operator"], "", last["Logic"]);
+        }
+        else
+        {
             dt.Rows.Add("ProductName", "Contains", "", "And");
+        }
     }
 
     private void OnRemoveConditionRow(object? sender, EventArgs e)

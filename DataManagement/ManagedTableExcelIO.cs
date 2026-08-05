@@ -54,6 +54,7 @@ public static class ManagedTableExcelIO
     /// </summary>
     public static (List<string> Headers, List<Dictionary<string, string?>> Rows) Read(string filePath)
     {
+        ExcelLicense.Ensure();
         using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
             ? CsvWorkbookReader.LoadAsPackage(filePath)
             : new ExcelPackage(new FileInfo(filePath));
