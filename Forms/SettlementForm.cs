@@ -36,6 +36,8 @@ public class SettlementForm : Form
     private ChannelType? _activeChannelType;
     private string _activeChannelCode = string.Empty;
     private string _activeChannelName = string.Empty;
+    private decimal _activeExchangeRate = 1m;
+    private bool _showAmountsInKrw;
     private MappingForm? _subscribedMappingForm;
 
     private TableLayoutPanel _profitMainLayout = new();
@@ -48,6 +50,8 @@ public class SettlementForm : Form
 
     private ExcelLikeDataGridView _summaryGrid = new();
     private CheckBox _unmappedOnlyCheckBox = new();
+    private CheckBox _krwDisplayCheckBox = new();
+    private DataGridViewCellStyle _summaryMoneyStyle = new();
     private Label _summaryTotalsLabel = new();
 
     private ExcelLikeDataGridView _outboundGrid = new();
@@ -115,6 +119,17 @@ public class SettlementForm : Form
         _unmappedOnlyCheckBox.CheckedChanged += (s, e) => RefreshProfitAnalysisView();
         toolStrip.Controls.Add(_unmappedOnlyCheckBox);
 
+        // 아마존 등 외화 채널에서만 의미가 있는 표시 전용 토글 — 저장/DB 값과는 무관하고, 하단
+        // 상품그룹별 요약(매출액/배송비/입출고비/순이익)만 원화 환산해서 보여준다.
+        _krwDisplayCheckBox = new CheckBox { Text = "매출액/이익액 원화로 보기", AutoSize = true, Visible = false, Padding = new Padding(10, 7, 0, 0) };
+        _krwDisplayCheckBox.CheckedChanged += (s, e) =>
+        {
+            _showAmountsInKrw = _krwDisplayCheckBox.Checked;
+            UpdateSummaryGridCurrencyDisplay();
+            RefreshProfitAnalysisView();
+        };
+        toolStrip.Controls.Add(_krwDisplayCheckBox);
+
         _settlementGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -162,15 +177,18 @@ public class SettlementForm : Form
             AllowUserToAddRows = false,
             ReadOnly = true,
         };
-        var moneyStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight };
+        // 수량 열은 통화가 아니므로 별도 스타일 객체를 쓴다 — 매출액/배송비/입출고비/순이익 4개
+        // 열은 아래 _summaryMoneyStyle을 공유하므로, 통화표시 토글 시 이 객체 하나의 Format만
+        // 바꾸면 4개 열 전부 한 번에 반영된다(UpdateSummaryGridCurrencyDisplay 참고).
+        _summaryMoneyStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight };
         _summaryGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 180 },
             new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70, DefaultCellStyle = moneyStyle },
-            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 110, DefaultCellStyle = moneyStyle },
-            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90, DefaultCellStyle = moneyStyle },
-            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90, DefaultCellStyle = moneyStyle },
-            new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110, DefaultCellStyle = moneyStyle }
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액", Name = "Revenue", DataPropertyName = "Revenue", Width = 110, DefaultCellStyle = _summaryMoneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비", Name = "Shipping", DataPropertyName = "Shipping", Width = 90, DefaultCellStyle = _summaryMoneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "입출고비", Name = "Fee", DataPropertyName = "Fee", Width = 90, DefaultCellStyle = _summaryMoneyStyle },
+            new DataGridViewTextBoxColumn { HeaderText = "순이익", Name = "Profit", DataPropertyName = "Profit", Width = 110, DefaultCellStyle = _summaryMoneyStyle }
         );
         _summaryGrid.RowPrePaint += OnSummaryGridRowPrePaint;
 
@@ -254,11 +272,11 @@ public class SettlementForm : Form
                 ProductGroup = g.Key,
                 RowCount = g.Count(),
                 Qty = g.Sum(x => x.Qty),
-                Revenue = g.Sum(x => x.Revenue),
+                Revenue = ToDisplayAmount(g.Sum(x => x.Revenue)),
                 Settlement = g.Sum(x => x.Settlement),
-                Shipping = g.Sum(x => x.Shipping),
-                Fee = g.Sum(x => x.Fee),
-                Profit = g.Sum(x => x.Profit),
+                Shipping = ToDisplayAmount(g.Sum(x => x.Shipping)),
+                Fee = ToDisplayAmount(g.Sum(x => x.Fee)),
+                Profit = ToDisplayAmount(g.Sum(x => x.Profit)),
             })
             .OrderByDescending(s => s.Profit)
             .ToList();
@@ -383,6 +401,33 @@ public class SettlementForm : Form
     private (int Count, bool IsEstimated) ComputeActualShipmentCount() => ShipmentCountEstimator.Compute(_settlementRows);
 
     /// <summary>
+    /// 아마존처럼 원래 통화가 원화가 아닌 채널에서, "매출액/이익액 원화로 보기" 토글이 켜져 있을
+    /// 때만 화면 표시용으로 환율을 곱한다. SettlementData.Profit/Revenue 자체(저장/계산에 쓰이는
+    /// 값)는 항상 원래 통화 그대로이고, 이 변환은 순수 표시 전용이다.
+    /// </summary>
+    private decimal ToDisplayAmount(decimal rawAmount) =>
+        _showAmountsInKrw && _activeChannelType is ChannelType.AmazonUs or ChannelType.AmazonJp
+            ? rawAmount * _activeExchangeRate
+            : rawAmount;
+
+    /// <summary>
+    /// 요약 그리드의 매출액/배송비/입출고비/순이익 컬럼 헤더에 통화 힌트를 붙이고 소수점 자릿수를
+    /// 맞춘다. 아마존 등 외화 채널이 아니면 기존 그대로(변경 없음) — 달러표시는 센트 보존을 위해
+    /// N2, 원화표시(환산)는 N0을 쓴다.
+    /// </summary>
+    private void UpdateSummaryGridCurrencyDisplay()
+    {
+        bool isForeignCurrency = _activeChannelType is ChannelType.AmazonUs or ChannelType.AmazonJp;
+        var suffix = !isForeignCurrency ? "" : _showAmountsInKrw ? "(₩환산)" : "($)";
+        _summaryMoneyStyle.Format = isForeignCurrency && !_showAmountsInKrw ? "N2" : "N0";
+
+        if (_summaryGrid.Columns["Revenue"] is { } revenueCol) revenueCol.HeaderText = "매출액" + suffix;
+        if (_summaryGrid.Columns["Shipping"] is { } shippingCol) shippingCol.HeaderText = "배송비" + suffix;
+        if (_summaryGrid.Columns["Fee"] is { } feeCol) feeCol.HeaderText = "입출고비" + suffix;
+        if (_summaryGrid.Columns["Profit"] is { } profitCol) profitCol.HeaderText = "순이익" + suffix;
+    }
+
+    /// <summary>
     /// SettlementData.ProductGroup은 SettlementLoader가 매핑 시점에 채워둔다(마스터SKU의
     /// 상품그룹). 미매핑/그룹 미지정 행은 요약에서 구분할 수 있게 라벨을 보정한다.
     /// 아마존 채널: 상품그룹 미지정 시 Msku(=asku)를 그룹 키로 써서 개별 행으로 표시.
@@ -447,7 +492,16 @@ public class SettlementForm : Form
         _activeChannelType = channelConfig.ChannelType;
         _activeChannelCode = channelConfig.ChannelCode;
         _activeChannelName = channelDialog.SelectedChannel.ChannelName;
+        _activeExchangeRate = channelConfig.ExchangeRate;
         _cfsSummaryText = string.Empty;
+
+        // 아마존 등 외화 채널일 때만 "원화로 보기" 토글을 노출하고, 채널을 새로 불러올 때마다
+        // 기본값(원래 통화 표시)으로 리셋한다.
+        _showAmountsInKrw = false;
+        _krwDisplayCheckBox.Checked = false;
+        _krwDisplayCheckBox.Visible = _activeChannelType is ChannelType.AmazonUs or ChannelType.AmazonJp;
+        UpdateSummaryGridCurrencyDisplay();
+
         RefreshProfitAnalysisView();
 
         var mappingRepository = _mappingRepository;
@@ -709,6 +763,7 @@ public class SettlementForm : Form
             var channelName = _activeChannelName;
             var rows = _settlementRows.ToList();
             var activeChannelType = _activeChannelType;
+            var exchangeRate = _activeExchangeRate;
 
             var facts = await Task.Run(() =>
             {
@@ -719,8 +774,8 @@ public class SettlementForm : Form
                     {
                         ProductGroup = g.Key,
                         Qty = g.Sum(x => x.Qty),
-                        Revenue = g.Sum(x => x.Revenue),
-                        GrossProfit = g.Sum(x => x.Profit),
+                        Revenue = ProfitCalculator.ToReportCurrency(activeChannelType, g.Sum(x => x.Revenue), exchangeRate),
+                        GrossProfit = ProfitCalculator.ToReportCurrency(activeChannelType, g.Sum(x => x.Profit), exchangeRate),
                     })
                     .ToList();
             });
@@ -1537,7 +1592,9 @@ public class SettlementForm : Form
             return;
         }
 
-        var details = _outboundRepository.GetByChannel(channelCode, _fromDatePicker.Value.Date, _toDatePicker.Value.Date.AddDays(1).AddTicks(-1));
+        // 마감 대조는 정상 거래만 대상으로 한다 — 샘플·CS는 정산파일에 나올 수 없어 대조 대상이 아니다
+        // (샘플발송이력관리_개발기획서.md §4.4).
+        var details = _outboundRepository.GetByChannel(channelCode, _fromDatePicker.Value.Date, _toDatePicker.Value.Date.AddDays(1).AddTicks(-1), LineKindScope.SaleOnly);
         _outboundGrid.DataSource = new BindingList<OutboundDetail>(details);
 
         var totalQty = details.Sum(d => d.Qty);

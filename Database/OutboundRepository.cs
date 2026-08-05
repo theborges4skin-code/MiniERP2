@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Database;
 
@@ -54,8 +55,8 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
-            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg)
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, LineKind)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg, $lineKind)
             ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
                 OrderNo = excluded.OrderNo,
@@ -71,6 +72,7 @@ public class OutboundRepository
                 PurchaseChannelCode = excluded.PurchaseChannelCode,
                 PurchasePrice = excluded.PurchasePrice,
                 WeightKg = excluded.WeightKg,
+                LineKind = excluded.LineKind,
                 Status = CASE WHEN excluded.TrackingNo <> '' THEN '출고확정' ELSE OutboundDetailTable.Status END,
                 ConfirmedAt = CASE WHEN excluded.TrackingNo <> '' AND OutboundDetailTable.ConfirmedAt IS NULL THEN excluded.ConfirmedAt ELSE OutboundDetailTable.ConfirmedAt END
             """;
@@ -98,6 +100,7 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
             command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
             command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
+            command.Parameters.AddWithValue("$lineKind", detail.LineKind);
             command.ExecuteNonQuery();
         }
 
@@ -144,6 +147,39 @@ public class OutboundRepository
     }
 
     /// <summary>
+    /// 주어진 운송장번호들 중 이미 DB에 존재하는(=이미 등록된) 것만 골라 반환합니다. 운송장 파일
+    /// 누락건 점검(TrackingBackfillViewer)에서 파일의 운송장번호 전체를 이 결과와 비교해 미매칭
+    /// 후보를 가려냅니다 — 현재 그리드에 로드된 부분집합이 아니라 DB 전체를 대상으로 조회해야
+    /// 6월 발주/7월 출고처럼 조회 기간 밖에 있는 기존 등록 건까지 놓치지 않습니다.
+    /// </summary>
+    public HashSet<string> GetExistingTrackingNos(IEnumerable<string> trackingNos)
+    {
+        var numbers = trackingNos.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (numbers.Count == 0) return result;
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+
+        var paramNames = numbers.Select((_, i) => $"$t{i}").ToList();
+        command.CommandText = $"""
+            SELECT DISTINCT TrackingNo FROM OutboundDetailTable
+            WHERE TrackingNo IN ({string.Join(",", paramNames)})
+            """;
+        for (var i = 0; i < numbers.Count; i++)
+        {
+            command.Parameters.AddWithValue(paramNames[i], numbers[i]);
+        }
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(reader.GetString(0));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// 발주/출고 이력 관리창에서 수정한 내용(수량/납품가/운송장번호/상태 + B2B 매입처/원가/중량)을
     /// Id 기준으로 저장합니다. 이미 "출고확정" 상태인 행은 납품가(SupplyPrice)를 잠급니다(P3 —
     /// 견적기록관리_개발기획서_확정본.md §7.3) — 확정 이후 단가 변경은 §4.2 ② 소급 경로(미착수)로만
@@ -175,7 +211,8 @@ public class OutboundRepository
                 SupplyPrice = CASE WHEN Status = '출고확정' THEN SupplyPrice ELSE $supplyPrice END,
                 TrackingNo = $trackingNo, Status = $status,
                 ConfirmedAt = $confirmedAt, PurchaseChannelCode = $purchaseChannelCode,
-                PurchasePrice = $purchasePrice, WeightKg = $weightKg
+                PurchasePrice = $purchasePrice, WeightKg = $weightKg,
+                Remark = $remark, LineKind = $lineKind
             WHERE Id = $id
             """;
         command.Parameters.AddWithValue("$qty", detail.Qty);
@@ -186,6 +223,8 @@ public class OutboundRepository
         command.Parameters.AddWithValue("$trackingNo", detail.TrackingNo);
         command.Parameters.AddWithValue("$status", detail.Status);
         command.Parameters.AddWithValue("$confirmedAt", (object?)detail.ConfirmedAt ?? DBNull.Value);
+        command.Parameters.AddWithValue("$remark", detail.Remark);
+        command.Parameters.AddWithValue("$lineKind", detail.LineKind);
         command.Parameters.AddWithValue("$id", detail.Id);
         command.ExecuteNonQuery();
 
@@ -217,24 +256,38 @@ public class OutboundRepository
     /// <summary>
     /// 지정된 채널의, 지정된 기간(포함) 내 출고 상세 내역을 조회합니다(마감 대조용).
     /// </summary>
-    public List<OutboundDetail> GetByChannel(string channelCode, DateTime from, DateTime to)
+    public List<OutboundDetail> GetByChannel(string channelCode, DateTime from, DateTime to, LineKindScope scope = LineKindScope.All, string? lineKind = null)
     {
-        return GetHistory(channelCode, from, to);
+        return GetHistory(channelCode, from, to, scope, lineKind);
     }
 
-    private const string ClosingCols = "Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod";
+    private const string ClosingCols = "Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod, LineKind";
+
+    /// <summary>
+    /// LineKindScope에 따른 WHERE 절 조각을 만듭니다(샘플발송이력관리_개발기획서.md §4.4). 기존
+    /// channelFilter와 같은 관례로, 조건이 없으면 빈 문자열을, 있으면 "AND ..."를 반환합니다.
+    /// NonSaleOnly + lineKind 지정 시 호출부가 반드시 "$lineKind" 파라미터를 채워야 합니다.
+    /// </summary>
+    private static string BuildLineKindWhere(LineKindScope scope, string? lineKind) => scope switch
+    {
+        LineKindScope.SaleOnly => "AND LineKind = ''",
+        LineKindScope.NonSaleOnly => string.IsNullOrEmpty(lineKind) ? "AND LineKind <> ''" : "AND LineKind = $lineKind",
+        _ => "",
+    };
 
     /// <summary>
     /// 거래처 마감보드(거래처마감보드_개발기획서.md §4)의 귀속월 판정 규칙에 따라 출고확정된 라인을
     /// 조회합니다: ClosingPeriod가 수동 지정되어 있으면 그 값, 아니면 ConfirmedAt의 연월이 period와
     /// 일치하는 건. channelCode가 null이면 전체 채널(수동 거래처는 대상 밖 — MANUAL 파티는
-    /// PartnerClosingTable에서 직접 관리한다).
+    /// PartnerClosingTable에서 직접 관리한다). 기본 스코프는 SaleOnly라 비매출 라인(샘플발송이력관리_
+    /// 개발기획서.md §4.4)은 자동 제외되며, §6 비매출 집계는 NonSaleOnly로 명시 호출한다.
     /// </summary>
-    public List<OutboundDetail> GetForClosingPeriod(string? channelCode, string period)
+    public List<OutboundDetail> GetForClosingPeriod(string? channelCode, string period, LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         var channelFilter = string.IsNullOrEmpty(channelCode) ? "" : "AND ChannelCode = $channelCode";
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
         command.CommandText = $"""
             SELECT {ClosingCols}
             FROM OutboundDetailTable
@@ -244,10 +297,12 @@ public class OutboundRepository
                  OR (ClosingPeriod = '' AND substr(ConfirmedAt, 1, 7) = $period)
                   )
               {channelFilter}
+              {lineKindFilter}
             ORDER BY ConfirmedAt
             """;
         command.Parameters.AddWithValue("$period", period);
         if (!string.IsNullOrEmpty(channelCode)) command.Parameters.AddWithValue("$channelCode", channelCode);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<OutboundDetail>();
         using var reader = command.ExecuteReader();
@@ -259,11 +314,12 @@ public class OutboundRepository
     /// 발주확정만 되고 아직 출고확정(ConfirmedAt)되지 않은 건을 귀속월 기준으로 조회합니다
     /// (거래처마감보드 §4 "미출고 잔량" — 기본 집계에서는 제외하고 별도 표시하기 위한 용도).
     /// </summary>
-    public List<OutboundDetail> GetUnshippedForPeriod(string? channelCode, string period)
+    public List<OutboundDetail> GetUnshippedForPeriod(string? channelCode, string period, LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         var channelFilter = string.IsNullOrEmpty(channelCode) ? "" : "AND ChannelCode = $channelCode";
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
         command.CommandText = $"""
             SELECT {ClosingCols}
             FROM OutboundDetailTable
@@ -273,10 +329,12 @@ public class OutboundRepository
                  OR (ClosingPeriod = '' AND substr(CreatedAt, 1, 7) = $period)
                   )
               {channelFilter}
+              {lineKindFilter}
             ORDER BY CreatedAt
             """;
         command.Parameters.AddWithValue("$period", period);
         if (!string.IsNullOrEmpty(channelCode)) command.Parameters.AddWithValue("$channelCode", channelCode);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<OutboundDetail>();
         using var reader = command.ExecuteReader();
@@ -287,21 +345,26 @@ public class OutboundRepository
     /// <summary>
     /// 지정된 기간 구간(YYYY-MM, 양끝 포함) 안에 출고 활동(확정 여부 무관)이 있었던 채널코드
     /// 목록입니다(거래처마감보드 §7 "최근 3개월 활동" 자동 판정용). 출고확정을 깜빡 누락한 건도
-    /// 마감보드에서 재확인할 수 있어야 하므로, 미확정 건은 CreatedAt 기준으로 판정한다.
+    /// 마감보드에서 재확인할 수 있어야 하므로, 미확정 건은 CreatedAt 기준으로 판정한다. 기본 스코프는
+    /// SaleOnly라 샘플·CS 전용 채널의 활동은 여기서 잡히지 않는다(샘플발송이력관리_개발기획서.md §4.4).
     /// </summary>
-    public List<string> GetActiveChannelCodesBetween(string fromPeriodInclusive, string toPeriodInclusive)
+    public List<string> GetActiveChannelCodesBetween(string fromPeriodInclusive, string toPeriodInclusive, LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
+        command.CommandText = $"""
             SELECT DISTINCT ChannelCode FROM OutboundDetailTable
-            WHERE
+            WHERE (
                   (ClosingPeriod <> '' AND ClosingPeriod BETWEEN $from AND $to)
                OR (ClosingPeriod = '' AND ConfirmedAt IS NOT NULL AND substr(ConfirmedAt, 1, 7) BETWEEN $from AND $to)
                OR (ClosingPeriod = '' AND ConfirmedAt IS NULL AND substr(CreatedAt, 1, 7) BETWEEN $from AND $to)
+                  )
+              {lineKindFilter}
             """;
         command.Parameters.AddWithValue("$from", fromPeriodInclusive);
         command.Parameters.AddWithValue("$to", toPeriodInclusive);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<string>();
         using var reader = command.ExecuteReader();
@@ -312,13 +375,15 @@ public class OutboundRepository
     /// <summary>
     /// 출고 이력이 1건이라도 있는 전체 채널코드입니다(§7 "전체 거래처 보기"). 출고확정 여부는
     /// 따지지 않는다 — 마감보드는 확정을 깜빡한 건을 잡아내기 위한 화면이므로 미확정 채널도
-    /// 노출되어야 한다.
+    /// 노출되어야 한다. 기본 스코프는 SaleOnly(샘플발송이력관리_개발기획서.md §4.4).
     /// </summary>
-    public List<string> GetAllActiveChannelCodesEver()
+    public List<string> GetAllActiveChannelCodesEver(LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT DISTINCT ChannelCode FROM OutboundDetailTable";
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
+        command.CommandText = $"SELECT DISTINCT ChannelCode FROM OutboundDetailTable WHERE 1=1 {lineKindFilter}";
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<string>();
         using var reader = command.ExecuteReader();
@@ -438,8 +503,13 @@ public class OutboundRepository
         return command.ExecuteNonQuery();
     }
 
-    /// <summary>여러 ShipmentGroupKey에 속한 모든 라인을 기간·채널 무관하게 조회합니다(§6 운임 가중배부 — 한 발송이 여러 귀속월에 걸쳐 있는 경우의 전체 중량 기준을 구하기 위함).</summary>
-    public List<OutboundDetail> GetByShipmentGroupKeys(IEnumerable<string> shipmentGroupKeys)
+    /// <summary>
+    /// 여러 ShipmentGroupKey에 속한 모든 라인을 기간·채널 무관하게 조회합니다(§6 운임 가중배부 — 한
+    /// 발송이 여러 귀속월에 걸쳐 있는 경우의 전체 중량 기준을 구하기 위함). 기본 스코프는 SaleOnly라
+    /// 비매출 라인은 분모에서 제외된다 — 그래야 정상품+샘플이 동봉된 송장에서 운임 전액이 정상
+    /// 라인에 배부된다(샘플발송이력관리_개발기획서.md §5.6).
+    /// </summary>
+    public List<OutboundDetail> GetByShipmentGroupKeys(IEnumerable<string> shipmentGroupKeys, LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         var keys = shipmentGroupKeys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToList();
         if (keys.Count == 0) return [];
@@ -447,12 +517,15 @@ public class OutboundRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         var paramNames = keys.Select((_, i) => $"$k{i}").ToList();
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
         command.CommandText = $"""
             SELECT {ClosingCols}
             FROM OutboundDetailTable
             WHERE ShipmentGroupKey IN ({string.Join(",", paramNames)})
+              {lineKindFilter}
             """;
         for (var i = 0; i < keys.Count; i++) command.Parameters.AddWithValue(paramNames[i], keys[i]);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<OutboundDetail>();
         using var reader = command.ExecuteReader();
@@ -461,31 +534,31 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 발주/출고 이력을 조회합니다(발주/출고 이력 관리창용). channelCode가 null이면 전체 채널.
+    /// 발주/출고 이력을 조회합니다(발주/출고 이력 관리창용). channelCode가 null이면 전체 채널. 기본
+    /// 스코프는 All이라 이 창은 비매출 건도 그대로 보여준다(샘플발송이력관리_개발기획서.md §4.4) —
+    /// 전수 확인·운송장 매칭·오등록 발견이 주 용도인 화면이라 여기서 숨기면 안 된다.
     /// </summary>
-    public List<OutboundDetail> GetHistory(string? channelCode, DateTime from, DateTime to)
+    public List<OutboundDetail> GetHistory(string? channelCode, DateTime from, DateTime to, LineKindScope scope = LineKindScope.All, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = string.IsNullOrEmpty(channelCode)
-            ? """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
-                FROM OutboundDetailTable
-                WHERE CreatedAt >= $from AND CreatedAt <= $to
-                ORDER BY CreatedAt
-                """
-            : """
-                SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
-                FROM OutboundDetailTable
-                WHERE ChannelCode = $channelCode AND CreatedAt >= $from AND CreatedAt <= $to
-                ORDER BY CreatedAt
-                """;
+        var channelFilter = string.IsNullOrEmpty(channelCode) ? "" : "AND ChannelCode = $channelCode";
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
+        command.CommandText = $"""
+            SELECT {ClosingCols}
+            FROM OutboundDetailTable
+            WHERE CreatedAt >= $from AND CreatedAt <= $to
+              {channelFilter}
+              {lineKindFilter}
+            ORDER BY CreatedAt
+            """;
         if (!string.IsNullOrEmpty(channelCode))
         {
             command.Parameters.AddWithValue("$channelCode", channelCode);
         }
         command.Parameters.AddWithValue("$from", from);
         command.Parameters.AddWithValue("$to", to);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<OutboundDetail>();
         using var reader = command.ExecuteReader();
@@ -499,7 +572,8 @@ public class OutboundRepository
     /// <summary>
     /// 주어진 주문번호들 중 이미 발주확정/출고확정 이력이 있는 건을 찾는다(채널 무관 — 이력 저장 시의
     /// 충돌 판단 키(OrderNo, MskuCode)와 같은 기준으로 "동일 주문"을 판단). 발주서를 다시 불러왔을 때
-    /// 같은 주문을 또 처리하는 건 아닌지 안내하는 데 사용한다(처리 자체를 막지는 않음).
+    /// 같은 주문을 또 처리하는 건 아닌지 안내하는 데 사용한다(처리 자체를 막지는 않음). 기본 스코프는
+    /// All이다 — 중복 감지는 비매출 건도 예외 없이 걸러야 한다.
     /// </summary>
     public List<OutboundDetail> FindByOrderNos(IEnumerable<string> orderNos)
     {
@@ -511,7 +585,7 @@ public class OutboundRepository
 
         var paramNames = orderNoList.Select((_, i) => $"$o{i}").ToList();
         command.CommandText = $"""
-            SELECT Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod
+            SELECT {ClosingCols}
             FROM OutboundDetailTable
             WHERE OrderNo IN ({string.Join(",", paramNames)})
             """;
@@ -530,23 +604,28 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 지정된 채널에서 출고 이력이 많은 상위 N개 CSKU를 반환합니다(수동 주문 빠른 추가용).
+    /// 지정된 채널에서 출고 이력이 많은 상위 N개 CSKU를 반환합니다(수동 주문 빠른 추가용). 기본
+    /// 스코프는 SaleOnly라 샘플·CS로 지정된 라인은 빈도 집계를 오염시키지 않는다
+    /// (샘플발송이력관리_개발기획서.md §4.4).
     /// </summary>
     public List<(string MskuCode, string ProductName, int OrderCount)> GetTopCskusByChannel(
-        string channelCode, int topN = 5)
+        string channelCode, int topN = 5, LineKindScope scope = LineKindScope.SaleOnly, string? lineKind = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        var lineKindFilter = BuildLineKindWhere(scope, lineKind);
+        command.CommandText = $"""
             SELECT MskuCode, ProductName, COUNT(*) AS Cnt
             FROM OutboundDetailTable
             WHERE ChannelCode = $channelCode
+              {lineKindFilter}
             GROUP BY MskuCode
             ORDER BY Cnt DESC
             LIMIT $topN
             """;
         command.Parameters.AddWithValue("$channelCode", channelCode);
         command.Parameters.AddWithValue("$topN", topN);
+        if (scope == LineKindScope.NonSaleOnly && !string.IsNullOrEmpty(lineKind)) command.Parameters.AddWithValue("$lineKind", lineKind);
 
         var results = new List<(string, string, int)>();
         using var reader = command.ExecuteReader();
@@ -577,5 +656,6 @@ public class OutboundRepository
         ShipmentGroupKey = reader.IsDBNull(17) ? "" : reader.GetString(17),
         CskuCode = reader.IsDBNull(18) ? "" : reader.GetString(18),
         ClosingPeriod = reader.IsDBNull(19) ? "" : reader.GetString(19),
+        LineKind = reader.IsDBNull(20) ? "" : reader.GetString(20),
     };
 }

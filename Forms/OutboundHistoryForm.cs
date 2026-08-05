@@ -30,6 +30,7 @@ public class OutboundHistoryForm : Form
     private readonly OutboundShipmentRepository _outboundShipmentRepository = new();
 
     private ComboBox _channelComboBox = new();
+    private ComboBox _lineKindFilterComboBox = new();
     private DateTimePicker _fromDatePicker = new();
     private DateTimePicker _toDatePicker = new();
     private ExcelLikeDataGridView _historyGrid = new();
@@ -59,9 +60,25 @@ public class OutboundHistoryForm : Form
         ("SupplyPrice", "납품가",       false),
         ("Address",     "주소",         false),
         ("Remark",      "비고",         false),
+        ("LineKind",    "구분",         false),
         ("Status",      "상태",         false),
         ("CreatedAt",   "발주확정 시점", false),
         ("ConfirmedAt", "출고확정 시점", false),
+    ];
+
+    /// <summary>
+    /// 구분 필터 콤보 항목(샘플발송이력관리_개발기획서.md §4.2). 기본값(전체)이 첫 항목이라, 이
+    /// 창에서 비매출 건이 조용히 숨어 "왜 안 보이지" 문제가 생기지 않는다 — 제외는 마감·정산·
+    /// 명세표 쪽에서 수행한다.
+    /// </summary>
+    private static readonly (string Label, LineKindScope Scope, string? Kind)[] LineKindFilterDefs =
+    [
+        ("전체(기본)", LineKindScope.All, null),
+        ("정상거래만", LineKindScope.SaleOnly, null),
+        ("비매출 전체", LineKindScope.NonSaleOnly, null),
+        (LineKinds.Sample, LineKindScope.NonSaleOnly, LineKinds.Sample),
+        (LineKinds.Cs, LineKindScope.NonSaleOnly, LineKinds.Cs),
+        (LineKinds.Other, LineKindScope.NonSaleOnly, LineKinds.Other),
     ];
 
     private readonly long? _focusDetailId;
@@ -146,12 +163,19 @@ public class OutboundHistoryForm : Form
         _channelComboBox.DisplayMember = "ChannelName";
         _channelComboBox.ValueMember = "ChannelCode";
 
+        // 샘플발송이력관리_개발기획서.md §4.2: 구분 필터. 기본값 "전체(기본)"라 이 창은 지금까지처럼
+        // 비매출 건도 그대로 보여준다.
+        _lineKindFilterComboBox = new ComboBox { Size = new Size(110, 25), DropDownStyle = ComboBoxStyle.DropDownList };
+        _lineKindFilterComboBox.Items.AddRange(LineKindFilterDefs.Select(d => d.Label).ToArray());
+        _lineKindFilterComboBox.SelectedIndex = 0;
+
         _fromDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
         _toDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
         var btnQuickDate = DateRangeQuickSelect.CreateButton(_fromDatePicker, _toDatePicker);
 
         var btnLoad = new Button { Text = "조회", Size = new Size(80, 30) };
         var btnImportTracking = new Button { Text = "운송장번호 불러오기", Size = new Size(150, 30) };
+        var btnCheckMissing = new Button { Text = "운송장 파일 누락건 점검", Size = new Size(160, 30) };
         var btnExport = new Button { Text = "선택 건 택배사 양식 출력", Size = new Size(170, 30) };
         var btnDelete = new Button { Text = "선택 삭제", Size = new Size(90, 30) };
         var btnSaveChanges = new Button { Text = "변경사항 저장", Size = new Size(110, 30), Font = new Font(Font, FontStyle.Bold) };
@@ -159,6 +183,7 @@ public class OutboundHistoryForm : Form
 
         btnLoad.Click += OnLoadClick;
         btnImportTracking.Click += OnImportTrackingClick;
+        btnCheckMissing.Click += OnCheckMissingTrackingClick;
         btnExport.Click += OnExportClick;
         btnDelete.Click += OnDeleteClick;
         btnSaveChanges.Click += OnSaveChangesClick;
@@ -166,6 +191,8 @@ public class OutboundHistoryForm : Form
 
         toolStrip.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
         toolStrip.Controls.Add(_channelComboBox);
+        toolStrip.Controls.Add(new Label { Text = "구분:", AutoSize = true, Padding = new Padding(8, 5, 2, 0) });
+        toolStrip.Controls.Add(_lineKindFilterComboBox);
         toolStrip.Controls.Add(new Label { Text = "기간:", AutoSize = true, Padding = new Padding(8, 5, 2, 0) });
         toolStrip.Controls.Add(_fromDatePicker);
         toolStrip.Controls.Add(new Label { Text = "~", AutoSize = true, Padding = new Padding(2, 5, 2, 0) });
@@ -173,6 +200,7 @@ public class OutboundHistoryForm : Form
         toolStrip.Controls.Add(btnQuickDate);
         toolStrip.Controls.Add(btnLoad);
         toolStrip.Controls.Add(btnImportTracking);
+        toolStrip.Controls.Add(btnCheckMissing);
         toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnDelete);
         toolStrip.Controls.Add(btnSaveChanges);
@@ -199,6 +227,8 @@ public class OutboundHistoryForm : Form
             // 패턴 — DataPropertyName 없이 OnRemarkFlagCellFormatting에서 채움). 전체 내용은 우클릭 "메모 보기".
             new DataGridViewTextBoxColumn { HeaderText = "메모", Name = "RemarkFlag", Width = 55, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "SKU", Name = "MskuCode", DataPropertyName = "MskuCode", Width = 110, ReadOnly = true },
+            // 샘플발송이력관리_개발기획서.md §4.2: 구분 열(편집 가능 — 기존 _dirtyDetails 흐름 사용).
+            new DataGridViewComboBoxColumn { HeaderText = "구분", Name = "LineKind", DataPropertyName = "LineKind", Width = 70, Items = { "", LineKinds.Sample, LineKinds.Cs, LineKinds.Other }, FlatStyle = FlatStyle.Flat },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "납품가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "운송장번호", Name = "TrackingNo", DataPropertyName = "TrackingNo", Width = 120 },
@@ -327,6 +357,7 @@ public class OutboundHistoryForm : Form
         var menu = _historyGrid.ContextMenuStrip!;
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("메모 보기", null, OnViewRemarkClick);
+        menu.Items.Add("메모 편집", null, OnEditRemarkClick);
     }
 
     private void OnViewRemarkClick(object? sender, EventArgs e)
@@ -337,6 +368,25 @@ public class OutboundHistoryForm : Form
         MessageBox.Show(
             string.IsNullOrWhiteSpace(detail.Remark) ? "메모가 없습니다." : detail.Remark,
             "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// 선택 행의 비고(내부관리용 메모)를 편집한다(샘플발송이력관리_개발기획서.md §4.3(c)). 저장은
+    /// UpdateDetail이 Remark를 UPDATE하도록 이미 고쳐두었으므로, 기존 편집 저장 흐름(_dirtyDetails
+    /// → [변경사항 저장])에 그대로 태운다.
+    /// </summary>
+    private void OnEditRemarkClick(object? sender, EventArgs e)
+    {
+        var detail = GetSelectedDetails().FirstOrDefault();
+        if (detail == null) return;
+
+        using var dialog = new TextPromptDialog("메모 편집", "메모:", detail.Remark, multiline: true);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+        detail.Remark = dialog.Value;
+        _dirtyDetails.Add(detail);
+        _historyGrid.Invalidate();
+        _statusLabel.Text = $"{_dirtyDetails.Count}건의 변경사항이 저장되지 않았습니다. '변경사항 저장'을 눌러주세요.";
     }
 
     private void OnLoadClick(object? sender, EventArgs e)
@@ -352,8 +402,9 @@ public class OutboundHistoryForm : Form
         var channelCode = _channelComboBox.SelectedValue as string;
         var from = _fromDatePicker.Value.Date;
         var to = _toDatePicker.Value.Date.AddDays(1).AddTicks(-1);
+        var (_, lineKindScope, lineKind) = LineKindFilterDefs[Math.Max(_lineKindFilterComboBox.SelectedIndex, 0)];
 
-        var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to);
+        var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to, lineKindScope, lineKind);
         EnsureStatusItemsInclude(details.Select(d => d.Status));
         _dirtyDetails.Clear();
         _dirtyShipmentKeys.Clear();
@@ -692,13 +743,17 @@ public class OutboundHistoryForm : Form
         var recipientHeaderCandidates = courier.TrackingImportRecipientHeader
             .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        int? recipientCol = null, trackingCol = null;
+        int? recipientCol = null, trackingCol = null, orderNoCol = null, addressCol = null, productNameCol = null;
         for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
         {
             var header = worksheet.Cells[headerRow, col].Value?.ToString()?.Trim();
             if (header is null) continue;
             if (recipientHeaderCandidates.Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase))) recipientCol = col;
             if (string.Equals(header, courier.TrackingImportTrackingNoHeader, StringComparison.OrdinalIgnoreCase)) trackingCol = col;
+            // 아래 3개는 선택 항목 — 설정돼 있고 파일에 실제로 있을 때만 찾는다(없어도 오류 아님).
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportOrderNoHeader) && string.Equals(header, courier.TrackingImportOrderNoHeader, StringComparison.OrdinalIgnoreCase)) orderNoCol = col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportAddressHeader) && string.Equals(header, courier.TrackingImportAddressHeader, StringComparison.OrdinalIgnoreCase)) addressCol = col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportProductNameHeader) && string.Equals(header, courier.TrackingImportProductNameHeader, StringComparison.OrdinalIgnoreCase)) productNameCol = col;
         }
 
         if (recipientCol is null || trackingCol is null)
@@ -712,17 +767,33 @@ public class OutboundHistoryForm : Form
         // 운송장 파일에서 (수령인 이름 → 그 이름에 대해 발견된 고유 운송장번호 목록)을 먼저 전부
         // 모은다. 같은 수령인이 여러 줄로 나와도(예: 합포장 시 품목별로 줄이 나뉘는 택배사 양식)
         // 여기서 중복 없이 합쳐지므로, 파일 행 하나하나가 아니라 이름당 한 번씩만 판단하면 된다.
-        var trackingNosByRecipientName = new Dictionary<string, List<string>>();
+        // 고객주문번호/상세주소/품목(선택 항목)은 운송장번호가 여러 개 발견됐을 때 선택창에서
+        // 참고용으로만 보여준다 — 매칭 로직 자체는 그대로 수령인 이름 기준이다.
+        var trackingRowsByRecipientName = new Dictionary<string, List<TrackingFileRow>>();
         for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
         {
             var recipient = worksheet.Cells[row, recipientCol.Value].Value?.ToString()?.Trim();
             var trackingNo = worksheet.Cells[row, trackingCol.Value].Value?.ToString()?.Trim();
             if (string.IsNullOrWhiteSpace(recipient) || string.IsNullOrWhiteSpace(trackingNo)) continue;
 
+            var orderNo = orderNoCol is { } oc ? worksheet.Cells[row, oc].Value?.ToString()?.Trim() : null;
+            var address = addressCol is { } ac ? worksheet.Cells[row, ac].Value?.ToString()?.Trim() : null;
+            var productName = productNameCol is { } pc ? worksheet.Cells[row, pc].Value?.ToString()?.Trim() : null;
+
             var key = NormalizeForMatch(recipient);
-            if (!trackingNosByRecipientName.TryGetValue(key, out var list))
-                trackingNosByRecipientName[key] = list = [];
-            if (!list.Contains(trackingNo, StringComparer.OrdinalIgnoreCase)) list.Add(trackingNo);
+            if (!trackingRowsByRecipientName.TryGetValue(key, out var list))
+                trackingRowsByRecipientName[key] = list = [];
+
+            var existing = list.FirstOrDefault(r => string.Equals(r.TrackingNo, trackingNo, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                list.Add(new TrackingFileRow(trackingNo, orderNo, address, productName));
+            }
+            else if (!string.IsNullOrWhiteSpace(productName) && existing.ProductName?.Contains(productName, StringComparison.OrdinalIgnoreCase) != true)
+            {
+                // 같은 운송장번호가 여러 줄(합포장)로 나오면 품목명은 이어붙여서 보여준다.
+                existing.ProductName = string.IsNullOrWhiteSpace(existing.ProductName) ? productName : $"{existing.ProductName}, {productName}";
+            }
         }
 
         // 매칭 대상은 운송장번호가 아직 없는(=발주확정 상태) 건. 이름+주소가 완전히 같은 건들만 한
@@ -741,18 +812,18 @@ public class OutboundHistoryForm : Form
         foreach (var group in candidateGroups)
         {
             var candidates = group.ToList();
-            if (!trackingNosByRecipientName.TryGetValue(group.Key.Name, out var trackingNos) || trackingNos.Count == 0)
+            if (!trackingRowsByRecipientName.TryGetValue(group.Key.Name, out var trackingRows) || trackingRows.Count == 0)
             {
                 noFileDataCount += candidates.Count;
                 continue; // 운송장 파일에 이 이름 자체가 없음 — 아직 처리할 게 없으므로 그냥 둔다.
             }
 
-            if (trackingNos.Count == 1)
+            if (trackingRows.Count == 1)
             {
                 // 1번 규칙: 이 이름+주소 조합에 대해 파일에 운송장번호가 딱 1개뿐 — 여러 주문행이
                 // 있어도 무조건 하나의 운송장으로 합포장된 것이므로 그룹 전체에 같은 운송장번호를
                 // 적용한다(사용자 확인 없이 자동).
-                var trackingNo = trackingNos[0];
+                var trackingNo = trackingRows[0].TrackingNo;
                 foreach (var d in candidates)
                 {
                     _outboundRepository.ApplyTrackingNo(d.Id, trackingNo);
@@ -768,7 +839,7 @@ public class OutboundHistoryForm : Form
                 // 2/3번 규칙: 이 이름에 대해 운송장번호가 여러 개 발견됨 — 어느 주문행이 어느
                 // 운송장번호로 나갔는지 시스템이 판단할 수 없으므로(같은 사람이 여러 번 주문했거나,
                 // 이름만 같은 동명이인일 수 있음) 사용자가 직접 골라야 한다.
-                using var picker = new TrackingAssignDialog(group.Key.Name, group.Key.Addr, candidates, trackingNos);
+                using var picker = new TrackingAssignDialog(group.Key.Name, group.Key.Addr, candidates, trackingRows);
                 var resolvedIds = new HashSet<long>();
                 if (FormManager.ShowDialogSafe(picker, this) == DialogResult.OK)
                 {
@@ -800,6 +871,92 @@ public class OutboundHistoryForm : Form
         if (needsReviewIds.Count > 0) summary += $" ▶ 확인요망(운송장번호가 여러 개라 직접 확인 필요): {needsReviewIds.Count}건.";
         if (noFileDataCount > 0) summary += $" 운송장 파일에 이름이 없어 건너뜀: {noFileDataCount}건.";
         _statusLabel.Text = summary;
+    }
+
+    // ─── 운송장 파일 누락건 점검 ────────────────────────────────────────────
+
+    /// <summary>
+    /// 운송장 결과 파일 전체를 읽어 DB(OutboundDetailTable) 전체 TrackingNo와 대조하고, 아직 등록되지
+    /// 않은 건을 TrackingBackfillViewer로 보여준다(운송장파일_미매칭건_OFS역등록_검토_rev2.md §3.1).
+    /// 위의 운송장번호 불러오기(OnImportTrackingClick)는 "지금 조회된 이력"에 운송장번호를 채우는
+    /// 반대 방향 작업이라 서로 대체하지 않는다 — 이쪽은 이력 자체가 아예 없는(발주확정도 안 된)
+    /// 진짜 누락건을 찾는 게 목적이라 조회 여부와 무관하게 파일과 DB 전체를 비교한다.
+    /// </summary>
+    private void OnCheckMissingTrackingClick(object? sender, EventArgs e)
+    {
+        using var courierDialog = new SelectCourierDialog();
+        if (FormManager.ShowDialogSafe(courierDialog, this) != DialogResult.OK || courierDialog.SelectedCourier is not { } courier)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(courier.TrackingImportRecipientHeader) || string.IsNullOrWhiteSpace(courier.TrackingImportTrackingNoHeader))
+        {
+            MessageBox.Show(
+                $"'{courier.CourierName}'의 운송장 결과 가져오기 양식이 설정되지 않았습니다.\n택배사 양식 관리 창에서 수령인/운송장번호 헤더를 먼저 지정하세요.",
+                "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "운송장 결과 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("TrackingBackfillCheck") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            _settingsService.SetLastFolder("TrackingBackfillCheck", Path.GetDirectoryName(ofd.FileName)!);
+
+            using var package = Path.GetExtension(ofd.FileName).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(ofd.FileName)
+                : ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
+            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+            if (worksheet == null)
+            {
+                MessageBox.Show("엑셀 파일에서 시트를 찾을 수 없습니다.", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var parseResult = TrackingBackfillFileParser.Parse(worksheet, courier, Path.GetFileName(ofd.FileName));
+            if (parseResult.Error != null)
+            {
+                MessageBox.Show(parseResult.Error, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            if (parseResult.Rows.Count == 0)
+            {
+                MessageBox.Show("파일에서 운송장번호가 있는 행을 찾지 못했습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var existing = _outboundRepository.GetExistingTrackingNos(parseResult.Rows.Select(r => r.TrackingNo));
+            foreach (var row in parseResult.Rows) row.IsRegistered = existing.Contains(row.TrackingNo);
+
+            var missingCount = parseResult.Rows.Count(r => !r.IsRegistered);
+            _statusLabel.Text = $"운송장 파일 {parseResult.Rows.Count}건 중 미등록(누락 후보) {missingCount}건 — 뷰어 창에서 확인하세요.";
+
+            var viewer = Application.OpenForms.OfType<TrackingBackfillViewer>().FirstOrDefault();
+            if (viewer == null)
+            {
+                viewer = new TrackingBackfillViewer();
+                viewer.Show();
+            }
+            else if (viewer.WindowState == FormWindowState.Minimized)
+            {
+                viewer.WindowState = FormWindowState.Normal;
+            }
+            viewer.LoadRows(parseResult.Rows);
+            viewer.BringToFront();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     /// <summary>공백/대소문자 차이로 같은 이름·주소가 다른 그룹으로 갈리지 않도록 비교용으로만 정규화한다.</summary>

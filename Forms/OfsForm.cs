@@ -43,6 +43,7 @@ public class OfsForm : Form
     /// </summary>
     private int _totalLoadedRowCount;
     private MappingForm? _subscribedMappingForm;
+    private string? _ordersGridClickedColumnName;
 
     private TableLayoutPanel _mainLayout = new();
     private QuickMappingPanel _quickMapPanel = new();
@@ -161,6 +162,8 @@ public class OfsForm : Form
             // 비고(내부관리용 메모) 전체 내용을 노출하지 않고 있는지 여부만 표시한다(DataPropertyName 없이
             // OnOrdersGridCellFormatting에서 채움 — "묶음" 열과 같은 패턴). 전체 내용은 우클릭 "메모 보기".
             new DataGridViewTextBoxColumn { HeaderText = "메모", Name = "RemarkFlag", Width = 60, ReadOnly = true },
+            // 샘플발송이력관리_개발기획서.md §4.1(b): 비매출성 발송 구분. 비어있으면 정상 거래.
+            new DataGridViewComboBoxColumn { HeaderText = "구분", Name = "LineKind", DataPropertyName = "LineKind", Width = 70, Items = { "", LineKinds.Sample, LineKinds.Cs, LineKinds.Other }, FlatStyle = FlatStyle.Flat },
             // Mapped/Transformed Data
             new DataGridViewTextBoxColumn { HeaderText = "매핑된 SKU", Name = "MappedSku", DataPropertyName = "MappedSku", Width = 150 },
             new DataGridViewTextBoxColumn { HeaderText = "처리 상태", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true },
@@ -572,7 +575,15 @@ public class OfsForm : Form
             return;
         }
 
-        var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.)", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        // 샘플발송이력관리_개발기획서.md §4.1(c): 저장 대상 판정(MappedSku 존재)은 그대로 두고,
+        // 확인 메시지에만 구분별 건수를 덧붙인다.
+        var nonSaleBreakdown = string.Join(" / ", LineKinds.All
+            .Select(k => (Kind: k, Count: ordersToSave.Count(o => o.LineKind == k)))
+            .Where(x => x.Count > 0)
+            .Select(x => $"{x.Kind} {x.Count}"));
+        var nonSaleTotal = ordersToSave.Count(o => !string.IsNullOrEmpty(o.LineKind));
+        var nonSaleNote = nonSaleTotal > 0 ? $"\n(이 중 비매출 {nonSaleTotal}건 — {nonSaleBreakdown})" : "";
+        var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.){nonSaleNote}", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result != DialogResult.Yes) return;
 
         Cursor = Cursors.WaitCursor;
@@ -609,6 +620,7 @@ public class OfsForm : Form
                         Address = order.Address ?? string.Empty,
                         ProductName = order.ProductName ?? string.Empty,
                         Remark = order.Remark ?? string.Empty,
+                        LineKind = order.LineKind ?? string.Empty,
                     });
 
                     if (csku == null) failedOrders.Add(order); // 납품가 없음 표시는 그리드에 유지
@@ -750,6 +762,14 @@ public class OfsForm : Form
             // 실제 주문이 아니라 작업자 메모용 줄임을 한눈에 구분할 수 있게 한다(OnAddMemoRowClick).
             row.DefaultCellStyle.BackColor = Color.LightYellow;
             row.DefaultCellStyle.ForeColor = Color.Black;
+        }
+        else if (!string.IsNullOrEmpty(item.LineKind))
+        {
+            // 샘플발송이력관리_개발기획서.md §4.1(b): 구분 지정 행은 배경색으로 표시한다. 다른 색은
+            // 하드코딩(Color.X)이지만 여기는 명시적으로 SystemColors를 써서 다크모드에서도 대비가
+            // 깨지지 않게 한다.
+            row.DefaultCellStyle.BackColor = SystemColors.Info;
+            row.DefaultCellStyle.ForeColor = SystemColors.InfoText;
         }
         else if (item.Status.StartsWith("매핑(") || item.Status == "발주확정" || item.Status == "출고확정")
         {
@@ -909,6 +929,12 @@ public class OfsForm : Form
     /// 그리드 우클릭 메뉴로 제공한다. 기존 ExcelLikeDataGridView의 복사/붙여넣기 메뉴는 그대로 두고
     /// 구분선 아래에 추가한다.
     /// </summary>
+    private static readonly Dictionary<string, StdField> OrderColumnToStdField = new()
+    {
+        ["ProductName"] = StdField.ProductName,
+        ["OptionName"] = StdField.OptionName,
+    };
+
     private void SetupShipmentGroupingContextMenu()
     {
         var menu = _ordersGrid.ContextMenuStrip!;
@@ -922,6 +948,35 @@ public class OfsForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("메모행 추가", null, OnAddMemoRowClick);
         menu.Items.Add("메모 보기", null, OnViewRemarkClick);
+        menu.Items.Add("메모 편집", null, OnEditRemarkClick);
+        menu.Items.Add(new ToolStripSeparator());
+        // 샘플발송이력관리_개발기획서.md §4.1(b): 다중 선택 일괄 적용.
+        var lineKindMenu = new ToolStripMenuItem("구분 지정");
+        lineKindMenu.DropDownItems.Add(LineKinds.Sample, null, (s, e) => ApplyLineKindToSelection(LineKinds.Sample));
+        lineKindMenu.DropDownItems.Add(LineKinds.Cs, null, (s, e) => ApplyLineKindToSelection(LineKinds.Cs));
+        lineKindMenu.DropDownItems.Add(LineKinds.Other, null, (s, e) => ApplyLineKindToSelection(LineKinds.Other));
+        lineKindMenu.DropDownItems.Add(new ToolStripSeparator());
+        lineKindMenu.DropDownItems.Add("해제", null, (s, e) => ApplyLineKindToSelection(""));
+        menu.Items.Add(lineKindMenu);
+
+        // 우클릭한 셀을 기억해 조건부 매핑 시 그 열의 조건만 전달할 수 있게 한다.
+        _ordersGrid.MouseDown += (s, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var hit = _ordersGrid.HitTest(e.X, e.Y);
+            if (hit.RowIndex < 0) return;
+            var colIdx = hit.ColumnIndex >= 0 ? hit.ColumnIndex : 0;
+            try
+            {
+                _ordersGrid.CurrentCell = _ordersGrid.Rows[hit.RowIndex].Cells[colIdx];
+            }
+            catch (InvalidOperationException)
+            {
+                // 다른 셀의 편집을 커밋/취소할 수 없는 상태에서 우클릭한 경우(WinForms DataGridView
+                // 제약). 우클릭 셀 갱신만 건너뛰고 컨텍스트 메뉴는 그대로 띄운다.
+            }
+            _ordersGridClickedColumnName = _ordersGrid.Columns[colIdx].Name;
+        };
     }
 
     /// <summary>
@@ -936,6 +991,44 @@ public class OfsForm : Form
         MessageBox.Show(
             string.IsNullOrWhiteSpace(order.Remark) ? "메모가 없습니다." : order.Remark,
             "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// 선택 행의 비고(내부관리용 메모)를 여러 줄로 편집한다(샘플발송이력관리_개발기획서.md §4.3(b)).
+    /// </summary>
+    private void OnEditRemarkClick(object? sender, EventArgs e)
+    {
+        var order = GetSelectedOrderItems().FirstOrDefault();
+        if (order == null) return;
+
+        using var dialog = new TextPromptDialog("메모 편집", "메모:", order.Remark ?? "", multiline: true);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+        order.Remark = dialog.Value;
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+        _statusLabel.Text = "메모를 수정했습니다.";
+    }
+
+    /// <summary>
+    /// 선택된 행(들)의 비매출성 발송 구분(LineKind)을 일괄 지정/해제한다
+    /// (샘플발송이력관리_개발기획서.md §4.1(b)). 채널과 무관하게 어느 행에도 붙일 수 있다(§2 D2).
+    /// </summary>
+    private void ApplyLineKindToSelection(string lineKind)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("구분을 지정할 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        foreach (var item in selected) item.LineKind = lineKind;
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+        _statusLabel.Text = string.IsNullOrEmpty(lineKind)
+            ? $"{selected.Count}건의 구분을 해제했습니다."
+            : $"{selected.Count}건을 '{lineKind}'(으)로 지정했습니다.";
     }
 
     /// <summary>
@@ -1032,11 +1125,21 @@ public class OfsForm : Form
                 _subscribedMappingForm = mappingForm;
             }
 
+            // 우클릭한 컬럼이 상품명/옵션명이면 그 컬럼의 조건만, 그 외면 상품명+옵션명 모두 전달한다.
             var conditions = new List<(StdField Field, string Value)>();
-            if (!string.IsNullOrWhiteSpace(order.ProductName))
-                conditions.Add((StdField.ProductName, order.ProductName));
-            if (!string.IsNullOrWhiteSpace(order.OptionName))
-                conditions.Add((StdField.OptionName, order.OptionName));
+            var clickedCol = _ordersGridClickedColumnName;
+            if (clickedCol != null && OrderColumnToStdField.TryGetValue(clickedCol, out var stdField))
+            {
+                var val = clickedCol == "ProductName" ? order.ProductName : order.OptionName;
+                if (!string.IsNullOrWhiteSpace(val)) conditions.Add((stdField, val));
+            }
+            if (conditions.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(order.ProductName))
+                    conditions.Add((StdField.ProductName, order.ProductName));
+                if (!string.IsNullOrWhiteSpace(order.OptionName))
+                    conditions.Add((StdField.OptionName, order.OptionName));
+            }
 
             mappingForm.StartNewConditionRuleFor(channelCode, conditions);
             _statusLabel.Text = "매핑관리창에 새 조건부 매핑 규칙을 만들었습니다. 조건/대상 SKU를 완성하고 저장하면 이 목록에 자동으로 반영됩니다.";
@@ -1094,8 +1197,7 @@ public class OfsForm : Form
             _outboundRepository,
             _channelSkuRepository,
             _channelConfigService);
-        _manualOrderDialog.StartPosition = FormStartPosition.Manual;
-        _manualOrderDialog.Location = new Point(Right + 4, Top);
+        FormManager.ApplyBoundsTracking(_manualOrderDialog);
     }
 
     private void ShowQuickMapPanel()

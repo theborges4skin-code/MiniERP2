@@ -657,6 +657,11 @@ public static class DbSchema
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportRecipientHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "TrackingImportTrackingNoHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "CourierMasterTable", "QuantityNotationFormat", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportOrderNoHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportAddressHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportProductNameHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportReceivedDateHeader", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "CourierMasterTable", "TrackingImportFreightCostHeader", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "SalesChannelTable", "LastUsedDate", "TEXT");
         // B2B 견적관리(§2.1): 한 채널이 매입·매출을 동시에 겸할 수 있어 별도 VendorTable 대신 플래그로
         // 구분한다. 기존 채널은 전부 판매 채널이었으므로 IsSales 기본값 1, IsPurchase 기본값 0.
@@ -696,6 +701,9 @@ public static class DbSchema
         EnsureColumn(connection, "DocHistoryTable", "Period", "TEXT NOT NULL DEFAULT ''");
         // 조건부매핑 상세조건에서 정산파일 원본 열(HeaderField=Raw일 때 참조할 실제 열 이름)을 저장.
         EnsureColumn(connection, "RuleConditionDetail", "RawFieldName", "TEXT");
+        // 샘플발송 이력관리(샘플발송이력관리_개발기획서.md §2 D1): 비매출성 발송 구분값.
+        // 비어있으면 정상 거래, 비어있지 않으면(샘플/CS/기타) 마감·정산·명세표 집계에서 제외한다.
+        EnsureColumn(connection, "OutboundDetailTable", "LineKind", "TEXT NOT NULL DEFAULT ''");
 
         // 매핑시스템 통합개편 Phase 1(§5): 1:1 정확매핑을 상품명+옵션명+수량+매출액 4필드로 확장하기
         // 위한 스키마. 두 컬럼 모두 NULL이면 기존 2필드(상품명+옵션명) 레거시 규칙 그대로 동작하고,

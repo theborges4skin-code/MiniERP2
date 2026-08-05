@@ -133,7 +133,8 @@ public class OutboundHistoryPickerDialog : Form
             channelCode = _channelNames.FirstOrDefault(kv => kv.Value == selectedName).Key;
         }
 
-        _rows = _outboundRepo.GetHistory(channelCode, _fromPicker.Value.Date, _toPicker.Value.Date.AddDays(1).AddSeconds(-1));
+        // 거래명세표에는 정상 거래 라인만 실린다 — 샘플·CS는 제외한다(샘플발송이력관리_개발기획서.md §4.4).
+        _rows = _outboundRepo.GetHistory(channelCode, _fromPicker.Value.Date, _toPicker.Value.Date.AddDays(1).AddSeconds(-1), LineKindScope.SaleOnly);
 
         _grid.Rows.Clear();
         foreach (var r in _rows)

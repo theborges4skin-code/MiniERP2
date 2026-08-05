@@ -73,4 +73,11 @@ public class OutboundDetail
     /// 미조정 상태이며, 보드가 ConfirmedAt의 연월로 자동 판정합니다.
     /// </summary>
     public string ClosingPeriod { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 비매출성 발송 구분(샘플발송이력관리_개발기획서.md §2 D1). 비어있으면 정상 거래, 그 외에는
+    /// <see cref="Utils.LineKinds.All"/>에 정의된 값 중 하나(샘플/CS/기타)이며 마감·정산·명세표
+    /// 집계에서 자동 제외됩니다.
+    /// </summary>
+    public string LineKind { get; set; } = string.Empty;
 }

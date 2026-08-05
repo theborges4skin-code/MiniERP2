@@ -6,10 +6,10 @@ public class TextPromptDialog : Form
     private readonly TextBox _textBox = new();
     public string Value => _textBox.Text.Trim();
 
-    public TextPromptDialog(string title, string label, string initialValue = "")
+    public TextPromptDialog(string title, string label, string initialValue = "", bool multiline = false)
     {
         Text = title;
-        Size = new Size(380, 160);
+        Size = multiline ? new Size(420, 320) : new Size(380, 160);
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -17,11 +17,21 @@ public class TextPromptDialog : Form
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, Padding = new Padding(12) };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(multiline ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, 30));
+        layout.RowStyles.Add(multiline ? new RowStyle(SizeType.Absolute, 40) : new RowStyle(SizeType.Percent, 100));
 
         layout.Controls.Add(new Label { Text = label, AutoSize = true }, 0, 0);
-        _textBox.Dock = DockStyle.Top;
+        if (multiline)
+        {
+            _textBox.Multiline = true;
+            _textBox.ScrollBars = ScrollBars.Vertical;
+            _textBox.AcceptsReturn = true;
+            _textBox.Dock = DockStyle.Fill;
+        }
+        else
+        {
+            _textBox.Dock = DockStyle.Top;
+        }
         _textBox.Text = initialValue;
         layout.Controls.Add(_textBox, 0, 1);
 

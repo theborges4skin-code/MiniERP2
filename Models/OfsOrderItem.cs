@@ -90,4 +90,11 @@ public class OfsOrderItem
     /// 참고.
     /// </summary>
     public Dictionary<string, string>? ManualFieldValues { get; set; }
+
+    /// <summary>
+    /// 비매출성 발송 구분(샘플발송이력관리_개발기획서.md §2 D1). 비어있으면 정상 거래, 그 외에는
+    /// <see cref="Utils.LineKinds.All"/> 중 하나(샘플/CS/기타)이며 발주확정 시 <see cref="OutboundDetail.LineKind"/>로
+    /// 그대로 스냅샷됩니다.
+    /// </summary>
+    public string? LineKind { get; set; }
 }
