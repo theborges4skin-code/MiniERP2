@@ -180,6 +180,64 @@ public class PartnerClosingRepository
         };
     }
 
+    /// <summary>
+    /// 거래처 마감보드 [비매출 내역](샘플발송이력관리_개발기획서.md §6.4) — 채널 × 구분 집계다.
+    /// 귀속월 판정은 기존 마감보드와 같은 규칙(GetForClosingPeriod)을 그대로 재사용하고, 스코프만
+    /// NonSaleOnly로 좁혀 샘플·CS·기타 라인만 모은다. 원가 우선순위(매입가 > CSKU개별원가 >
+    /// 마스터원가)도 BuildLine과 동일하게 CostResolver로 계산한다.
+    /// </summary>
+    public List<NonSaleSummaryRow> GetNonSaleSummary(string period, string? lineKind = null)
+    {
+        var periodLines = _outboundRepo.GetForClosingPeriod(null, period, LineKindScope.NonSaleOnly, lineKind);
+        var channelNames = new SalesChannelRepository().GetAll().ToDictionary(c => c.ChannelCode, c => c.ChannelName);
+
+        return periodLines
+            .GroupBy(od => (od.ChannelCode, od.LineKind))
+            .Select(g =>
+            {
+                var detailLines = g.Select(od =>
+                {
+                    var csku = !string.IsNullOrEmpty(od.CskuCode) ? od.CskuCode : od.MskuCode;
+                    var channelSku = _channelSkuRepo.GetByChannelAndCskuCode(od.ChannelCode, csku);
+                    var masterSku = channelSku?.Msku ?? csku;
+                    var masterCostPrice = _itemRepo.GetBySku(masterSku)?.CostPrice ?? 0m;
+                    var costPrice = CostResolver.Resolve(od.PurchasePrice, channelSku?.CostPriceOverride, masterCostPrice);
+                    var itemName = !string.IsNullOrWhiteSpace(channelSku?.InvoiceDisplayName) ? channelSku!.InvoiceDisplayName! : od.ProductName;
+
+                    return new NonSaleDetailLine
+                    {
+                        LineDate = od.ConfirmedAt ?? od.CreatedAt,
+                        CskuCode = csku,
+                        ItemName = itemName,
+                        Qty = od.Qty,
+                        CostPrice = costPrice,
+                        Remark = od.Remark,
+                        Recipient = od.Recipient,
+                    };
+                }).ToList();
+
+                return new NonSaleSummaryRow
+                {
+                    ChannelCode = g.Key.ChannelCode,
+                    ChannelName = channelNames.TryGetValue(g.Key.ChannelCode, out var name) ? name : g.Key.ChannelCode,
+                    LineKind = g.Key.LineKind,
+                    Count = detailLines.Count,
+                    Qty = detailLines.Sum(l => l.Qty),
+                    CostAmount = detailLines.Sum(l => l.CostPrice * l.Qty),
+                    Lines = detailLines,
+                };
+            })
+            .OrderBy(r => r.ChannelName, StringComparer.Ordinal)
+            .ThenBy(r => r.LineKind, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 미출고(발주확정만 된) 비매출 건수다(§6.4 — 하단에 건수만 표시, 집계 금액에는 미포함).
+    /// </summary>
+    public int GetNonSaleUnshippedCount(string period, string? lineKind = null) =>
+        _outboundRepo.GetUnshippedForPeriod(null, period, LineKindScope.NonSaleOnly, lineKind).Count;
+
     private PartnerClosingLine BuildLine(OutboundDetail od)
     {
         var csku = !string.IsNullOrEmpty(od.CskuCode) ? od.CskuCode : od.MskuCode;
@@ -391,6 +449,14 @@ public class PartnerClosingRepository
         while (reader.Read()) list.Add(MapHeader(reader));
         return list;
     }
+
+    /// <summary>
+    /// 지정 채널의 지정 귀속월이 이미 마감확정(ConfirmedAt 있음)됐는지 확인한다(샘플발송이력관리_
+    /// 개발기획서.md §5.5 이관 가드 — 이미 확정·발행된 마감 금액이 소급 변동되는 사고를 막기 위해,
+    /// 확정된 귀속월에 속한 라인은 채널 이관 대상에서 제외한다).
+    /// </summary>
+    public bool IsPeriodConfirmed(string channelCode, string period) =>
+        GetHeader(period, $"CH:{channelCode}")?.ConfirmedAt != null;
 
     public PartnerClosing? GetHeader(string period, string partyKey)
     {

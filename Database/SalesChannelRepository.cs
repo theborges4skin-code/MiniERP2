@@ -8,6 +8,24 @@ namespace MiniERP2.Database;
 /// </summary>
 public class SalesChannelRepository
 {
+    /// <summary>
+    /// 샘플발송이력관리_개발기획서.md §2 D3: 채널 미등록 상대처의 샘플·CS 접수용 통합 채널을
+    /// 없으면 만들어둔다. DbSchema.EnsureCreated가 아니라 여기 두는 이유는, 거기 두면 테스트가
+    /// 매번 새로 만드는 임시 DB에도 이 채널이 하나 더 생겨 채널 개수를 세는 기존 테스트들이 깨지기
+    /// 때문이다 — 실제 앱 시작(MainHub)에서 1회만 호출한다. IsSales=false(매출 채널 아님)라도
+    /// OFS/정산 대사 화면의 채널 콤보는 GetAll()을 필터 없이 쓰므로 노출에는 영향 없다.
+    /// </summary>
+    public void EnsureSampleChannel()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT OR IGNORE INTO SalesChannelTable (ChannelCode, ChannelName, IsSales, IsPurchase)
+            VALUES ('SAMPLE', '샘플등', 0, 0)
+            """;
+        command.ExecuteNonQuery();
+    }
+
     public List<SalesChannel> GetAll()
     {
         using var connection = SqliteConnectionFactory.OpenConnection();

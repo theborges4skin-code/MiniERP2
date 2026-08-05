@@ -453,6 +453,53 @@ public class OutboundRepository
         return (long)command.ExecuteScalar()!;
     }
 
+    /// <summary>
+    /// 이력채널 이관(샘플발송이력관리_개발기획서.md §5.5) 라인 1건의 소속을 바꾼다. supplyPrice/
+    /// lineKind/closingPeriod가 null이면 기존 값을 그대로 유지한다(COALESCE). appendedRemark는
+    /// 기존 Remark 말미에 그대로 이어붙는다(이관 흔적 추적 — 별도 이관 이력 테이블을 두지 않는다).
+    /// UNIQUE(ShipmentGroupKey, MskuCode) 충돌 시 SqliteException을 그대로 던진다 — 호출 측
+    /// (Services.ChannelTransferService)이 라인별로 잡아서 그 건만 스킵 처리한다(부분 성공 허용).
+    /// </summary>
+    public void TransferLineToChannel(long id, string channelCode, string cskuCode, decimal? supplyPrice, string? lineKind, string? closingPeriod, string appendedRemark)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE OutboundDetailTable
+            SET ChannelCode = $channelCode,
+                MskuCode = $cskuCode,
+                CskuCode = $cskuCode,
+                SupplyPrice = COALESCE($supplyPrice, SupplyPrice),
+                LineKind = COALESCE($lineKind, LineKind),
+                ClosingPeriod = COALESCE($closingPeriod, ClosingPeriod),
+                Remark = Remark || $appendedRemark
+            WHERE Id = $id
+            """;
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.Parameters.AddWithValue("$cskuCode", cskuCode);
+        command.Parameters.AddWithValue("$supplyPrice", (object?)supplyPrice ?? DBNull.Value);
+        command.Parameters.AddWithValue("$lineKind", (object?)lineKind ?? DBNull.Value);
+        command.Parameters.AddWithValue("$closingPeriod", (object?)closingPeriod ?? DBNull.Value);
+        command.Parameters.AddWithValue("$appendedRemark", appendedRemark);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Remark 말미에 텍스트를 이어붙인다(§5.5 — 마감확정으로 이관 제외된 라인에 상호참조 메모를
+    /// 남길 때 사용. 별도 UPDATE 메서드로 두는 이유는 TransferLineToChannel과 달리 이 라인은
+    /// 채널·CSKU 등을 전혀 바꾸지 않기 때문이다).
+    /// </summary>
+    public void AppendRemark(long id, string appendedText)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET Remark = Remark || $text WHERE Id = $id";
+        command.Parameters.AddWithValue("$text", appendedText);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
     /// <summary>품목명만 단독으로 고친다(거래처마감보드 §1 — CSKU 미등록 등으로 품목명이 비어있는 경우 정정용).</summary>
     public void UpdateProductName(long id, string productName)
     {

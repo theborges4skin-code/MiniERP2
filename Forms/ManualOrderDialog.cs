@@ -115,7 +115,7 @@ public class ManualOrderDialog : Form
         Text = "수동 주문 추가";
         Size = new Size(420, 400);
         MinimumSize = new Size(360, 300);
-        StartPosition = FormStartPosition.Manual;
+        StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         ShowInTaskbar = false;
 
@@ -219,6 +219,18 @@ public class ManualOrderDialog : Form
             }
         }
 
+        // 샘플발송이력관리_개발기획서.md §4.1(a): 출고 이력이 없는 신규 품목도 마스터SKU만
+        // 검색해서 CSKU 관리창을 열지 않고 바로 접수할 수 있게 한다.
+        _quickPanel.Controls.Add(new Label { Height = 8, Width = w });
+        var btnFindByMasterSku = new Button
+        {
+            Text = "[마스터SKU에서 찾기]",
+            Width = w,
+            Height = 32,
+        };
+        btnFindByMasterSku.Click += OnFindByMasterSkuClick;
+        _quickPanel.Controls.Add(btnFindByMasterSku);
+
         // 빈 행 추가 버튼 (추가 모드에서만 보임)
         _quickPanel.Controls.Add(new Label { Height = 12, Width = w });
         _btnBlank = new Button
@@ -232,9 +244,28 @@ public class ManualOrderDialog : Form
         {
             var blankItem = new OfsOrderItem { ChannelCode = _channelCode, Quantity = 1, Status = "수동 추가" };
             ApplyFixedValues(blankItem);
+            PresetLineKindIfSampleChannel(blankItem);
             _addItem(blankItem);
         };
         _quickPanel.Controls.Add(_btnBlank);
+    }
+
+    /// <summary>
+    /// 마스터SKU를 검색해 골라 바로 접수한다(§2 D4). CSKU가 없으면 그 자리에서 자동 생성한다
+    /// (납품가 0, 송장표시명은 마스터 상품명) — CreateIfNew는 이미 있으면 그대로 재사용하므로
+    /// 같은 마스터SKU를 여러 번 골라도 중복 생성되지 않는다.
+    /// </summary>
+    private void OnFindByMasterSkuClick(object? sender, EventArgs e)
+    {
+        using var picker = new MasterSkuPickerDialog();
+        if (FormManager.ShowDialogSafe(picker, this) != DialogResult.OK || picker.SelectedSku == null) return;
+
+        var masterSku = picker.SelectedSku;
+        var itemName = picker.SelectedItemName ?? masterSku;
+        var cskuCode = CskuCodeGenerator.BuildDefault(_channelName, masterSku);
+        _channelSkuRepository.CreateIfNew(_channelCode, cskuCode, masterSku, 0m, itemName);
+
+        OnCskuButtonClick(cskuCode, itemName);
     }
 
     /// <summary>
@@ -299,7 +330,17 @@ public class ManualOrderDialog : Form
             InvoiceDisplayName = displayName
         };
         ApplyFixedValues(newItem);
+        PresetLineKindIfSampleChannel(newItem);
         _addItem(newItem);
+    }
+
+    /// <summary>
+    /// 현재 채널이 샘플등(§2 D3)이면 신규 행의 구분을 "샘플"로 기본 프리셋한다(§4.1(a)).
+    /// 사용자는 OFS 그리드의 "구분" 열에서 언제든 CS/기타로 바꾸거나 해제할 수 있다.
+    /// </summary>
+    private void PresetLineKindIfSampleChannel(OfsOrderItem item)
+    {
+        if (_channelCode == "SAMPLE") item.LineKind = LineKinds.Sample;
     }
 
     private int ButtonWidth()

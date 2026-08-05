@@ -358,6 +358,57 @@ public class OutboundHistoryForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("메모 보기", null, OnViewRemarkClick);
         menu.Items.Add("메모 편집", null, OnEditRemarkClick);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("선택 이력 채널 이관", null, OnTransferChannelClick);
+    }
+
+    /// <summary>
+    /// 샘플등 채널 등에 쌓인 비매출 이력을 정기 거래처로 옮긴다(샘플발송이력관리_개발기획서.md
+    /// §5). 정상 거래(LineKind='') 라인은 대상이 아니다 — 이미 정산 대사가 끝난 정상 매출 이력의
+    /// 채널이 실수로 바뀌는 사고를 막기 위한 가드다.
+    /// </summary>
+    private void OnTransferChannelClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedDetails();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("이관할 이력을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (selected.Any(d => string.IsNullOrEmpty(d.LineKind)))
+        {
+            MessageBox.Show(
+                "정상 거래(구분 없음) 라인은 이관할 수 없습니다.\n샘플·CS·기타로 지정된 비매출 라인만 선택하세요.",
+                "이관 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var dialog = new ChannelTransferDialog(selected.Count);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+        var request = new Services.ChannelTransferRequest
+        {
+            TargetChannelCode = dialog.TargetChannelCode!,
+            TargetChannelName = dialog.TargetChannelName!,
+            UpdateSupplyPriceFromTarget = dialog.UpdateSupplyPriceFromTarget,
+            ManualSupplyPrice = dialog.ManualSupplyPrice,
+            ConvertToSaleTransaction = dialog.ConvertToSaleTransaction,
+            ForcedClosingPeriod = dialog.ForcedClosingPeriod,
+        };
+        var result = new Services.ChannelTransferService().TransferChannel(selected, request);
+
+        var message = $"이관 {result.TransferredCount}건 완료.";
+        if (result.AlreadyClosedSkipped > 0)
+            message += $"\n마감확정 제외 {result.AlreadyClosedSkipped}건(메모 추가됨 — 원래 채널 이력에 그대로 남음)";
+        if (result.ConflictSkipped.Count > 0)
+        {
+            var preview = string.Join("\n", result.ConflictSkipped.Take(5).Select(c => $"- {c.Reason}"));
+            var more = result.ConflictSkipped.Count > 5 ? $"\n... 외 {result.ConflictSkipped.Count - 5}건" : "";
+            message += $"\n충돌로 스킵 {result.ConflictSkipped.Count}건\n{preview}{more}";
+        }
+        MessageBox.Show(message, "이관 결과", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        OnLoadClick(this, EventArgs.Empty);
     }
 
     private void OnViewRemarkClick(object? sender, EventArgs e)

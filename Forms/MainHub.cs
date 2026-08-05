@@ -19,6 +19,7 @@ public class MainHub : Form
     public MainHub()
     {
         InitializeComponent();
+        _salesChannelRepository.EnsureSampleChannel();
         Load += OnMainHubLoad;
     }
 

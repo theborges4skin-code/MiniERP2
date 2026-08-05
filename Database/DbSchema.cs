@@ -704,6 +704,10 @@ public static class DbSchema
         // 샘플발송 이력관리(샘플발송이력관리_개발기획서.md §2 D1): 비매출성 발송 구분값.
         // 비어있으면 정상 거래, 비어있지 않으면(샘플/CS/기타) 마감·정산·명세표 집계에서 제외한다.
         EnsureColumn(connection, "OutboundDetailTable", "LineKind", "TEXT NOT NULL DEFAULT ''");
+        // §2 D3의 "샘플등" 통합 채널 시드는 여기(모든 DB 연결마다/테스트 DB마다 실행됨)가 아니라
+        // SalesChannelRepository.EnsureSampleChannel()로 옮겨 MainHub 시작 시 1회만 보장한다 —
+        // 여기 두면 테스트가 매번 새로 만드는 임시 DB에도 채널이 하나 더 생겨, 채널 개수를 세는
+        // 기존 테스트들이 깨진다(실제로 겪음).
 
         // 매핑시스템 통합개편 Phase 1(§5): 1:1 정확매핑을 상품명+옵션명+수량+매출액 4필드로 확장하기
         // 위한 스키마. 두 컬럼 모두 NULL이면 기존 2필드(상품명+옵션명) 레거시 규칙 그대로 동작하고,

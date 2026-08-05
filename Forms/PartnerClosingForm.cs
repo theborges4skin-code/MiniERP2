@@ -6,6 +6,7 @@ using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
 using MiniERP2.Utils;
+using OfficeOpenXml;
 
 namespace MiniERP2.Forms;
 
@@ -112,6 +113,18 @@ public class PartnerClosingForm : Form
         var btnPublishLedger = new Button { Text = "매출장 발행", Size = new Size(90, 28) };
         btnPublishLedger.Click += (s, e) => OnPublishClick(isLedger: true);
 
+        var btnExportBoard = new Button { Text = "현황판 엑셀저장", Size = new Size(110, 28) };
+        btnExportBoard.Click += OnExportBoardClick;
+
+        // 샘플발송이력관리_개발기획서.md §6.2: 마감 집계에서 빠지는 샘플·CS 발송을 별도 화면에서
+        // 추적한다. 기존 그리드를 토글로 재활용하지 않는 이유는 그 다이얼로그 클래스 주석 참고.
+        var btnNonSale = new Button { Text = "비매출 내역", Size = new Size(90, 28) };
+        btnNonSale.Click += (s, e) =>
+        {
+            using var dialog = new NonSaleClosingDialog(CurrentPeriod);
+            FormManager.ShowDialogSafe(dialog, this);
+        };
+
         _statusSummaryLabel = new Label { AutoSize = true, Padding = new Padding(10, 6, 0, 0), Text = "상태요약: -" };
 
         toolbar.Controls.Add(new Label { Text = "기간:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
@@ -128,6 +141,8 @@ public class PartnerClosingForm : Form
         toolbar.Controls.Add(btnPreviewLedger);
         toolbar.Controls.Add(btnPublishStatement);
         toolbar.Controls.Add(btnPublishLedger);
+        toolbar.Controls.Add(btnExportBoard);
+        toolbar.Controls.Add(btnNonSale);
         toolbar.Controls.Add(_statusSummaryLabel);
         return toolbar;
     }
@@ -816,6 +831,65 @@ public class PartnerClosingForm : Form
         catch (Exception ex)
         {
             MessageBox.Show($"통합 출력 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 좌측 거래처 목록(현황판)을 지금 화면에 보이는 그대로(★/거래처/출고건/수량/공급가합/이익/상태/
+    /// 미출고건/경고/비고, VAT별도 체크박스 기준 환산 포함) 엑셀 1장으로 저장한다.
+    /// </summary>
+    private void OnExportBoardClick(object? sender, EventArgs e)
+    {
+        if (_partyGrid.DataSource is not BindingList<PartyRow> rows || rows.Count == 0)
+        {
+            MessageBox.Show("내보낼 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var period = CurrentPeriod;
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"거래처마감현황_{period}_{DateTime.Now:yyyyMMdd}.xlsx",
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+
+        try
+        {
+            ExcelLicense.Ensure();
+
+            using var package = new ExcelPackage();
+            var worksheet = package.Workbook.Worksheets.Add("거래처마감현황");
+
+            var headers = new[] { "★", "거래처", "출고건", "수량", "공급가합", "이익", "상태", "미출고건", "경고", "비고" };
+            for (var i = 0; i < headers.Length; i++) worksheet.Cells[1, i + 1].Value = headers[i];
+
+            var vatExcluded = _vatExcludedCheck.Checked;
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                var r = i + 2;
+                worksheet.Cells[r, 1].Value = row.FavoriteMark;
+                worksheet.Cells[r, 2].Value = row.PartyName;
+                worksheet.Cells[r, 3].Value = row.OutboundCount;
+                worksheet.Cells[r, 4].Value = row.TotalQty;
+                worksheet.Cells[r, 5].Value = VatCalculator.ToDisplay(row.TotalSupply, vatExcluded);
+                worksheet.Cells[r, 6].Value = VatCalculator.ToDisplay(row.TotalProfit, vatExcluded);
+                worksheet.Cells[r, 7].Value = row.Status;
+                worksheet.Cells[r, 8].Value = row.UnshippedCount;
+                worksheet.Cells[r, 9].Value = row.Warning;
+                worksheet.Cells[r, 10].Value = row.ReconcileNote;
+            }
+
+            worksheet.Cells[1, 1, 1, headers.Length].Style.Font.Bold = true;
+            worksheet.Cells[2, 5, rows.Count + 1, 6].Style.Numberformat.Format = "#,##0";
+            worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
+            ExportHelper.SaveExcel(package, filePath);
+
+            ExportHelper.ShowPostExportDialog(this, filePath);
+            _statusLabel.Text = $"현황판을 엑셀로 저장했습니다({rows.Count}건). ({DateTime.Now:HH:mm:ss})";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"엑셀 저장 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
