@@ -28,14 +28,23 @@ public class CskuPickerDialog : Form
     private List<PickerRow> _allRows = new();
     private List<PickerRow> _filteredRows = new();
 
+    /// <summary>채널 미지정 마스터SKU 단독 행에 쓰는 채널코드/채널명 자리표시자(§5, 간이마진계산기_개발기획서.md).</summary>
+    private const string MasterSkuOnlyChannelName = "(마스터SKU 전용)";
+
+    private readonly bool _allowMasterSkuOnly;
+
     /// <param name="priorityChannelCode">이 채널의 CSKU를 목록 맨 위로 올려서(그 외는 채널명순)
     /// 보여준다. 다른 채널의 CSKU도 항상 함께 검색된다(제한하지 않음).</param>
     /// <param name="preselectChannelFilter">true(기본값)면 채널 콤보의 초기 선택값을
     /// priorityChannelCode로 맞춘다. false면 "(전체)"로 시작해 모든 채널의 CSKU가 바로 보이되,
     /// 정렬 우선순위는 그대로 priorityChannelCode 적용(예: OFS 수동주문 — 다른 채널 CSKU도
     /// 검색은 되어야 하지만 현재 채널 것을 먼저 보고 싶을 때).</param>
-    public CskuPickerDialog(string? priorityChannelCode = null, bool preselectChannelFilter = true)
+    /// <param name="allowMasterSkuOnly">true면 CSKU 목록 외에 채널 미지정 마스터SKU 단독 행도
+    /// 함께 보여준다(간이 마진 계산기 전용, §5). 기존 호출부(문서관리 등)는 기본값 false로
+    /// 동작이 그대로 유지된다.</param>
+    public CskuPickerDialog(string? priorityChannelCode = null, bool preselectChannelFilter = true, bool allowMasterSkuOnly = false)
     {
+        _allowMasterSkuOnly = allowMasterSkuOnly;
         InitializeComponent();
         LoadData(priorityChannelCode, preselectChannelFilter);
     }
@@ -117,8 +126,19 @@ public class CskuPickerDialog : Form
         .OrderByDescending(r => priorityChannelCode != null && r.ChannelCode.Equals(priorityChannelCode, StringComparison.OrdinalIgnoreCase))
         .ThenBy(r => r.ChannelName).ThenBy(r => r.ItemName).ToList();
 
+        if (_allowMasterSkuOnly)
+        {
+            // ChannelCode=""를 채널 미지정 마스터SKU 단독 행의 자리표시자로 쓴다(§5). CostResolver의
+            // 3단계 중 마스터 대표원가만 적용된다 — 채널/CSKU 맥락이 없어 개별원가 오버라이드가 없다.
+            var masterOnlyRows = items.Values
+                .OrderBy(i => i.ItemName)
+                .Select(i => new PickerRow("", MasterSkuOnlyChannelName, "", i.Sku, i.ItemName, 0m, i.CostPrice, i.Unit, null));
+            _allRows.AddRange(masterOnlyRows);
+        }
+
         _channelCombo.Items.Add("(전체)");
         foreach (var ch in channels.OrderBy(c => c.ChannelName)) _channelCombo.Items.Add(ch.ChannelName);
+        if (_allowMasterSkuOnly) _channelCombo.Items.Add(MasterSkuOnlyChannelName);
         _channelCombo.SelectedIndex = 0;
         if (preselectChannelFilter && priorityChannelCode != null && channelNames.TryGetValue(priorityChannelCode, out var defaultName))
         {
@@ -156,12 +176,13 @@ public class CskuPickerDialog : Form
             return;
         }
         var row = _filteredRows[idx];
+        var isMasterSkuOnly = row.ChannelCode.Length == 0;
         SelectedItemName = row.ItemName;
         SelectedUnitPrice = row.SupplyPrice;
         SelectedCostPrice = row.CostPrice;
         SelectedMsku = row.Msku;
-        SelectedCskuCode = row.CskuCode;
-        SelectedChannelCode = row.ChannelCode;
+        SelectedCskuCode = isMasterSkuOnly ? null : row.CskuCode;
+        SelectedChannelCode = isMasterSkuOnly ? null : row.ChannelCode;
         SelectedUnit = row.Unit;
         SelectedPacking = row.Packing;
         DialogResult = DialogResult.OK;

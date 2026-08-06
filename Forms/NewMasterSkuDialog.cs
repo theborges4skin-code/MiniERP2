@@ -25,12 +25,14 @@ public class NewMasterSkuDialog : Form
 
     /// <param name="suggestedItemName">CSKU 등록 화면에서 검색어로 입력해둔 품목명이 있으면
     /// 기본값으로 넘겨받아 품명 칸에 미리 채운다(매번 다시 타이핑하지 않도록).</param>
-    public NewMasterSkuDialog(string? suggestedItemName = null)
+    /// <param name="suggestedCostPrice">간이 마진 계산기 등에서 이미 계산해둔 제조원가(적용)가
+    /// 있으면 미리 채운다(간이마진계산기_개발기획서.md §6.4).</param>
+    public NewMasterSkuDialog(string? suggestedItemName = null, decimal? suggestedCostPrice = null)
     {
-        InitializeComponent(suggestedItemName);
+        InitializeComponent(suggestedItemName, suggestedCostPrice);
     }
 
-    private void InitializeComponent(string? suggestedItemName)
+    private void InitializeComponent(string? suggestedItemName, decimal? suggestedCostPrice = null)
     {
         Text = "새 마스터SKU 등록";
         Size = new Size(420, 260);
@@ -47,7 +49,7 @@ public class NewMasterSkuDialog : Form
         var existingSkus = _itemRepository.GetAll().Select(i => i.Sku);
         _skuText = new TextBox { Dock = DockStyle.Fill, Text = TempSkuGenerator.GenerateNext(existingSkus) };
         _itemNameText = new TextBox { Dock = DockStyle.Fill, Text = suggestedItemName ?? string.Empty };
-        _costPriceText = new TextBox { Dock = DockStyle.Fill, Text = "0" };
+        _costPriceText = new TextBox { Dock = DockStyle.Fill, Text = (suggestedCostPrice ?? 0m).ToString("0.####") };
         _unitText = new TextBox { Dock = DockStyle.Fill, Text = "kg" };
 
         AddRow(layout, 0, "SKU 코드", _skuText);

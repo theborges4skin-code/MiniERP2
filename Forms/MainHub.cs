@@ -72,6 +72,7 @@ public class MainHub : Form
             ("채널 설정", (s, e) => FormManager.Show<ChannelConfigForm>(), Keys.Control | Keys.D2),
             ("견적·단가 관리", (s, e) => FormManager.Show<PriceQuoteForm>(), Keys.Control | Keys.F7),
             ("배송지 주소록 관리", (s, e) => FormManager.Show<AddressBookForm>(), null),
+            ("간이 마진 계산기", (s, e) => FormManager.Show<MarginCalculatorForm>(), null),
         }),
         ("정산", new()
         {
