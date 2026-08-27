@@ -77,6 +77,7 @@ public class OfsForm : Form
     public OfsForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     private void InitializeComponent()
@@ -120,12 +121,16 @@ public class OfsForm : Form
         var btnMappingAssistant = new Button { Text = "매핑 도우미", Size = new Size(100, 30) };
         var btnUnmappedBatch = new Button { Text = "미매핑 일괄 처리", Size = new Size(130, 30) };
         var btnSave = new Button { Text = "저장 (발주확정)", Size = new Size(130, 30) };
-        var btnExport = new Button { Text = "택배사 양식으로 내보내기", Size = new Size(180, 30) };
+        var btnDeleteSelected = new Button { Text = "선택 행 삭제", Size = new Size(100, 30) };
+        var btnExportSelected = new Button { Text = "선택건 택배양식 내보내기", Size = new Size(180, 30) };
+        var btnExportAll = new Button { Text = "전체 택배양식 내보내기", Size = new Size(180, 30) };
         var btnOutboundHistory = new Button { Text = "발주/출고 이력", Size = new Size(120, 30) };
 
         btnLoadOrders.Click += OnLoadOrdersClick;
-        btnExport.Click += OnExportClick;
+        btnExportSelected.Click += OnExportSelectedClick;
+        btnExportAll.Click += OnExportAllClick;
         btnSave.Click += OnSaveClick;
+        btnDeleteSelected.Click += OnDeleteSelectedOrdersClick;
         btnAddManualOrder.Click += OnAddManualOrderClick;
         btnLoadAddressBook.Click += OnLoadAddressBookClick;
         btnMappingAssistant.Click += OnMappingAssistantClick;
@@ -136,12 +141,14 @@ public class OfsForm : Form
         toolStrip.Controls.Add(_channelCombo);
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
+        toolStrip.Controls.Add(btnDeleteSelected);
         toolStrip.Controls.Add(btnLoadAddressBook);
         toolStrip.Controls.Add(btnMappingAssistant);
         toolStrip.Controls.Add(btnUnmappedBatch);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnOutboundHistory);
-        toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnExportSelected);
+        toolStrip.Controls.Add(btnExportAll);
 
         // 2. Data Grid
         _ordersGrid = new ExcelLikeDataGridView
@@ -181,6 +188,15 @@ public class OfsForm : Form
 
         // 상태에 따른 행 색상 변경을 위한 이벤트 핸들러 등록
         _ordersGrid.RowPrePaint += OnOrdersGridRowPrePaint;
+
+        // Delete 키로도 선택한 줄을 지울 수 있게 한다(버튼/우클릭 메뉴 "선택 행 삭제"와 동일 동작).
+        // 셀을 편집 중일 때는 텍스트 삭제가 우선이어야 하므로 편집 중이 아닐 때만 가로챈다.
+        _ordersGrid.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode != Keys.Delete || _ordersGrid.IsCurrentCellInEditMode) return;
+            e.Handled = true;
+            OnDeleteSelectedOrdersClick(s, EventArgs.Empty);
+        };
 
         // 셀 값 변경 시 연관 데이터 자동 업데이트를 위한 이벤트 핸들러 등록
         _ordersGrid.CellValueChanged += OnOrdersGridCellValueChanged;
@@ -341,6 +357,13 @@ public class OfsForm : Form
 
             foreach (var item in allLoadedItems) _orders.Add(item);
 
+            // 그리드에 처음 데이터가 채워지면 DataGridView가 첫 셀을 자동으로 선택해버려서, 이후
+            // "택배사 양식으로 내보내기"가 선택된 그 한 줄만 내보내는 것으로 오인한다(GetSelectedOrderItems
+            // 참고 — 선택된 줄이 있으면 그것만 내보냄). 사용자가 실제로 줄을 골라 선택한 게 아니므로
+            // 로드 직후에는 선택을 해제해 기본 동작(전체 내보내기)이 되게 한다. 줄을 직접 선택해
+            // 일부만 내보내는 기능 자체는 그대로 둔다.
+            _ordersGrid.ClearSelection();
+
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
             RefreshExportPreview();
 
@@ -495,14 +518,45 @@ public class OfsForm : Form
         mappingForm.ShowUnmappedItems(channelCode, _orders, () => { _ordersGrid.Invalidate(); RefreshExportPreview(); });
     }
 
-    private async void OnExportClick(object? sender, EventArgs e)
+    /// <summary>
+    /// 실제 주문 줄로서 내보내기/미리보기 대상이 되는지("매핑 성공"/"샘플" 줄, 또는 실제 주문 줄에
+    /// 연결돼 수취인 정보를 그대로 복사해온 메모행 — OnAddMemoRowClick). 메모행은 MappedSku가
+    /// 없어도 자기 자신만의 묶음으로 별도 행에 실려야 택배사 양식에도 별도 행으로 나가고, 다운스트림
+    /// 택배사 프로그램이 같은 주소 기준으로 알아서 한 송장으로 묶어 출력해준다.
+    /// </summary>
+    private static bool IsExportableLine(OfsOrderItem o) =>
+        !string.IsNullOrWhiteSpace(o.MappedSku)
+        || o.LineKind == LineKinds.Sample
+        || (o.Status == "메모" && !string.IsNullOrWhiteSpace(o.Recipient));
+
+    /// <summary>
+    /// "선택건 택배양식 내보내기" 버튼. 예전엔 버튼 하나로 "선택된 줄이 있으면 그것만, 없으면
+    /// 전체"를 처리했는데, 그리드에 처음 데이터가 로드되면 DataGridView가 첫 셀을 자동 선택해버려
+    /// 의도치 않게 그 한 줄만 내보내지는 등 헷갈린다는 지적(OnLoadOrdersClick의 ClearSelection 주석
+    /// 참고)이 있어, 선택 여부와 무관하게 "선택한 줄만" 내보내는 버튼과 "무조건 전체" 내보내는
+    /// 버튼(OnExportAllClick)으로 명확히 분리했다.
+    /// </summary>
+    private async void OnExportSelectedClick(object? sender, EventArgs e)
     {
-        // 그리드에서 줄을 선택해둔 상태면 선택한 건만, 아무것도 선택하지 않았으면 매핑된 전체를 내보낸다.
         var selected = GetSelectedOrderItems();
-        var isPartialSelection = selected.Count > 0;
-        var ordersToExport = (isPartialSelection ? selected : (IEnumerable<OfsOrderItem>)_orders)
-            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
-            .ToList();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show(
+                "내보낼 줄을 먼저 선택하세요(행 머리글을 클릭하거나 셀을 드래그해 선택할 수 있습니다).\n" +
+                "전체를 내보내려면 '전체 택배양식 내보내기' 버튼을 사용하세요.",
+                "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        await ExportOrdersAsync(selected, isPartialSelection: true);
+    }
+
+    /// <summary>"전체 택배양식 내보내기" 버튼. 선택 상태와 무관하게 주문란 전체(매핑 성공/샘플/연결된 메모행)를 내보낸다.</summary>
+    private async void OnExportAllClick(object? sender, EventArgs e) => await ExportOrdersAsync(_orders, isPartialSelection: false);
+
+    private async Task ExportOrdersAsync(IEnumerable<OfsOrderItem> source, bool isPartialSelection)
+    {
+        var ordersToExport = source.Where(IsExportableLine).ToList();
 
         if (ordersToExport.Count == 0)
         {
@@ -628,6 +682,7 @@ public class OfsForm : Form
                         // 운송장 결과를 나중에 수령인 기준으로 매칭하려면 이 시점의 수령인/주소/
                         // 품목명을 함께 남겨둬야 한다(발주/출고 이력 관리창에서 사용).
                         Recipient = order.Recipient ?? string.Empty,
+                        Phone = order.Phone ?? string.Empty,
                         Address = order.Address ?? string.Empty,
                         ProductName = order.ProductName ?? string.Empty,
                         Remark = order.Remark ?? string.Empty,
@@ -974,7 +1029,9 @@ public class OfsForm : Form
             new ToolStripMenuItem("메모 보기", null, OnViewRemarkClick),
             new ToolStripMenuItem("메모 편집", null, OnEditRemarkClick),
             new ToolStripSeparator(),
-            lineKindMenu);
+            lineKindMenu,
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("선택 행 삭제", null, OnDeleteSelectedOrdersClick));
 
         // 우클릭한 셀을 기억해 조건부 매핑 시 그 열의 조건만 전달할 수 있게 한다.
         _ordersGrid.MouseDown += (s, e) =>
@@ -1051,10 +1108,13 @@ public class OfsForm : Form
     /// <summary>
     /// 실제 주문이 아니라 작업자가 남기는 메모만 담는 별도 줄을 추가한다. 예전엔 분리배송으로
     /// 줄을 복제해 메모용으로 썼는데, 그 방식은 매핑된 CSKU가 그대로 복사돼 실제 주문처럼 보이는
-    /// 문제가 있었다(사용자 신고). 이 줄은 MappedSku를 절대 채우지 않으므로 미리보기/내보내기/
-    /// 저장이 전부 "MappedSku가 채워진 줄만" 기준으로 동작하는 덕분에 그 어디에도 끼어들지
-    /// 않는다. 선택한 줄 바로 아래에 추가하고(선택 없으면 맨 끝), "상품명" 칸에 메모 내용을 바로
-    /// 입력할 수 있게 편집 모드로 진입시킨다.
+    /// 문제가 있었다(사용자 신고). 이 줄은 MappedSku를 절대 채우지 않으므로 저장(발주확정)에는
+    /// 끼어들지 않지만, 미리보기/내보내기에는 선택한 줄과 같은 수취인/연락처/주소를 그대로 복사한
+    /// "자기 자신만의 묶음"으로 포함된다 — 일부러 같은 묶음으로 합치지 않는다: 택배사 양식에도
+    /// 별도의 행으로 실려야, 다운스트림 택배사 프로그램이 같은 주소 기준으로 알아서 한 송장으로
+    /// 묶어 출력해준다(ShipmentGrouping.GetEffectiveGroupId 주석 참고). 선택한 줄 바로 아래에
+    /// 추가하고(선택 없으면 맨 끝), "상품명" 칸에 메모 내용을 바로 입력할 수 있게 편집 모드로
+    /// 진입시킨다.
     /// </summary>
     private void OnAddMemoRowClick(object? sender, EventArgs e)
     {
@@ -1064,6 +1124,11 @@ public class OfsForm : Form
             ChannelCode = selected?.ChannelCode ?? _lastChannelCode,
             ProductName = "(메모) ",
             Status = "메모",
+            Recipient = selected?.Recipient,
+            Phone = selected?.Phone,
+            Address = selected?.Address,
+            DeliveryMessage = selected?.DeliveryMessage,
+            OrderNo = selected?.OrderNo,
         };
 
         var insertAt = selected != null ? _orders.IndexOf(selected) + 1 : _orders.Count;
@@ -1078,6 +1143,31 @@ public class OfsForm : Form
 
         RefreshExportPreview();
         _statusLabel.Text = "메모행을 추가했습니다. \"상품명\" 칸에 메모 내용을 입력하세요.";
+    }
+
+    /// <summary>
+    /// 선택한 주문 줄(들)을 목록에서 삭제한다. 그리드 자체 기능(행 머리글 선택 + Delete 키,
+    /// AllowUserToDeleteRows)으로도 지울 수는 있지만 발견하기 어렵다는 지적(DataManagementForm의
+    /// CSKU 삭제 버튼과 같은 이유)이 있어 버튼/우클릭 메뉴로 명시적으로 추가했다. 아직 "저장
+    /// (발주확정)"을 누르기 전이면 그리드에서만 사라지고 DB에는 애초에 아무 영향이 없다.
+    /// </summary>
+    private void OnDeleteSelectedOrdersClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("삭제할 줄을 먼저 선택하세요(행 머리글을 클릭하거나 셀을 드래그해 선택할 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var confirm = MessageBox.Show($"선택한 {selected.Count}건을 목록에서 삭제하시겠습니까?", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes) return;
+
+        foreach (var item in selected) _orders.Remove(item);
+
+        _ordersGrid.ClearSelection();
+        RefreshExportPreview();
+        _statusLabel.Text = $"{selected.Count}건을 삭제했습니다. (총 {_orders.Count}건)";
     }
 
     /// <summary>
@@ -1452,7 +1542,7 @@ public class OfsForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0) };
-        toolStrip.Controls.Add(new Label { Text = "택배사 출력 미리보기(묶음 단위) — 매핑 성공한 줄만 표시", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Padding = new Padding(0, 4, 10, 0) });
+        toolStrip.Controls.Add(new Label { Text = "택배사 출력 미리보기(묶음 단위) — 매핑 성공한 줄(+연결된 메모행)만 표시", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Padding = new Padding(0, 4, 10, 0) });
 
         // 사용자 요청: 실제 택배사 양식에서 세팅한 헤더 그대로 보여주고, 거기에 매핑된 속성이
         // 없는 칸(박스타입/내품수량/운임/선착불유무 등)은 직접 입력해 업로드 전에 조정할 수 있게.
@@ -1765,10 +1855,19 @@ public class OfsForm : Form
     /// </summary>
     private void RefreshExportPreview()
     {
+        // "샘플등"(ChannelCode == "SAMPLE") 채널은 판매용 CSKU가 애초에 없을 수밖에 없으므로
+        // MappedSku 없이도 발주확정이 가능해야 하는데, 그 예외 처리가 "구분"(LineKind)이 "샘플"로
+        // 채워져 있는지에 달려 있다. 수동 추가 프리셋(ManualOrderDialog.PresetLineKindIfSampleChannel)이
+        // 채널 변경 타이밍 등으로 누락되거나, 그리드에 직접 새 행을 입력하는 경우처럼 "구분"이
+        // 채워지지 않는 진입 경로가 있을 수 있어, 여기(모든 변경 후 공통으로 호출되는 지점)에서
+        // 한 번 더 보정해 어느 경로로 추가됐든 저장/내보내기가 막히지 않게 한다.
+        foreach (var order in _orders.Where(o => o.ChannelCode == "SAMPLE" && string.IsNullOrEmpty(o.LineKind)))
+            order.LineKind = LineKinds.Sample;
+
         var courier = _previewCourierCombo.SelectedItem as CourierMaster;
 
         _previewRowModels = _orders
-            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
+            .Where(IsExportableLine)
             .GroupBy(ShipmentGrouping.GetEffectiveGroupId)
             .Select(g => new ShipmentPreviewRow { Items = g.ToList() })
             .ToList();

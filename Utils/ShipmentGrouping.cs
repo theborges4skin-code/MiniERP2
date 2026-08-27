@@ -39,6 +39,9 @@ public static class ShipmentGrouping
     /// 합포장 등으로 2개 이상이면 "((품목A))   +   ((품목B))"처럼 괄호와 +로 구분해, 줄바꿈만으로는
     /// 송장에서 어디까지가 한 품목인지 헷갈린다는 피드백을 반영한다. 택배사 내보내기
     /// (CourierExporter)와 OFS의 출력 미리보기 패널이 항상 같은 결과를 보여주도록 공유한다.
+    /// 메모행(OfsForm.OnAddMemoRowClick)은 이 묶음에 합쳐 넣지 않는다 — 택배사 출력 미리보기에
+    /// 별도의 행(=별도의 송장 줄)으로 나와야 실제 택배사 양식에도 별도 행으로 실리므로, 대상 주문과
+    /// 같은 수취인/주소를 그대로 복사한 "자기 자신만의 묶음"으로 취급한다(OnAddMemoRowClick 참고).
     /// </summary>
     /// <param name="items">한 묶음에 속한 줄들입니다.</param>
     /// <param name="quantityFormat">
@@ -78,6 +81,11 @@ public static class ShipmentGrouping
     private static string BuildAutoLabel(OfsOrderItem item, string? quantityFormat, bool isMultiItemGroup)
     {
         var name = !string.IsNullOrWhiteSpace(item.InvoiceDisplayName) ? item.InvoiceDisplayName : item.ProductName;
+
+        // 메모행(OfsForm.OnAddMemoRowClick)은 실제 수량이 있는 품목이 아니라 작업자가 남긴 문구이므로,
+        // 수량표기("▶[0개]" 등)를 붙이지 않고 문구 그대로 출력한다.
+        if (item.Status == "메모") return name ?? string.Empty;
+
         var quantityTag = FormatQuantityTag(quantityFormat, item.Quantity);
         if (isMultiItemGroup) quantityTag = $"xx{quantityTag}xx";
 

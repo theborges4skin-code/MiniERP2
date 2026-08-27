@@ -84,17 +84,26 @@ public class ExcelLikeDataGridView : DataGridView
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData == (Keys.Control | Keys.V))
+        // 셀을 편집 중일 때는(예: 메모행 추가 직후 자동으로 편집 모드에 들어간 "상품명" 칸)
+        // Ctrl+C/V를 가로채면 안 된다 — 가로채면 편집 중인 텍스트박스 안에서 커서 위치에
+        // 텍스트를 붙여넣는 일반적인 동작 대신 셀 범위 붙여넣기(OnPasteClick)가 실행돼, 편집
+        // 중이던 내용이 커밋될 때 그 셀 값을 도로 덮어써버려 "붙여넣기가 안 된다"는 문제가
+        // 있었다(사용자 신고). 편집 중이 아닐 때만(엑셀처럼 셀/행 범위를 복사·붙여넣기할 때) 이
+        // 그리드의 자체 규칙을 적용한다.
+        if (!IsCurrentCellInEditMode)
         {
-            OnPasteClick(this, EventArgs.Empty);
-            return true;
-        }
-        // 기본 Ctrl+C는 DataGridView 내장 처리로 곧장 들어가 CopySelection()을 거치지 않는다
-        // (아래 버그 설명 참고) — 이 앱의 복사 규칙을 항상 타도록 여기서도 가로챈다.
-        if (keyData == (Keys.Control | Keys.C))
-        {
-            CopySelection();
-            return true;
+            if (keyData == (Keys.Control | Keys.V))
+            {
+                OnPasteClick(this, EventArgs.Empty);
+                return true;
+            }
+            // 기본 Ctrl+C는 DataGridView 내장 처리로 곧장 들어가 CopySelection()을 거치지 않는다
+            // (아래 버그 설명 참고) — 이 앱의 복사 규칙을 항상 타도록 여기서도 가로챈다.
+            if (keyData == (Keys.Control | Keys.C))
+            {
+                CopySelection();
+                return true;
+            }
         }
         return base.ProcessCmdKey(ref msg, keyData);
     }
