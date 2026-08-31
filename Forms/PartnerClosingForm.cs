@@ -49,7 +49,7 @@ public class PartnerClosingForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
@@ -64,7 +64,14 @@ public class PartnerClosingForm : Form
 
     private Control BuildToolbar()
     {
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        // 버튼이 계속 늘어 한 줄로는 창 너비를 넘어서므로(엑셀 일괄 추가 추가 시점) 조회/입력 계열과
+        // 출력/기타 계열 두 줄로 나눈다(사용자 요청).
+        var container = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+        var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 5, 0) };
+        var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 4) };
 
         _periodCombo = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDown };
         var now = DateTime.Today;
@@ -86,6 +93,9 @@ public class PartnerClosingForm : Form
 
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(110, 28) };
         btnAddManualOrder.Click += OnAddManualOrderClick;
+
+        var btnBulkImport = new Button { Text = "엑셀 일괄 추가", Size = new Size(100, 28) };
+        btnBulkImport.Click += OnBulkImportClick;
 
         var btnConfirm = new Button { Text = "마감확정", Size = new Size(80, 28) };
         btnConfirm.Click += OnConfirmClick;
@@ -127,24 +137,29 @@ public class PartnerClosingForm : Form
 
         _statusSummaryLabel = new Label { AutoSize = true, Padding = new Padding(10, 6, 0, 0), Text = "상태요약: -" };
 
-        toolbar.Controls.Add(new Label { Text = "기간:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
-        toolbar.Controls.Add(_periodCombo);
-        toolbar.Controls.Add(btnRefresh);
-        toolbar.Controls.Add(_includeAllCheck);
-        toolbar.Controls.Add(btnAddManual);
-        toolbar.Controls.Add(btnManualEntry);
-        toolbar.Controls.Add(btnAddManualOrder);
-        toolbar.Controls.Add(btnConfirm);
-        toolbar.Controls.Add(btnCancelClosing);
-        toolbar.Controls.Add(_vatExcludedCheck);
-        toolbar.Controls.Add(btnPreviewStatement);
-        toolbar.Controls.Add(btnPreviewLedger);
-        toolbar.Controls.Add(btnPublishStatement);
-        toolbar.Controls.Add(btnPublishLedger);
-        toolbar.Controls.Add(btnExportBoard);
-        toolbar.Controls.Add(btnNonSale);
-        toolbar.Controls.Add(_statusSummaryLabel);
-        return toolbar;
+        row1.Controls.Add(new Label { Text = "기간:", AutoSize = true, Padding = new Padding(0, 5, 2, 0) });
+        row1.Controls.Add(_periodCombo);
+        row1.Controls.Add(btnRefresh);
+        row1.Controls.Add(_includeAllCheck);
+        row1.Controls.Add(btnAddManual);
+        row1.Controls.Add(btnManualEntry);
+        row1.Controls.Add(btnAddManualOrder);
+        row1.Controls.Add(btnBulkImport);
+        row1.Controls.Add(btnConfirm);
+        row1.Controls.Add(btnCancelClosing);
+
+        row2.Controls.Add(_vatExcludedCheck);
+        row2.Controls.Add(btnPreviewStatement);
+        row2.Controls.Add(btnPreviewLedger);
+        row2.Controls.Add(btnPublishStatement);
+        row2.Controls.Add(btnPublishLedger);
+        row2.Controls.Add(btnExportBoard);
+        row2.Controls.Add(btnNonSale);
+        row2.Controls.Add(_statusSummaryLabel);
+
+        container.Controls.Add(row1, 0, 0);
+        container.Controls.Add(row2, 0, 1);
+        return container;
     }
 
     private Control BuildBody()
@@ -455,6 +470,27 @@ public class PartnerClosingForm : Form
         RefreshBoard();
         SelectPartyByKey(row.PartyKey);
         _statusLabel.Text = $"수동 주문을 추가했습니다({dlg.OrderDate:yyyy-MM-dd}, {dlg.CskuCode} x{dlg.Qty}). ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>"수동 주문 추가"의 엑셀 일괄 버전. 같은 선택 가드(채널 경유 거래처 1개)를 쓴다.</summary>
+    private void OnBulkImportClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1 || selected[0].IsManual)
+        {
+            MessageBox.Show("엑셀로 일괄 추가할 채널 경유 거래처 1개를 선택하세요(수동 거래처는 [금액입력/비고]를 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+        var channelCode = row.PartyKey["CH:".Length..];
+
+        using var dlg = new PartnerBulkOrderImportDialog(channelCode, row.PartyName);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK || dlg.LatestSaleDate == null) return;
+
+        _periodCombo.Text = dlg.LatestSaleDate.Value.ToString("yyyy-MM");
+        RefreshBoard();
+        SelectPartyByKey(row.PartyKey);
+        _statusLabel.Text = $"엑셀 일괄 추가로 {dlg.ImportedCount}건을 등록했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     private void SelectPartyByKey(string partyKey)

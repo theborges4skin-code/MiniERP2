@@ -34,11 +34,12 @@ public class NewChannelCskuDialog : Form
     public string Packing => _packingBox.Text.Trim();
     public string Note => _noteBox.Text.Trim();
 
-    public NewChannelCskuDialog(string channelCode, string channelName)
+    public NewChannelCskuDialog(string channelCode, string channelName, string? suggestedCskuCode = null)
     {
         _channelCode = channelCode;
         _channelName = channelName;
         InitializeComponent();
+        if (!string.IsNullOrWhiteSpace(suggestedCskuCode)) _cskuCodeBox.Text = suggestedCskuCode;
     }
 
     private void InitializeComponent()

@@ -419,38 +419,73 @@ public class OutboundRepository
     /// OutboundDetailTable의 정상 행이라 발주/출고 이력 관리창(OutboundHistoryForm)에서 채널·기간
     /// 조건으로 조회하면 그대로 나온다 — 별도 저장소를 두지 않는다.
     /// </summary>
-    public long AddManualEntry(OutboundDetail detail)
+    public long AddManualEntry(OutboundDetail detail) => AddManualEntries([detail])[0];
+
+    /// <summary>
+    /// <see cref="AddManualEntry"/>의 여러 건 버전(거래처 마감보드 엑셀 일괄 추가). 커넥션 1개+
+    /// 트랜잭션+prepared command 루프로 처리한다(SaveOutbound/MarkAsShipped와 같은 패턴). 반환값은
+    /// 삽입된 순서 그대로의 새 Id 목록.
+    /// </summary>
+    public List<long> AddManualEntries(IEnumerable<OutboundDetail> details)
     {
-        var orderNo = string.IsNullOrWhiteSpace(detail.OrderNo)
-            ? $"수동-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}"
-            : detail.OrderNo;
-        var confirmedAt = detail.ConfirmedAt ?? DateTime.Now;
+        var ids = new List<long>();
 
         using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, CskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
             VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $cskuCode, $qty, $supplyPrice, $createdAt, '출고확정', $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg);
             SELECT last_insert_rowid();
             """;
-        command.Parameters.AddWithValue("$channelCode", detail.ChannelCode);
-        command.Parameters.AddWithValue("$orderNo", orderNo);
-        command.Parameters.AddWithValue("$shipmentGroupKey", orderNo);
-        command.Parameters.AddWithValue("$trackingNo", "(수동입력)");
-        command.Parameters.AddWithValue("$mskuCode", detail.MskuCode);
-        command.Parameters.AddWithValue("$cskuCode", detail.CskuCode);
-        command.Parameters.AddWithValue("$qty", detail.Qty);
-        command.Parameters.AddWithValue("$supplyPrice", detail.SupplyPrice);
-        command.Parameters.AddWithValue("$createdAt", DateTime.Now);
-        command.Parameters.AddWithValue("$confirmedAt", confirmedAt);
-        command.Parameters.AddWithValue("$recipient", detail.Recipient);
-        command.Parameters.AddWithValue("$address", detail.Address);
-        command.Parameters.AddWithValue("$productName", detail.ProductName);
-        command.Parameters.AddWithValue("$remark", detail.Remark);
-        command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
-        command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
-        command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
-        return (long)command.ExecuteScalar()!;
+        var channelCodeParam = command.Parameters.Add("$channelCode", SqliteType.Text);
+        var orderNoParam = command.Parameters.Add("$orderNo", SqliteType.Text);
+        var shipmentGroupKeyParam = command.Parameters.Add("$shipmentGroupKey", SqliteType.Text);
+        var trackingNoParam = command.Parameters.Add("$trackingNo", SqliteType.Text);
+        var mskuCodeParam = command.Parameters.Add("$mskuCode", SqliteType.Text);
+        var cskuCodeParam = command.Parameters.Add("$cskuCode", SqliteType.Text);
+        var qtyParam = command.Parameters.Add("$qty", SqliteType.Integer);
+        var supplyPriceParam = command.Parameters.Add("$supplyPrice", SqliteType.Real);
+        var createdAtParam = command.Parameters.Add("$createdAt", SqliteType.Text);
+        var confirmedAtParam = command.Parameters.Add("$confirmedAt", SqliteType.Text);
+        var recipientParam = command.Parameters.Add("$recipient", SqliteType.Text);
+        var addressParam = command.Parameters.Add("$address", SqliteType.Text);
+        var productNameParam = command.Parameters.Add("$productName", SqliteType.Text);
+        var remarkParam = command.Parameters.Add("$remark", SqliteType.Text);
+        var purchaseChannelCodeParam = command.Parameters.Add("$purchaseChannelCode", SqliteType.Text);
+        var purchasePriceParam = command.Parameters.Add("$purchasePrice", SqliteType.Real);
+        var weightKgParam = command.Parameters.Add("$weightKg", SqliteType.Real);
+
+        foreach (var detail in details)
+        {
+            var orderNo = string.IsNullOrWhiteSpace(detail.OrderNo)
+                ? $"수동-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}"
+                : detail.OrderNo;
+
+            channelCodeParam.Value = detail.ChannelCode;
+            orderNoParam.Value = orderNo;
+            shipmentGroupKeyParam.Value = orderNo;
+            trackingNoParam.Value = "(수동입력)";
+            mskuCodeParam.Value = detail.MskuCode;
+            cskuCodeParam.Value = detail.CskuCode;
+            qtyParam.Value = detail.Qty;
+            supplyPriceParam.Value = detail.SupplyPrice;
+            createdAtParam.Value = DateTime.Now;
+            confirmedAtParam.Value = detail.ConfirmedAt ?? DateTime.Now;
+            recipientParam.Value = detail.Recipient;
+            addressParam.Value = detail.Address;
+            productNameParam.Value = detail.ProductName;
+            remarkParam.Value = detail.Remark;
+            purchaseChannelCodeParam.Value = (object?)detail.PurchaseChannelCode ?? DBNull.Value;
+            purchasePriceParam.Value = (object?)detail.PurchasePrice ?? DBNull.Value;
+            weightKgParam.Value = (object?)detail.WeightKg ?? DBNull.Value;
+
+            ids.Add((long)command.ExecuteScalar()!);
+        }
+
+        transaction.Commit();
+        return ids;
     }
 
     /// <summary>

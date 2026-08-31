@@ -26,6 +26,29 @@ public class OutboundRepositoryTests
     }
 
     [TestMethod]
+    public void AddManualEntries_MultipleRows_AllInsertedAndVisibleInClosingPeriod()
+    {
+        // 거래처 마감보드 엑셀 일괄 추가(PartnerBulkOrderImportDialog)가 쓰는 경로. 한 번에 여러 건을
+        // 넣어도 전부 삽입되고, AddManualEntry(단건)와 동일하게 출고확정 상태로 즉시 집계 대상이
+        // 되는지 확인한다.
+        var repository = new OutboundRepository();
+        var channelCode = "TESTCH-BULK";
+
+        var ids = repository.AddManualEntries(new[]
+        {
+            new OutboundDetail { ChannelCode = channelCode, MskuCode = "CSKU-1", CskuCode = "CSKU-1", Qty = 2, SupplyPrice = 1000m, ProductName = "품목1", ConfirmedAt = new DateTime(2026, 8, 5) },
+            new OutboundDetail { ChannelCode = channelCode, MskuCode = "CSKU-2", CskuCode = "CSKU-2", Qty = 3, SupplyPrice = 2000m, ProductName = "품목2", ConfirmedAt = new DateTime(2026, 8, 20) },
+        });
+
+        Assert.HasCount(2, ids);
+        var results = repository.GetForClosingPeriod(channelCode, "2026-08");
+        Assert.HasCount(2, results);
+        Assert.IsTrue(results.All(r => r.Status == "출고확정"));
+        Assert.AreEqual(1, results.Count(r => r.CskuCode == "CSKU-1" && r.Qty == 2 && r.SupplyPrice == 1000m));
+        Assert.AreEqual(1, results.Count(r => r.CskuCode == "CSKU-2" && r.Qty == 3 && r.SupplyPrice == 2000m));
+    }
+
+    [TestMethod]
     public void SaveOutbound_SameOrderAndSkuTwice_UpdatesInsteadOfDuplicating()
     {
         var repository = new OutboundRepository();
