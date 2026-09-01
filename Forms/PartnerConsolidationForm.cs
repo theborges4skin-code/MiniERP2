@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.DataLoaders;
+using MiniERP2.Exporters;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
 using MiniERP2.UI;
@@ -74,16 +75,19 @@ public class PartnerConsolidationForm : Form
         var btnReload = new Button { Text = "다시 불러오기", Size = new Size(100, 30) };
         var btnAssignChannel = new Button { Text = "채널 수동 지정...", Size = new Size(120, 30) };
         var btnAggregate = new Button { Text = "집계 실행", Size = new Size(90, 30), Font = new Font(Font, FontStyle.Bold) };
+        var btnExport = new Button { Text = "엑셀 내보내기", Size = new Size(100, 30) };
         btnAddFiles.Click += (s, e) => AddFiles();
         btnRemoveFiles.Click += (s, e) => RemoveSelectedFiles();
         btnReload.Click += (s, e) => ReloadAllFiles();
         btnAssignChannel.Click += (s, e) => AssignChannelToSelectedFile();
         btnAggregate.Click += (s, e) => RunAggregate();
+        btnExport.Click += (s, e) => ExportToExcel();
         topPanel.Controls.Add(btnAddFiles);
         topPanel.Controls.Add(btnRemoveFiles);
         topPanel.Controls.Add(btnReload);
         topPanel.Controls.Add(btnAssignChannel);
         topPanel.Controls.Add(btnAggregate);
+        topPanel.Controls.Add(btnExport);
 
         // ── 2행: 파일 목록(§6.5 상단) ────────────────────────────────────
         _fileGrid = new ExcelLikeDataGridView
@@ -469,5 +473,38 @@ public class PartnerConsolidationForm : Form
         if (ambiguousCompanies.Count > 0)
             message += $" 대표단가 채널에 같은 마스터SKU의 CSKU가 여러 개 있어 저장하지 못한 거래처(CSKU 관리창에서 직접 정리하세요): {string.Join(", ", ambiguousCompanies)}.";
         _unassignedStatusLabel.Text = message;
+    }
+
+    // ── 엑셀 내보내기(§6.6, S9) ────────────────────────────────────────────
+
+    private void ExportToExcel()
+    {
+        if (_companySummaries.Count == 0)
+        {
+            MessageBox.Show(this, "내보낼 집계 결과가 없습니다. 먼저 '집계 실행'을 눌러주세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"온라인거래처취합_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("PartnerRollupExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+
+        _settingsService.SetLastFolder("PartnerRollupExport", Path.GetDirectoryName(filePath)!);
+
+        try
+        {
+            decimal ResolveBillingRate(string companyName) =>
+                _docPartyRepository.GetPriceMasterByCompanyName(companyName)?.ShippingFeePerShipment ?? DefaultShippingFeePerShipment;
+
+            PartnerConsolidationExporter.Export(_companySummaries, _cskuDetails, _channelShipments,
+                _unmappedExcludedRows, _files, ResolveBillingRate, filePath);
+
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }
