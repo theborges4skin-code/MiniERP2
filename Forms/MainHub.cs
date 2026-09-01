@@ -95,6 +95,7 @@ public class MainHub : Form
             ("광고비 분석", (s, e) => FormManager.Show<AdMappingForm>(), Keys.Control | Keys.F2),
             ("월별 마감 자동화", (s, e) => FormManager.Show<MonthlyClosingForm>(), Keys.Control | Keys.F3),
             ("거래처 마감보드", (s, e) => FormManager.Show<PartnerClosingForm>(), null),
+            ("온라인 거래처 취합", (s, e) => FormManager.Show<PartnerConsolidationForm>(), null),
         }),
         ("보고서", new()
         {

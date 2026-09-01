@@ -217,6 +217,10 @@ public static class FeatureIndex
         Sub("정산", "거래처 마감보드", "현황판 엑셀저장", () => FormManager.Show<PartnerClosingForm>());
         Sub("정산", "거래처 마감보드", "비매출 내역", () => FormManager.Show<PartnerClosingForm>());
 
+        Top("정산", "온라인 거래처 취합", () => FormManager.Show<PartnerConsolidationForm>());
+        Sub("정산", "온라인 거래처 취합", "파일 추가", () => FormManager.Show<PartnerConsolidationForm>());
+        Sub("정산", "온라인 거래처 취합", "채널 수동 지정", () => FormManager.Show<PartnerConsolidationForm>());
+
         // ── 보고서 ────────────────────────────────────────────────────────
         Top("보고서", "종합보고서", () => FormManager.Show<ReportForm>());
         Sub("보고서", "종합보고서", "Excel에서 불러오기", () => FormManager.Show<ReportForm>());

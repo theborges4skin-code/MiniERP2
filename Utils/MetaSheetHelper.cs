@@ -24,29 +24,38 @@ public static class MetaSheetHelper
                 return null;
 
             using var package = ExcelFileOpener.Open(filePath);
-            var sheet = package.Workbook.Worksheets[SheetName];
-            if (sheet == null) return null;
-
-            var kvp = ReadKeyValues(sheet);
-            if (!kvp.TryGetValue("channel_code", out var code) || string.IsNullOrEmpty(code))
-                return null;
-
-            return new FileMeta
-            {
-                SchemaVersion = int.TryParse(kvp.GetValueOrDefault("schema_version"), out var v) ? v : 1,
-                ChannelCode = code,
-                ChannelName = kvp.GetValueOrDefault("channel_name") ?? "",
-                SourceType = kvp.GetValueOrDefault("source_type") ?? "settlement",
-                FileCreatedAt = kvp.GetValueOrDefault("file_created_at") ?? "",
-                Period = kvp.GetValueOrDefault("period") ?? "",
-                // v1 파일에는 company_name 키가 없다 — 공란 처리(하위호환).
-                CompanyName = kvp.GetValueOrDefault("company_name") ?? "",
-            };
+            return TryReadFromPackage(package);
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// 이미 열려있는 <see cref="ExcelPackage"/>에서 _META 시트를 읽는다(온라인 거래처 취합처럼
+    /// 여러 시트를 함께 파싱하는 흐름에서 같은 파일을 두 번 여는 것을 피하기 위함). 없으면 null.
+    /// </summary>
+    public static FileMeta? TryReadFromPackage(ExcelPackage package)
+    {
+        var sheet = package.Workbook.Worksheets[SheetName];
+        if (sheet == null) return null;
+
+        var kvp = ReadKeyValues(sheet);
+        if (!kvp.TryGetValue("channel_code", out var code) || string.IsNullOrEmpty(code))
+            return null;
+
+        return new FileMeta
+        {
+            SchemaVersion = int.TryParse(kvp.GetValueOrDefault("schema_version"), out var v) ? v : 1,
+            ChannelCode = code,
+            ChannelName = kvp.GetValueOrDefault("channel_name") ?? "",
+            SourceType = kvp.GetValueOrDefault("source_type") ?? "settlement",
+            FileCreatedAt = kvp.GetValueOrDefault("file_created_at") ?? "",
+            Period = kvp.GetValueOrDefault("period") ?? "",
+            // v1 파일에는 company_name 키가 없다 — 공란 처리(하위호환).
+            CompanyName = kvp.GetValueOrDefault("company_name") ?? "",
+        };
     }
 
     // ── 쓰기 ──────────────────────────────────────────────────────────────────
