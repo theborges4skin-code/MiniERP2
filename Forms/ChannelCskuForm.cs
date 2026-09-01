@@ -44,6 +44,7 @@ public class ChannelCskuForm : Form
     {
         _initialChannelCode = initialChannelCode;
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadChannelCombo();
     }
 

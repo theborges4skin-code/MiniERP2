@@ -14,6 +14,7 @@ public class FboHistoryRow
     public string Csku { get; set; } = string.Empty;
     public string ItemName { get; set; } = string.Empty;
     public int Qty { get; set; }
+    public string? ExpiryDate { get; set; }
     public string? TrackingNo { get; set; }
     public string Status { get; set; } = string.Empty;
 }

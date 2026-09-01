@@ -55,6 +55,7 @@ public class ExportSummaryForm : Form
         _config = _configService.Load();
         EnsureUsdUnmatched();
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     /// <summary>기존 config 파일에 USD_UNMATCHED 마켓/통화매핑이 없으면 런타임에 추가한다(기본값 재생성 없이 업그레이드).</summary>

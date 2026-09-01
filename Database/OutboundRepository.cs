@@ -55,8 +55,8 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, LineKind)
-            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg, $lineKind)
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Phone, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, LineKind)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $qty, $supplyPrice, $createdAt, $status, $confirmedAt, $recipient, $phone, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg, $lineKind)
             ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
                 ChannelCode = excluded.ChannelCode,
                 OrderNo = excluded.OrderNo,
@@ -66,6 +66,7 @@ public class OutboundRepository
                 -- (가격조정 등 무관한 이유로 흔히 발생) 단가가 조용히 최신값으로 덮이지 않게 한다.
                 SupplyPrice = CASE WHEN OutboundDetailTable.Status = '출고확정' THEN OutboundDetailTable.SupplyPrice ELSE excluded.SupplyPrice END,
                 Recipient = excluded.Recipient,
+                Phone = excluded.Phone,
                 Address = excluded.Address,
                 ProductName = excluded.ProductName,
                 Remark = excluded.Remark,
@@ -94,6 +95,7 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$status", hasTracking ? "출고확정" : "발주확정");
             command.Parameters.AddWithValue("$confirmedAt", hasTracking ? now : (object)DBNull.Value);
             command.Parameters.AddWithValue("$recipient", detail.Recipient);
+            command.Parameters.AddWithValue("$phone", detail.Phone);
             command.Parameters.AddWithValue("$address", detail.Address);
             command.Parameters.AddWithValue("$productName", detail.ProductName);
             command.Parameters.AddWithValue("$remark", detail.Remark);
@@ -133,15 +135,17 @@ public class OutboundRepository
 
     /// <summary>
     /// 운송장 결과 가져오기로 특정 건의 운송장번호를 확정합니다(수령인 기준 매칭 후 사용자가 고른
-    /// 1건에 적용). 운송장번호가 채워지면 항상 "출고확정"으로 바뀝니다.
+    /// 1건에 적용). 운송장번호가 채워지면 항상 "출고확정"으로 바뀝니다. courierName을 지정하면
+    /// 택배사명도 함께 채웁니다("누적발주서 송장번호 입력" 전용) — 생략하면(null) 기존 값을 그대로 둡니다.
     /// </summary>
-    public void ApplyTrackingNo(long id, string trackingNo)
+    public void ApplyTrackingNo(long id, string trackingNo, string? courierName = null)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE OutboundDetailTable SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt WHERE Id = $id";
+        command.CommandText = "UPDATE OutboundDetailTable SET TrackingNo = $trackingNo, Status = '출고확정', ConfirmedAt = $confirmedAt, CourierName = COALESCE($courierName, CourierName) WHERE Id = $id";
         command.Parameters.AddWithValue("$trackingNo", trackingNo);
         command.Parameters.AddWithValue("$confirmedAt", DateTime.Now);
+        command.Parameters.AddWithValue("$courierName", (object?)courierName ?? DBNull.Value);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }
@@ -261,7 +265,7 @@ public class OutboundRepository
         return GetHistory(channelCode, from, to, scope, lineKind);
     }
 
-    private const string ClosingCols = "Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod, LineKind";
+    private const string ClosingCols = "Id, ChannelCode, OrderNo, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg, ShipmentGroupKey, CskuCode, ClosingPeriod, LineKind, Phone, CourierName";
 
     /// <summary>
     /// LineKindScope에 따른 WHERE 절 조각을 만듭니다(샘플발송이력관리_개발기획서.md §4.4). 기존
@@ -435,8 +439,8 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, CskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
-            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $cskuCode, $qty, $supplyPrice, $createdAt, '출고확정', $confirmedAt, $recipient, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg);
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, CskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Phone, Address, ProductName, Remark, PurchaseChannelCode, PurchasePrice, WeightKg)
+            VALUES ($channelCode, $orderNo, $shipmentGroupKey, $trackingNo, $mskuCode, $cskuCode, $qty, $supplyPrice, $createdAt, '출고확정', $confirmedAt, $recipient, $phone, $address, $productName, $remark, $purchaseChannelCode, $purchasePrice, $weightKg);
             SELECT last_insert_rowid();
             """;
         var channelCodeParam = command.Parameters.Add("$channelCode", SqliteType.Text);
@@ -450,6 +454,7 @@ public class OutboundRepository
         var createdAtParam = command.Parameters.Add("$createdAt", SqliteType.Text);
         var confirmedAtParam = command.Parameters.Add("$confirmedAt", SqliteType.Text);
         var recipientParam = command.Parameters.Add("$recipient", SqliteType.Text);
+        var phoneParam = command.Parameters.Add("$phone", SqliteType.Text);
         var addressParam = command.Parameters.Add("$address", SqliteType.Text);
         var productNameParam = command.Parameters.Add("$productName", SqliteType.Text);
         var remarkParam = command.Parameters.Add("$remark", SqliteType.Text);
@@ -474,6 +479,7 @@ public class OutboundRepository
             createdAtParam.Value = DateTime.Now;
             confirmedAtParam.Value = detail.ConfirmedAt ?? DateTime.Now;
             recipientParam.Value = detail.Recipient;
+            phoneParam.Value = detail.Phone;
             addressParam.Value = detail.Address;
             productNameParam.Value = detail.ProductName;
             remarkParam.Value = detail.Remark;
@@ -542,6 +548,51 @@ public class OutboundRepository
         using var command = connection.CreateCommand();
         command.CommandText = "UPDATE OutboundDetailTable SET ProductName = $name WHERE Id = $id";
         command.Parameters.AddWithValue("$name", productName);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// CSKU만 단독으로 고친다(거래처마감보드 라인 상세 — 오배정된 라인을 바로잡을 때). CskuCode를
+    /// 채우면 BuildLine의 폴백 우선순위(CskuCode 우선, 없으면 MskuCode)상 그대로 새 CSKU가 적용되고,
+    /// 품목명/원가는 다음 조회 시 새 CSKU 기준으로 자동 재계산된다.
+    /// </summary>
+    public void UpdateCskuCode(long id, string cskuCode)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET CskuCode = $csku WHERE Id = $id";
+        command.Parameters.AddWithValue("$csku", cskuCode);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 정상 매출 라인을 매출마감제외(비매출)로 재분류한다(거래처마감보드 라인 상세 — 에누리/CS/할인/
+    /// 무상발송 등 청구하지 않는 사유 처리용). LineKind를 채우면 GetForClosingPeriod의 기본 스코프
+    /// (SaleOnly)에서 자동으로 빠지고 "비매출 내역"에서 잡힌다 — OutboundDetailTable 행 자체(=출고
+    /// 이력)는 삭제하지 않고 그대로 남긴다. reason이 비어있으면 기존 비고(Remark)는 건드리지 않는다.
+    /// </summary>
+    public void UpdateLineKind(long id, string lineKind, string? reason)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = string.IsNullOrWhiteSpace(reason)
+            ? "UPDATE OutboundDetailTable SET LineKind = $kind WHERE Id = $id"
+            : "UPDATE OutboundDetailTable SET LineKind = $kind, Remark = $reason WHERE Id = $id";
+        command.Parameters.AddWithValue("$kind", lineKind);
+        if (!string.IsNullOrWhiteSpace(reason)) command.Parameters.AddWithValue("$reason", reason);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>수량만 단독으로 고친다(거래처마감보드 라인 상세 — 잘못 입력된 수량을 바로잡을 때).</summary>
+    public void UpdateQty(long id, decimal qty)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET Qty = $qty WHERE Id = $id";
+        command.Parameters.AddWithValue("$qty", qty);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }
@@ -739,5 +790,7 @@ public class OutboundRepository
         CskuCode = reader.IsDBNull(18) ? "" : reader.GetString(18),
         ClosingPeriod = reader.IsDBNull(19) ? "" : reader.GetString(19),
         LineKind = reader.IsDBNull(20) ? "" : reader.GetString(20),
+        Phone = reader.GetString(21),
+        CourierName = reader.IsDBNull(22) ? "" : reader.GetString(22),
     };
 }

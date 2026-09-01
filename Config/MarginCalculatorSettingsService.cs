@@ -5,11 +5,6 @@ namespace MiniERP2.Config;
 
 public class MarginCalculatorSettings
 {
-    /// <summary>VatIncl / VatExcl. ItemTable.CostPrice(마스터 대표원가)의 실제 저장 기준이
-    /// 아직 확정되지 않아(간이마진계산기_개발기획서.md §4.6.1) 설정값으로 둔다. M0에서 운영 DB
-    /// 실측 대조 후 확정할 것 — 그때까지 하드코딩하지 않는다.</summary>
-    public string MasterCostVatBasis { get; set; } = "VatExcl";
-
     /// <summary>§8: 비용 항목 정의(전역 패널)를 다음 실행 시 복원한다.</summary>
     public List<MarginCostItemDef> CostItems { get; set; } = new();
 

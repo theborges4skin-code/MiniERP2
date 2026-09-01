@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Services;
@@ -69,7 +70,7 @@ public class UnmappedQueueForm : Form
 
     private DataGridView BuildGrid()
     {
-        var grid = new DataGridView
+        var grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

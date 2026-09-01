@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
@@ -32,7 +33,7 @@ public class PartyManagerForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

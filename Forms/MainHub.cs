@@ -1,7 +1,9 @@
 using MiniERP2.Config;
 using MiniERP2.Database;
+using MiniERP2.Models;
 using MiniERP2.Services;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -16,6 +18,10 @@ public class MainHub : Form
 
     private Label _summaryLabel = new();
     private System.Windows.Forms.Timer _autoOrderPollTimer = new();
+
+    private TextBox _searchBox = new();
+    private ListBox _searchResultsBox = new();
+    private List<FeatureIndexEntry> _searchMatches = new();
 
     public MainHub()
     {
@@ -41,6 +47,13 @@ public class MainHub : Form
         Controls.Add(menuStrip);
         MainMenuStrip = menuStrip;
 
+        // 검색 결과 목록은 레이아웃 공간을 고정으로 차지하지 않도록 Form에 직접 얹은 뒤(절대좌표),
+        // 입력이 있을 때만 검색창 바로 아래에 위치를 계산해 띄운다(자동완성 드롭다운 흉내).
+        Controls.Add(_searchResultsBox);
+
+        KeyPreview = true;
+        KeyDown += OnMainHubKeyDown;
+
         Activated += (s, e) => RefreshSummary();
         FormClosing += (s, e) => _autoOrderPollTimer.Stop();
     }
@@ -58,6 +71,7 @@ public class MainHub : Form
         {
             ("OFS (발주처리)", (s, e) => FormManager.Show<OfsForm>(), Keys.Control | Keys.D3),
             ("발주/출고 이력", (s, e) => FormManager.Show<OutboundHistoryForm>(), Keys.Control | Keys.D4),
+            ("운송장 파일 누락건 점검", (s, e) => TrackingBackfillCheckFlow.Run(this), null),
             ("풀필먼트 발주 처리", (s, e) => FormManager.Show<FboOrderForm>(), Keys.Control | Keys.D6),
             ("풀필먼트 발주 이력", (s, e) => FormManager.Show<FboHistoryForm>(), Keys.Control | Keys.D7),
             ("자동발주처리", (s, e) => FormManager.Show<AutoOrderInboxForm>(), Keys.Control | Keys.D9),
@@ -73,6 +87,7 @@ public class MainHub : Form
             ("견적·단가 관리", (s, e) => FormManager.Show<PriceQuoteForm>(), Keys.Control | Keys.F7),
             ("배송지 주소록 관리", (s, e) => FormManager.Show<AddressBookForm>(), null),
             ("간이 마진 계산기", (s, e) => FormManager.Show<MarginCalculatorForm>(), null),
+            ("정산 마진 계산기", (s, e) => FormManager.Show<SimpleMarginCalculatorForm>(), null),
         }),
         ("정산", new()
         {
@@ -85,6 +100,7 @@ public class MainHub : Form
         {
             ("종합보고서", (s, e) => FormManager.Show<ReportForm>(), Keys.Control | Keys.F4),
             ("수출요약보고서", (s, e) => FormManager.Show<ExportSummaryForm>(), Keys.Control | Keys.F8),
+            ("CSKU별 통계", (s, e) => FormManager.Show<CskuStatForm>(), null),
         }),
         ("문서관리", new()
         {
@@ -122,12 +138,15 @@ public class MainHub : Form
         var outer = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 2,
+            RowCount = 3,
             ColumnCount = 1,
             Padding = new Padding(20),
         };
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));
         outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var searchPanel = BuildSearchPanel();
 
         _summaryLabel = new Label
         {
@@ -146,11 +165,131 @@ public class MainHub : Form
         foreach (var (groupTitle, actions) in groups)
             groupsFlow.Controls.Add(BuildGroupBox(groupTitle, actions));
 
-        outer.Controls.Add(_summaryLabel, 0, 0);
-        outer.Controls.Add(groupsFlow, 0, 1);
+        outer.Controls.Add(searchPanel, 0, 0);
+        outer.Controls.Add(_summaryLabel, 0, 1);
+        outer.Controls.Add(groupsFlow, 0, 2);
 
         RefreshSummary();
         return outer;
+    }
+
+    /// <summary>
+    /// 기능 검색창. 메인 화면 버튼뿐 아니라 하위 창(예: 발주/출고 이력 안의 "운송장 파일 누락건
+    /// 점검 > 택배운임 통계")까지 <see cref="FeatureIndex"/>에 등록된 항목을 실시간으로 찾아준다.
+    /// </summary>
+    private Control BuildSearchPanel()
+    {
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+
+        panel.Controls.Add(new Label { Text = "기능 검색(Ctrl+K):", AutoSize = true, Padding = new Padding(0, 9, 4, 0) });
+
+        _searchBox = new TextBox { Width = 420, Margin = new Padding(0, 5, 0, 0) };
+        _searchBox.TextChanged += OnSearchTextChanged;
+        _searchBox.KeyDown += OnSearchBoxKeyDown;
+        panel.Controls.Add(_searchBox);
+
+        panel.Controls.Add(new Label
+        {
+            Text = "메인 화면 버튼뿐 아니라 하위 창의 세부 기능까지 검색합니다. ↓/Enter로 선택, Esc로 닫기.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Padding = new Padding(10, 11, 0, 0),
+        });
+
+        _searchResultsBox = new ListBox { Width = 460, Height = 240, Visible = false, IntegralHeight = false };
+        _searchResultsBox.Click += (_, _) => ActivateSelectedSearchResult();
+        _searchResultsBox.KeyDown += OnSearchResultsKeyDown;
+
+        return panel;
+    }
+
+    private void OnSearchTextChanged(object? sender, EventArgs e)
+    {
+        var query = _searchBox.Text.Trim();
+        if (query.Length == 0)
+        {
+            HideSearchResults();
+            return;
+        }
+
+        _searchMatches = FeatureIndex.All
+            .Where(f => f.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Take(40)
+            .ToList();
+
+        _searchResultsBox.Items.Clear();
+        if (_searchMatches.Count == 0)
+        {
+            _searchResultsBox.Items.Add("검색 결과가 없습니다.");
+            _searchResultsBox.Enabled = false;
+        }
+        else
+        {
+            _searchResultsBox.Enabled = true;
+            foreach (var match in _searchMatches) _searchResultsBox.Items.Add(match.DisplayText);
+            _searchResultsBox.SelectedIndex = 0;
+        }
+
+        _searchResultsBox.Location = PointToClient(_searchBox.PointToScreen(new Point(0, _searchBox.Height + 2)));
+        _searchResultsBox.Visible = true;
+        _searchResultsBox.BringToFront();
+    }
+
+    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Down && _searchResultsBox.Visible && _searchResultsBox.Items.Count > 0)
+        {
+            _searchResultsBox.Focus();
+            _searchResultsBox.SelectedIndex = 0;
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.Enter)
+        {
+            ActivateSelectedSearchResult();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Escape)
+        {
+            HideSearchResults();
+        }
+    }
+
+    private void OnSearchResultsKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Enter)
+        {
+            ActivateSelectedSearchResult();
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.Escape)
+        {
+            HideSearchResults();
+            _searchBox.Focus();
+        }
+    }
+
+    private void ActivateSelectedSearchResult()
+    {
+        var index = _searchResultsBox.SelectedIndex;
+        if (index < 0 || index >= _searchMatches.Count) return;
+
+        var entry = _searchMatches[index];
+        HideSearchResults();
+        _searchBox.Clear();
+        entry.Open();
+    }
+
+    private void HideSearchResults() => _searchResultsBox.Visible = false;
+
+    private void OnMainHubKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.K)
+        {
+            _searchBox.Focus();
+            _searchBox.SelectAll();
+            e.Handled = true;
+        }
     }
 
     private Control BuildGroupBox(string title, List<(string Text, EventHandler Handler, Keys? Shortcut)> actions)

@@ -1,4 +1,5 @@
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Models;
@@ -34,6 +35,7 @@ public class FbaHistoryForm : Form
     public FbaHistoryForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     private void InitializeComponent()
@@ -73,8 +75,19 @@ public class FbaHistoryForm : Form
         btnExportCourier.Click += OnExportCourierClick;
         var btnExportShipment = new Button { Text = "선적명세 재출력", Size = new Size(120, 30), Margin = new Padding(6, 0, 0, 0) };
         btnExportShipment.Click += OnExportShipmentClick;
+        // 선택한 발주 1건 또는 여러 건(일괄 선택)에 동일한 Shipment ID를 적용한다 — 아마존이
+        // Shipment ID를 발주 확정 이후에야 발급하는 경우 FbaOrderForm을 다시 열지 않고 여기서
+        // 바로 채워 넣기 위함(사용자 요청, 2026-08-10).
+        var btnInputShipmentId = new Button { Text = "Shipment ID 입력", Size = new Size(120, 30), Margin = new Padding(12, 0, 0, 0) };
+        btnInputShipmentId.Click += OnInputShipmentIdClick;
         var btnDeleteOrder = new Button { Text = "발주 삭제", Size = new Size(90, 30), Margin = new Padding(12, 0, 0, 0) };
         btnDeleteOrder.Click += OnDeleteOrderClick;
+        // 선택한 발주(들) 또는 선택이 없으면 현재 조회+검색된 전체 발주를 대상으로 박스 포장용
+        // 작업지시서를 낸다(사용자 요청, 2026-08-10). CSKU별 집계 뷰에도 발주번호 구분 없이 "조회된
+        // 전체" 대상으로는 계속 동작해야 하므로 다른 발주 단위 버튼들과 달리 뷰 전환에 따라
+        // 비활성화하지 않는다.
+        var btnIssueWorkOrder = new Button { Text = "작업지시서 발행", Size = new Size(110, 30), Margin = new Padding(12, 0, 0, 0) };
+        btnIssueWorkOrder.Click += OnIssueWorkOrderClick;
 
         _viewModeCombo.SelectedIndexChanged += (s, e) =>
         {
@@ -84,6 +97,7 @@ public class FbaHistoryForm : Form
             btnCopyAsNew.Enabled = enableOrderActions;
             btnExportCourier.Enabled = enableOrderActions;
             btnExportShipment.Enabled = enableOrderActions;
+            btnInputShipmentId.Enabled = enableOrderActions;
             btnDeleteOrder.Enabled = enableOrderActions;
         };
 
@@ -95,9 +109,9 @@ public class FbaHistoryForm : Form
             new Label { Text = "보기:", AutoSize = true, Padding = new Padding(12, 5, 4, 0) }, _viewModeCombo,
             _searchBox,
         ]);
-        actionBar.Controls.AddRange([btnOpenDetail, btnCopyAsNew, btnExportCourier, btnExportShipment, btnDeleteOrder]);
+        actionBar.Controls.AddRange([btnOpenDetail, btnCopyAsNew, btnExportCourier, btnExportShipment, btnInputShipmentId, btnDeleteOrder, btnIssueWorkOrder]);
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
@@ -139,6 +153,105 @@ public class FbaHistoryForm : Form
         }
         var fbaNo = _grid.CurrentRow.Cells["FbaNo"].Value?.ToString();
         return string.IsNullOrWhiteSpace(fbaNo) ? null : fbaNo;
+    }
+
+    /// <summary>그리드에서 일괄(Ctrl/Shift+클릭) 또는 임의로 선택된 행들의 발주번호를 중복 없이
+    /// 반환한다(선택 없거나 CSKU별 집계 뷰면 안내 후 null). "Shipment ID 입력"이 여러 발주를
+    /// 한 번에 처리할 때 쓴다 — 상세보기 뷰에서는 같은 발주의 여러 라인이 함께 선택될 수 있어
+    /// Distinct가 필요하다.</summary>
+    private List<string>? GetSelectedFbaNos()
+    {
+        if (_viewModeCombo.SelectedIndex == ViewModeByCsku)
+        {
+            MessageBox.Show("이 작업은 'CSKU별 집계' 뷰에서는 할 수 없습니다. 상세보기/발주번호별 뷰에서 시도하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+        if (_grid.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("대상 발주 건을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+
+        var fbaNos = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.Cells["FbaNo"].Value?.ToString())
+            .Where(no => !string.IsNullOrWhiteSpace(no))
+            .Select(no => no!)
+            .Distinct()
+            .ToList();
+        return fbaNos.Count == 0 ? null : fbaNos;
+    }
+
+    /// <summary>선택한 발주 1건 또는 여러 건에 동일한 Shipment ID를 일괄 적용한다.</summary>
+    private void OnInputShipmentIdClick(object? sender, EventArgs e)
+    {
+        var fbaNos = GetSelectedFbaNos();
+        if (fbaNos == null) return;
+
+        using var dlg = new FbaShipmentIdInputDialog(fbaNos.Count);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        foreach (var fbaNo in fbaNos)
+            _orderRepository.UpdateShipmentId(fbaNo, dlg.ShipmentId);
+
+        RunQuery();
+        _statusLabel.Text = $"발주 {fbaNos.Count}건에 Shipment ID '{dlg.ShipmentId}'를 적용했습니다.";
+    }
+
+    /// <summary>"작업지시서 발행"의 대상 발주번호를 정한다 — 그리드에 선택된 행이 있으면(상세보기/
+    /// 발주번호별 뷰) 그 발주들, 없으면(또는 CSKU별 집계 뷰라 선택 개념이 없으면) 현재 조회+검색된
+    /// 전체 발주로 자동 대체한다("임의 또는 조회된 발주건" — 사용자 요청).</summary>
+    private List<string> GetTargetFbaNosForWorkOrder()
+    {
+        if (_viewModeCombo.SelectedIndex != ViewModeByCsku && _grid.SelectedRows.Count > 0)
+        {
+            return _grid.SelectedRows.Cast<DataGridViewRow>()
+                .Select(r => r.Cells["FbaNo"].Value?.ToString())
+                .Where(no => !string.IsNullOrWhiteSpace(no))
+                .Select(no => no!)
+                .Distinct()
+                .ToList();
+        }
+
+        return GetFilteredRows().Select(r => r.FbaNo).Distinct().ToList();
+    }
+
+    private void OnIssueWorkOrderClick(object? sender, EventArgs e)
+    {
+        var fbaNos = GetTargetFbaNosForWorkOrder();
+        if (fbaNos.Count == 0)
+        {
+            MessageBox.Show("대상 발주 건이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var orderSets = fbaNos
+            .Select(no => _orderRepository.GetOrder(no))
+            .Where(o => o.Order != null && o.Boxes.Count > 0)
+            .Select(o => new FbaWorkOrderExporter.OrderBoxSet(o.Order!.FbaNo, o.Boxes, o.Items))
+            .ToList();
+        if (orderSets.Count == 0)
+        {
+            MessageBox.Show("발주 정보를 찾을 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var defaultName = orderSets.Count == 1
+            ? $"FBA작업지시서_{orderSets[0].FbaNo}_{DateTime.Now:yyyyMMdd}.xlsx"
+            : $"FBA작업지시서_{DateTime.Now:yyyyMMdd}.xlsx";
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx", defaultName,
+            _settingsService.GetLastFolder("FbaWorkOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FbaWorkOrderExport", Path.GetDirectoryName(filePath)!);
+
+        try
+        {
+            FbaWorkOrderExporter.Export(orderSets, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"내보내기 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OnOpenDetailClick(object? sender, EventArgs e)
@@ -273,11 +386,12 @@ public class FbaHistoryForm : Form
         Render();
     }
 
-    private void Render()
+    /// <summary>현재 검색어로 걸러진 조회 결과. Render()와 "작업지시서 발행"(선택 없을 때 조회된
+    /// 전체를 대상으로 하는 기본 동작)이 공용으로 쓴다.</summary>
+    private List<FbaHistoryRow> GetFilteredRows()
     {
         var search = _searchBox.Text.Trim();
-
-        var filtered = _rows.Where(r =>
+        return _rows.Where(r =>
             search.Length == 0 ||
             r.FbaNo.Contains(search, StringComparison.OrdinalIgnoreCase) ||
             (r.ShipmentId?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
@@ -285,6 +399,11 @@ public class FbaHistoryForm : Form
             r.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
             (r.TrackingNo?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
         ).ToList();
+    }
+
+    private void Render()
+    {
+        var filtered = GetFilteredRows();
 
         _grid.Columns.Clear();
         _grid.Rows.Clear();
@@ -351,13 +470,14 @@ public class FbaHistoryForm : Form
             _grid.Columns.Add("Csku", "CSKU");
             _grid.Columns.Add("ItemName", "품목명");
             _grid.Columns.Add("Qty", "수량");
+            _grid.Columns.Add("ExpiryDate", "유통기한");
             _grid.Columns.Add("TrackingNo", "운송장번호");
             _grid.Columns.Add("Status", "상태");
 
             foreach (var r in filtered)
             {
                 _grid.Rows.Add(r.FbaNo, r.OrderDate.ToString("yyyy-MM-dd"), r.ShipmentId, r.BoxSeq,
-                    r.Csku, r.ItemName, r.Qty, r.TrackingNo, r.Status);
+                    r.Csku, r.ItemName, r.Qty, r.ExpiryDate, r.TrackingNo, r.Status);
             }
         }
 

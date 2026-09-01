@@ -1,4 +1,5 @@
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Migration;
 using MiniERP2.Utils;
 
@@ -68,7 +69,7 @@ public class TradeStatementMigrationDialog : Form
 
     private Control BuildGrid()
     {
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

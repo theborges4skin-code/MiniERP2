@@ -118,20 +118,27 @@ public class OrderLoader
                     // 각 속성에 대해 매핑된 열 인덱스를 사용하여 값을 가져옵니다.
                     ChannelCode = channelConfig.ChannelCode,
                     SourceRowKey = $"{sourceFileName}#{row}",
-                    OrderNo = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductNo),
-                    ProductName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName),
-                    OptionName = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName),
+                    OrderNo = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductNo),
+                    ProductName = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ProductName),
+                    OptionName = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OptionName),
                     Quantity = int.TryParse(GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Quantity), out var qty) ? qty : 0,
                     Revenue = revenue,
-                    Recipient = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
-                    Phone = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
-                    Address = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
-                    DeliveryMessage = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
-                    Remark = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Remark),
-                    ChannelHint = GetValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ChannelHint),
+                    Recipient = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
+                    Phone = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
+                    Address = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
+                    TrackingNo = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo),
+                    CourierName = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.CourierName),
+                    DeliveryMessage = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
+                    Remark = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Remark),
+                    ChannelHint = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.ChannelHint),
                     OrderDate = GetDateValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.OrderDate),
                     Status = "로드 완료"
                 };
+
+                // "샘플등"(§2 D3) 채널은 애초에 판매용 CSKU가 없을 수밖에 없으므로, 발주 파일로
+                // 불러온 행도 ManualOrderDialog.PresetLineKindIfSampleChannel과 동일하게 "구분"을
+                // 기본으로 "샘플"로 채워, SKU 매핑 없이도 발주확정 저장이 가능하도록 한다.
+                if (channelConfig.ChannelCode == "SAMPLE") orderItem.LineKind = LineKinds.Sample;
 
                 // SKU 자동 매핑 적용
                 skuMapper.ApplyMapping(orderItem);
@@ -166,6 +173,23 @@ public class OrderLoader
         return map.TryGetValue(field, out var colIndex)
             ? worksheet.Cells[row, colIndex].Value?.ToString()
             : null;
+    }
+
+    /// <summary>
+    /// 수령인/전화번호/주소 등 문자열 성격 필드 전용. 전화번호·우편번호처럼 숫자로 입력된 값은
+    /// 셀 원본값(.Value)에서 앞자리 0이 사라지고 화면에 보이는 서식(.Text)에만 남는 경우가 흔해서
+    /// (엑셀의 잘 알려진 함정), 셀 값이 이미 문자열이 아니면 화면에 보이는 형식(.Text) 그대로
+    /// 읽는다 — 그래야 "누적발주서 송장번호 입력"의 수령인+전화번호+주소 완전일치 매칭이 화면에
+    /// 보이는 값 기준으로 정확히 동작한다. 수량/매출액처럼 TryParse로 숫자 변환해야 하는 필드는
+    /// 천단위 구분자·통화기호가 섞인 서식 텍스트를 피하기 위해 이 메서드를 쓰지 않고 GetValue를 쓴다.
+    /// </summary>
+    private string? GetTextValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
+    {
+        if (fixedValues.TryGetValue(field, out var fixedValue)) return fixedValue;
+        if (!map.TryGetValue(field, out var colIndex)) return null;
+
+        var cell = worksheet.Cells[row, colIndex];
+        return cell.Value is string s ? s : cell.Text;
     }
 
     /// <summary>

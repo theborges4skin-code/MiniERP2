@@ -81,6 +81,7 @@ public class ChannelConfigForm : Form
     public ChannelConfigForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadData();
     }
 

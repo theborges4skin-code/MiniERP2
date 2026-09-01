@@ -363,7 +363,7 @@ public class QuickMappingPanel : Panel
         condToolbar.Controls.Add(btnAdd);
         condToolbar.Controls.Add(btnRem);
 
-        _conditionGrid = new DataGridView
+        _conditionGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -73,7 +74,7 @@ public class QuoteExportDialog : Form
         layout.Controls.Add(FieldRow("가격기준", _priceBasisBox), 0, 3);
         layout.Controls.Add(FieldRow("인사문", _greetingBox), 0, 4);
 
-        _lineGrid = new DataGridView
+        _lineGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

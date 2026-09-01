@@ -139,6 +139,11 @@ public class PartnerClosingRepository
         };
     }
 
+    /// <summary>
+    /// MANUAL 거래처 요약 — 합계는 항상 헤더 필드(TotalQty 등) 기준이다(AddManualLine이 라인 추가/
+    /// 삭제마다 그 합으로 맞춰두므로, 순수 "금액입력/비고"만 쓴 거래처와 라인을 쌓은 거래처 모두
+    /// 이 필드 하나로 일관되게 처리된다). 라인은 있으면 함께 실어 라인 상세 그리드에서 보이게 한다.
+    /// </summary>
     private PartnerClosingSummary BuildFromManualHeader(PartnerClosing header) => new()
     {
         Period = header.Period,
@@ -155,7 +160,44 @@ public class PartnerClosingRepository
         ReconcileNote = header.ReconcileNote,
         ConfirmedAt = header.ConfirmedAt,
         DocHistoryId = header.DocHistoryId,
+        Lines = GetLinesByClosingId(header.Id),
     };
+
+    /// <summary>
+    /// MANUAL 거래처에 품목별 라인을 하나 추가한다(채널 경유 거래처의 "수동 주문 추가"에 대응).
+    /// 원천 라인이 없어 채널 거래처처럼 확정 시점에 한꺼번에 스냅샷을 뜰 수 없으므로, 처음부터
+    /// PartnerClosingLineTable에 직접 쌓아 확정 여부와 무관하게 계속 보관한다(OutboundDetailId는
+    /// 항상 null — CostPrice는 CSKU 조회 없이 입력값을 그대로 쓴다, 미경유 거래라 등록이 없어서).
+    /// 아직 이 기간의 헤더가 없으면(대조만 하고 확정 전) 대조중 상태로 빈 헤더를 먼저 만든다.
+    /// </summary>
+    public void AddManualLine(string period, string partyKey, string partyName, PartnerClosingLine line)
+    {
+        var header = GetHeader(period, partyKey) ?? new PartnerClosing { Period = period, PartyKey = partyKey, Status = "대조중" };
+        header.PartyName = partyName;
+        header.IsManual = true;
+        SaveHeader(header);
+
+        InsertLines(header.Id, [line]);
+        RecalculateManualHeaderTotals(header.Id);
+    }
+
+    /// <summary>
+    /// MANUAL 헤더의 합계 필드를 그 헤더에 쌓인 라인들의 합으로 다시 맞춘다(AddManualLine 전용).
+    /// 원가는 CostResolver를 거치지 않고 라인에 입력된 CostPrice를 그대로 합산한다.
+    /// </summary>
+    private void RecalculateManualHeaderTotals(long closingId)
+    {
+        var lines = GetLinesByClosingId(closingId);
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE PartnerClosingTable SET TotalQty = $qty, TotalSupply = $supply, TotalCost = $cost, TotalProfit = $profit WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$qty", lines.Sum(l => l.Qty));
+        cmd.Parameters.AddWithValue("$supply", lines.Sum(l => l.Qty * l.UnitPrice));
+        cmd.Parameters.AddWithValue("$cost", lines.Sum(l => l.Qty * l.CostPrice));
+        cmd.Parameters.AddWithValue("$profit", lines.Sum(l => l.Profit));
+        cmd.Parameters.AddWithValue("$id", closingId);
+        cmd.ExecuteNonQuery();
+    }
 
     private PartnerClosingSummary BuildFromSnapshot(PartnerClosing header)
     {
@@ -380,18 +422,31 @@ public class PartnerClosingRepository
     }
 
     /// <summary>
-    /// 확정을 취소한다: 라인 스냅샷을 삭제하고 상태를 대조중으로 되돌린다(§7). 이미 발행완료였어도
-    /// 진행하며(발행 문서 자체는 DocHistoryTable에 남는다), 그 경고는 호출 측(UI)의 책임이다.
+    /// 확정을 취소한다: 상태를 대조중으로 되돌린다(§7). 이미 발행완료였어도 진행하며(발행 문서
+    /// 자체는 DocHistoryTable에 남는다), 그 경고는 호출 측(UI)의 책임이다. 채널 경유 거래처는
+    /// 라인 스냅샷을 지운다(재확정 시 OutboundDetailTable에서 다시 라이브로 뜬다) — 하지만 MANUAL
+    /// 거래처는 라인이 원본 자체(AddManualLine으로 직접 쌓은 것)라 여기서 지우면 데이터가 영구
+    /// 소실되므로 지우지 않는다.
     /// </summary>
     public void Cancel(long closingId)
     {
-        DeleteLinesByClosingId(closingId);
+        if (!IsManualClosing(closingId)) DeleteLinesByClosingId(closingId);
 
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE PartnerClosingTable SET Status = '대조중', ConfirmedAt = NULL WHERE Id = $id";
         cmd.Parameters.AddWithValue("$id", closingId);
         cmd.ExecuteNonQuery();
+    }
+
+    private bool IsManualClosing(long closingId)
+    {
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT IsManual FROM PartnerClosingTable WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", closingId);
+        var result = cmd.ExecuteScalar();
+        return result != null && Convert.ToInt32(result) == 1;
     }
 
     /// <summary>귀속월을 수동으로 재지정한다(§4 우클릭 [귀속월 변경]).</summary>

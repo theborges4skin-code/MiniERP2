@@ -24,6 +24,7 @@ public class PartnerClosingForm : Form
     private readonly DocHistoryRepository _docHistoryRepo = new();
     private readonly OutboundRepository _outboundRepo = new();
     private readonly ChannelSkuRepository _channelSkuRepo = new();
+    private readonly PartnerClosingMemoRepository _memoRepo = new();
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
@@ -39,6 +40,7 @@ public class PartnerClosingForm : Form
     public PartnerClosingForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         Load += (s, e) => RefreshBoard();
     }
 
@@ -224,6 +226,9 @@ public class PartnerClosingForm : Form
         var openHistoryItem = new ToolStripMenuItem("출고이력 관리창에서 열기");
         openHistoryItem.Click += OnOpenPartyInHistoryClick;
         menu.Items.Add(openHistoryItem);
+        var partyMemoItem = new ToolStripMenuItem("메모 추가/관리(거래처 전체)");
+        partyMemoItem.Click += OnPartyMemoClick;
+        menu.Items.Add(partyMemoItem);
         grid.ContextMenuStrip = menu;
 
         return grid;
@@ -277,6 +282,18 @@ public class PartnerClosingForm : Form
         grid.CellFormatting += OnLineGridCellFormatting;
 
         var menu = new ContextMenuStrip();
+        var editCskuItem = new ToolStripMenuItem("선택 라인 CSKU 수정");
+        editCskuItem.Click += OnEditCskuClick;
+        menu.Items.Add(editCskuItem);
+        var editItemNameItem = new ToolStripMenuItem("선택 라인 품목 수정");
+        editItemNameItem.Click += OnEditItemNameClick;
+        menu.Items.Add(editItemNameItem);
+        var editQtyItem = new ToolStripMenuItem("선택 라인 수량 수정");
+        editQtyItem.Click += OnEditQtyClick;
+        menu.Items.Add(editQtyItem);
+        var editUnitPriceItem = new ToolStripMenuItem("선택 라인 단가 수정");
+        editUnitPriceItem.Click += OnEditUnitPriceClick;
+        menu.Items.Add(editUnitPriceItem);
         var reassignItem = new ToolStripMenuItem("귀속월 변경");
         reassignItem.Click += OnReassignPeriodClick;
         menu.Items.Add(reassignItem);
@@ -286,6 +303,12 @@ public class PartnerClosingForm : Form
         var deleteItem = new ToolStripMenuItem("선택 라인 삭제");
         deleteItem.Click += OnDeleteLinesClick;
         menu.Items.Add(deleteItem);
+        var excludeItem = new ToolStripMenuItem("매출마감제외 처리");
+        excludeItem.Click += OnExcludeFromClosingClick;
+        menu.Items.Add(excludeItem);
+        var lineMemoItem = new ToolStripMenuItem("메모 추가/관리(선택 라인)");
+        lineMemoItem.Click += OnLineMemoClick;
+        menu.Items.Add(lineMemoItem);
         var openHistoryItem = new ToolStripMenuItem("이 라인 출고이력 관리창에서 열기(추적)");
         openHistoryItem.Click += OnOpenLineInHistoryClick;
         menu.Items.Add(openHistoryItem);
@@ -433,19 +456,29 @@ public class PartnerClosingForm : Form
     }
 
     /// <summary>
-    /// MiniERP2(OFS)를 경유하지 않은 주문을 채널 경유 거래처의 발주/출고 이력에 수동으로 편입한다
-    /// (거래처마감보드_개발기획서.md §2). 항상 "출고확정" 상태+지정한 날짜로 즉시 확정되므로 마감
-    /// 집계에 바로 잡히고, 정상 OutboundDetailTable 행이라 발주/출고 이력 관리창에서도 그대로 조회된다.
+    /// MiniERP2(OFS)를 경유하지 않은 주문을 수동으로 편입한다(거래처마감보드_개발기획서.md §2).
+    /// 채널 경유 거래처는 정상 OutboundDetailTable 행으로 즉시 "출고확정"되어 발주/출고 이력
+    /// 관리창에서도 그대로 조회된다(등록된 CSKU만 허용 — <see cref="PartnerManualOrderDialog"/>).
+    /// MANUAL(미경유) 거래처는 연결된 채널이 없어 CSKU 등록 자체가 없으므로, 자유 입력 라인으로
+    /// PartnerClosingLineTable에 직접 쌓는다(<see cref="PartnerManualLineDialog"/> +
+    /// PartnerClosingRepository.AddManualLine — 이전에는 "금액입력/비고"로 합계만 입력 가능했다).
     /// </summary>
     private void OnAddManualOrderClick(object? sender, EventArgs e)
     {
         var selected = SelectedPartyRows();
-        if (selected.Count != 1 || selected[0].IsManual)
+        if (selected.Count != 1)
         {
-            MessageBox.Show("수동 주문을 추가할 채널 경유 거래처 1개를 선택하세요(수동 거래처는 [금액입력/비고]를 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("수동 주문을 추가할 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         var row = selected[0];
+
+        if (row.IsManual)
+        {
+            OnAddManualPartyLineOrder(row);
+            return;
+        }
+
         var channelCode = row.PartyKey["CH:".Length..];
 
         using var dlg = new PartnerManualOrderDialog(channelCode, row.PartyName);
@@ -466,6 +499,35 @@ public class PartnerClosingForm : Form
         _outboundRepo.AddManualEntry(detail);
 
         // 고른 날짜가 지금 보고 있는 귀속월과 다르면, 방금 넣은 건이 바로 보이도록 그 달로 화면을 옮긴다.
+        _periodCombo.Text = dlg.OrderDate.ToString("yyyy-MM");
+        RefreshBoard();
+        SelectPartyByKey(row.PartyKey);
+        _statusLabel.Text = $"수동 주문을 추가했습니다({dlg.OrderDate:yyyy-MM-dd}, {dlg.CskuCode} x{dlg.Qty}). ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void OnAddManualPartyLineOrder(PartyRow row)
+    {
+        if (row.Status is "확정" or "발행완료")
+        {
+            MessageBox.Show("이미 확정된 거래처입니다. 라인을 추가하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new PartnerManualLineDialog(row.PartyName);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        _closingRepo.AddManualLine(CurrentPeriod, row.PartyKey, row.PartyName, new PartnerClosingLine
+        {
+            LineDate = dlg.OrderDate,
+            CskuCode = dlg.CskuCode,
+            MasterSku = dlg.CskuCode,
+            ItemName = dlg.ItemName,
+            Qty = dlg.Qty,
+            UnitPrice = dlg.UnitPrice,
+            CostPrice = dlg.CostPrice,
+            Profit = (dlg.UnitPrice - dlg.CostPrice) * dlg.Qty,
+        });
+
         _periodCombo.Text = dlg.OrderDate.ToString("yyyy-MM");
         RefreshBoard();
         SelectPartyByKey(row.PartyKey);
@@ -610,9 +672,10 @@ public class PartnerClosingForm : Form
         }
 
         var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
+        var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
         var previewForm = isLedger
-            ? DocumentPreviewForm.ForSalesLedger(PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded))
-            : DocumentPreviewForm.ForTradeStatement(PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer));
+            ? DocumentPreviewForm.ForSalesLedger(PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos))
+            : DocumentPreviewForm.ForTradeStatement(PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer, memos));
         previewForm.Show(this);
     }
 
@@ -720,16 +783,17 @@ public class PartnerClosingForm : Form
 
             try
             {
+                var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
                 decimal totalAmount;
                 if (isLedger)
                 {
-                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded);
+                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos);
                     DocumentExporter.ExportSalesLedger(doc, filePath);
                     totalAmount = doc.TotalSupply;
                 }
                 else
                 {
-                    var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer);
+                    var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer, memos);
                     DocumentExporter.ExportTradeStatement(doc, filePath);
                     totalAmount = doc.GrandTotal;
                 }
@@ -823,7 +887,8 @@ public class PartnerClosingForm : Form
                 continue;
             }
 
-            ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded)));
+            var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
+            ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos)));
             confirmedForHistory.Add((row, summary));
         }
 
@@ -967,6 +1032,15 @@ public class PartnerClosingForm : Form
             .DistinctBy(l => l.Source.OutboundDetailId)
             .ToList();
 
+    /// <summary>출고확정 여부와 무관하게, 원본 라인이 있는(=확정 스냅샷이 아닌) 선택 라인 전체.</summary>
+    private List<LineRow> SelectedLineRowsWithSource() =>
+        _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as LineRow)
+            .Where(l => l != null && l.Source.OutboundDetailId != null)
+            .Cast<LineRow>()
+            .DistinctBy(l => l.Source.OutboundDetailId)
+            .ToList();
+
     /// <summary>
     /// 마감보드 라인 상세에 함께 보이는 미출고 건을 확정 처리 없이도(=출고이력 관리창을 따로 열지
     /// 않고도) 바로 출고확정 시킨다. 확인 없이 누르면 되돌리기 번거로워질 수 있어 한 번 더 물어본다.
@@ -1010,6 +1084,150 @@ public class PartnerClosingForm : Form
         RefreshBoard();
         if (partyKey != null) SelectPartyByKey(partyKey);
         _statusLabel.Text = $"{lines.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 정상 매출 라인을 매출마감제외(비매출)로 재분류한다 — 에누리/CS/할인/무상발송 등 청구하지
+    /// 않는 사유가 생겼을 때 사용. 출고확정 여부와 무관하게 선택할 수 있다(이미 출고된 뒤 사유가
+    /// 발생하는 경우가 더 흔함). OutboundDetailTable 행 자체는 지우지 않으므로 출고 이력은 그대로
+    /// 남고, 다음 조회부터 정상 매출 집계(SaleOnly)에서 빠지고 "비매출 내역"에서 잡힌다.
+    /// </summary>
+    private void OnExcludeFromClosingClick(object? sender, EventArgs e)
+    {
+        var lines = SelectedLineRowsWithSource();
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("매출 집계에서 제외할 라인을 선택하세요(원본 발주/출고 라인이 없는 확정 스냅샷은 제외할 수 없습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new NonSaleExclusionDialog(lines.Count);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        foreach (var line in lines)
+            _outboundRepo.UpdateLineKind(line.Source.OutboundDetailId!.Value, dlg.LineKind, dlg.Reason);
+
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"{lines.Count}건을 매출마감제외 처리했습니다({dlg.LineKind}). 출고 이력은 유지되며 '비매출 내역'에서 확인할 수 있습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>거래처 전체에 대한 메모(특정 CSKU/발주건에 묶이지 않음)를 추가/조회/삭제한다.</summary>
+    private void OnPartyMemoClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1)
+        {
+            MessageBox.Show("메모를 관리할 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+
+        using var dlg = new PartnerClosingMemoDialog(CurrentPeriod, row.PartyKey, row.PartyName, []);
+        FormManager.ShowDialogSafe(dlg, this);
+        if (dlg.Changed) RefreshBoardKeepingSelection();
+    }
+
+    /// <summary>
+    /// 선택한 라인(단일/다중)을 참조하는 메모를 추가/조회/삭제한다. 여러 건을 함께 선택하면 메모
+    /// 하나가 그 라인들 전체를 참조하며(개별 라인마다 따로 만들지 않음), 명세표/매출장 발행 시
+    /// 각 라인이 몇 개의 (날짜·CSKU) 병합 그룹에 걸치는지에 따라 라인 비고 칸 또는 하단 메모
+    /// 섹션 중 알맞은 곳에 자동으로 실린다(PartnerClosingDocumentBuilder 참고).
+    /// </summary>
+    private void OnLineMemoClick(object? sender, EventArgs e)
+    {
+        var lines = SelectedLineRowsWithSource();
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("메모를 추가할 라인을 선택하세요(원본 발주/출고 라인이 없는 확정 스냅샷은 제외할 수 없습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var partyRow = _partyGrid.CurrentRow?.DataBoundItem as PartyRow;
+        if (partyRow == null) return;
+
+        var ids = lines.Select(l => l.Source.OutboundDetailId!.Value).ToList();
+        using var dlg = new PartnerClosingMemoDialog(CurrentPeriod, partyRow.PartyKey, partyRow.PartyName, ids);
+        FormManager.ShowDialogSafe(dlg, this);
+        if (dlg.Changed) RefreshBoardKeepingSelection();
+    }
+
+    /// <summary>
+    /// 그리드 인라인 편집(더블클릭/F2)이 열리지 않는 환경을 위한 공통 우회 경로 — 우클릭 메뉴로
+    /// 값을 입력받아 필드별 저장 메서드를 태운다. CSKU/품목/수량/단가 모두 같은 방식(현재 선택된
+    /// 라인 1건, 원본 라인 없는 확정 스냅샷 제외)으로 동작한다.
+    /// </summary>
+    private (LineRow Line, long DetailId)? RequireSelectedSourceLine()
+    {
+        var line = _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as LineRow)
+            .FirstOrDefault(l => l != null);
+        if (line?.Source.OutboundDetailId is not { } detailId)
+        {
+            MessageBox.Show("수정할 라인을 선택하세요(원본 발주/출고 라인이 없는 확정 스냅샷은 여기서 수정할 수 없습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+        return (line, detailId);
+    }
+
+    private void RefreshBoardKeepingSelection()
+    {
+        var partyKey = (_partyGrid.CurrentRow?.DataBoundItem as PartyRow)?.PartyKey;
+        RefreshBoard();
+        if (partyKey != null) SelectPartyByKey(partyKey);
+    }
+
+    private void OnEditCskuClick(object? sender, EventArgs e)
+    {
+        if (RequireSelectedSourceLine() is not { } sel) return;
+
+        using var dlg = new SimpleTextPromptDialog("CSKU 수정", "새 CSKU 코드:", sel.Line.CskuCode,
+            value => string.IsNullOrWhiteSpace(value) ? "CSKU를 입력하세요." : null);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        _outboundRepo.UpdateCskuCode(sel.DetailId, dlg.Value);
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"CSKU를 '{dlg.Value}'(으)로 수정했습니다(품목명/원가는 새 CSKU 기준으로 다시 계산됩니다). ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void OnEditItemNameClick(object? sender, EventArgs e)
+    {
+        if (RequireSelectedSourceLine() is not { } sel) return;
+
+        using var dlg = new SimpleTextPromptDialog("품목명 수정", "새 품목명:", sel.Line.ItemName);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        _outboundRepo.UpdateProductName(sel.DetailId, dlg.Value);
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"품목명을 '{dlg.Value}'(으)로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void OnEditQtyClick(object? sender, EventArgs e)
+    {
+        if (RequireSelectedSourceLine() is not { } sel) return;
+
+        using var dlg = new SimpleTextPromptDialog("수량 수정", "새 수량:", sel.Line.Qty.ToString("0"),
+            value => decimal.TryParse(value, out var v) && v > 0 ? null : "0보다 큰 숫자를 입력하세요.");
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        _outboundRepo.UpdateQty(sel.DetailId, decimal.Parse(dlg.Value));
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"수량을 {dlg.Value}(으)로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 단가 셀 인라인 편집(더블클릭/F2)이 열리지 않는 환경을 위한 우회 경로 — 우클릭 메뉴로
+    /// 값을 입력받아 그리드 인라인 편집과 동일한 <see cref="HandleUnitPriceEdit"/> 로직을 태운다.
+    /// </summary>
+    private void OnEditUnitPriceClick(object? sender, EventArgs e)
+    {
+        if (RequireSelectedSourceLine() is not { } sel) return;
+
+        var vatLabel = _vatExcludedCheck.Checked ? "VAT 별도" : "VAT 포함";
+        using var dlg = new SimpleTextPromptDialog("단가 수정", $"{sel.Line.CskuCode} 새 단가 ({vatLabel} 기준, 원):", sel.Line.UnitPrice.ToString("0"),
+            value => decimal.TryParse(value, out var v) && v >= 0 ? null : "0 이상의 숫자를 입력하세요.");
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        sel.Line.UnitPrice = decimal.Parse(dlg.Value);
+        HandleUnitPriceEdit(sel.Line, sel.DetailId);
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.UI;
 
@@ -18,6 +19,13 @@ public class CskuPickerDialog : Form
     public string? SelectedUnit { get; private set; }
     public string? SelectedPacking { get; private set; }
 
+    /// <summary>allowMultiSelect=true일 때 선택된 전체 항목(1개 이상). false일 때도 확인 시 1개 항목이
+    /// 채워지므로, 호출부는 다중/단건 여부와 무관하게 이 목록만으로 처리할 수 있다.</summary>
+    public IReadOnlyList<SelectedCskuItem> SelectedItems { get; private set; } = Array.Empty<SelectedCskuItem>();
+
+    public sealed record SelectedCskuItem(string? ChannelCode, string? CskuCode, string? Msku, string? ItemName,
+        decimal UnitPrice, decimal CostPrice, string? Unit, string? Packing);
+
     private readonly ChannelSkuRepository _cskuRepo = new();
     private readonly ItemRepository _itemRepo = new();
     private readonly SalesChannelRepository _channelRepo = new();
@@ -32,6 +40,7 @@ public class CskuPickerDialog : Form
     private const string MasterSkuOnlyChannelName = "(마스터SKU 전용)";
 
     private readonly bool _allowMasterSkuOnly;
+    private readonly bool _allowMultiSelect;
 
     /// <param name="priorityChannelCode">이 채널의 CSKU를 목록 맨 위로 올려서(그 외는 채널명순)
     /// 보여준다. 다른 채널의 CSKU도 항상 함께 검색된다(제한하지 않음).</param>
@@ -42,9 +51,13 @@ public class CskuPickerDialog : Form
     /// <param name="allowMasterSkuOnly">true면 CSKU 목록 외에 채널 미지정 마스터SKU 단독 행도
     /// 함께 보여준다(간이 마진 계산기 전용, §5). 기존 호출부(문서관리 등)는 기본값 false로
     /// 동작이 그대로 유지된다.</param>
-    public CskuPickerDialog(string? priorityChannelCode = null, bool preselectChannelFilter = true, bool allowMasterSkuOnly = false)
+    /// <param name="allowMultiSelect">true면 그리드에서 Ctrl/Shift로 여러 행을 선택해 한 번에
+    /// 확인할 수 있다(간이 마진 계산기 전용). 기존 호출부는 기본값 false로 단건 선택만 유지된다.</param>
+    public CskuPickerDialog(string? priorityChannelCode = null, bool preselectChannelFilter = true,
+        bool allowMasterSkuOnly = false, bool allowMultiSelect = false)
     {
         _allowMasterSkuOnly = allowMasterSkuOnly;
+        _allowMultiSelect = allowMultiSelect;
         InitializeComponent();
         LoadData(priorityChannelCode, preselectChannelFilter);
     }
@@ -71,15 +84,23 @@ public class CskuPickerDialog : Form
             new Label { Text = "채널:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) }, _channelCombo,
             new Label { Text = "검색:", AutoSize = true, Padding = new Padding(12, 5, 4, 0) }, _searchBox
         });
+        if (_allowMultiSelect)
+        {
+            searchBar.Controls.Add(new Label
+            {
+                Text = "(Ctrl/Shift로 여러 행 선택 가능)", AutoSize = true, ForeColor = SystemColors.GrayText,
+                Padding = new Padding(12, 5, 0, 0)
+            });
+        }
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect = false,
+            MultiSelect = _allowMultiSelect,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
         };
         _grid.Columns.Add("ChannelName", "채널");
@@ -169,24 +190,48 @@ public class CskuPickerDialog : Form
 
     private void Confirm()
     {
-        int idx = _grid.CurrentRow?.Index ?? -1;
-        if (idx < 0 || idx >= _filteredRows.Count)
+        // 다중 선택 모드에서는 그리드에서 체크된(Ctrl/Shift 선택) 모든 행을, 아니면 현재 행 하나만
+        // 사용한다. 두 경우 모두 결과는 SelectedItems 하나로 모아 호출부가 분기 없이 순회할 수 있게 한다.
+        var indexes = _allowMultiSelect
+            ? _grid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Index)
+                .Where(i => i >= 0 && i < _filteredRows.Count).Distinct().OrderBy(i => i).ToList()
+            : (_grid.CurrentRow is { } cur && cur.Index >= 0 && cur.Index < _filteredRows.Count
+                ? new List<int> { cur.Index }
+                : new List<int>());
+
+        if (indexes.Count == 0)
         {
             MessageBox.Show("품목을 선택하세요.", "알림");
             return;
         }
-        var row = _filteredRows[idx];
-        var isMasterSkuOnly = row.ChannelCode.Length == 0;
-        SelectedItemName = row.ItemName;
-        SelectedUnitPrice = row.SupplyPrice;
-        SelectedCostPrice = row.CostPrice;
-        SelectedMsku = row.Msku;
-        SelectedCskuCode = isMasterSkuOnly ? null : row.CskuCode;
-        SelectedChannelCode = isMasterSkuOnly ? null : row.ChannelCode;
-        SelectedUnit = row.Unit;
-        SelectedPacking = row.Packing;
+
+        SelectedItems = indexes.Select(i => ToSelectedItem(_filteredRows[i])).ToList();
+        ApplySingularFromFirstSelected();
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    private static SelectedCskuItem ToSelectedItem(PickerRow row)
+    {
+        var isMasterSkuOnly = row.ChannelCode.Length == 0;
+        return new SelectedCskuItem(
+            isMasterSkuOnly ? null : row.ChannelCode,
+            isMasterSkuOnly ? null : row.CskuCode,
+            row.Msku, row.ItemName, row.SupplyPrice, row.CostPrice, row.Unit, row.Packing);
+    }
+
+    /// <summary>기존 단건 호출부(문서관리 등)가 계속 쓰는 Selected* 단수 속성을 첫 항목 기준으로 채운다.</summary>
+    private void ApplySingularFromFirstSelected()
+    {
+        var first = SelectedItems[0];
+        SelectedItemName = first.ItemName;
+        SelectedUnitPrice = first.UnitPrice;
+        SelectedCostPrice = first.CostPrice;
+        SelectedMsku = first.Msku;
+        SelectedCskuCode = first.CskuCode;
+        SelectedChannelCode = first.ChannelCode;
+        SelectedUnit = first.Unit;
+        SelectedPacking = first.Packing;
     }
 
     /// <summary>
@@ -213,6 +258,11 @@ public class CskuPickerDialog : Form
         SelectedChannelCode = dialog.ResultChannelCode;
         SelectedUnit = dialog.ResultUnit;
         SelectedPacking = dialog.ResultPacking;
+        SelectedItems = new List<SelectedCskuItem>
+        {
+            new(dialog.ResultChannelCode, dialog.ResultCskuCode, dialog.ResultMsku, dialog.ResultItemName,
+                dialog.ResultUnitPrice, dialog.ResultCostPrice, dialog.ResultUnit, dialog.ResultPacking)
+        };
         DialogResult = DialogResult.OK;
         Close();
     }

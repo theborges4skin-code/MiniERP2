@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 
@@ -111,7 +112,7 @@ public class ExportSummaryManualEntryDialog : Form
 
     private DataGridView BuildGrid()
     {
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = true,

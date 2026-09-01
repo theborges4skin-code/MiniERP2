@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Security.Cryptography;
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
@@ -29,6 +30,7 @@ public class AutoOrderInboxForm : Form
     public AutoOrderInboxForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         Load += (s, e) => RefreshGrid();
     }
 
@@ -66,7 +68,7 @@ public class AutoOrderInboxForm : Form
         toolStrip.Controls.Add(btnSettings);
         toolStrip.Controls.Add(_showHiddenCheckBox);
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

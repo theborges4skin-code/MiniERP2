@@ -1,4 +1,5 @@
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Services;
@@ -47,6 +48,7 @@ public class MonthlyClosingForm : Form
     {
         _channelConfigs = _configService.Load();
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     private void InitializeComponent()
@@ -141,7 +143,7 @@ public class MonthlyClosingForm : Form
 
     private DataGridView BuildFilesGrid()
     {
-        var grid = new DataGridView
+        var grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

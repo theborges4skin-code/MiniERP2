@@ -104,6 +104,7 @@ public class MappingForm : Form
     public MappingForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadChannels();
     }
 
@@ -111,6 +112,11 @@ public class MappingForm : Form
     {
         Text = "매핑 관리";
         Size = new Size(1024, 768);
+        // "미매핑 처리" 탭 하단(검색결과+정보입력+버튼들)이 고정 높이 행들로 이루어져 있어, 창을
+        // 이보다 작게 줄이면 버튼이나 "송장표시명" 등 열이 잘려 보이지 않게 되는 문제가 있었다.
+        // 최소 크기를 두어 웬만해서는 그 상태에 도달하지 않게 하고, 그래도 화면이 작아 부족하면
+        // CreateUnmappedTabPage의 AutoScroll 패널이 스크롤로 나머지를 보여준다.
+        MinimumSize = new Size(1000, 640);
 
         // Enable drag-and-drop functionality
         AllowDrop = true;
@@ -210,7 +216,12 @@ public class MappingForm : Form
         _unmappedGrid.SelectionChanged += OnUnmappedRowSelectionChanged;
         SetupUnmappedContextMenu();
 
-        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
+        // 이 아래 6개 행 중 4개가 고정(Absolute) 높이라, 창을 좁게 줄이면 하단 버튼들이나
+        // "송장표시명" 열이 그냥 잘려서 안 보이는 채로 사라졌었다(생략된 게 있다는 표시조차 없음).
+        // MinimumSize를 주고 이 패널을 AutoScroll 패널(bottomScrollHost, 아래) 안에 넣으면, 평소
+        // 넓은 창에서는 그대로 Dock=Fill로 남는 공간을 채우고, 창이 이보다 작아질 때만 세로
+        // 스크롤바가 나타나 나머지를 내려서 볼 수 있게 한다.
+        var bottomLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, MinimumSize = new Size(960, 340) };
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
@@ -326,8 +337,11 @@ public class MappingForm : Form
         bottomLayout.Controls.Add(secondaryButtonPanel, 0, 4);
         bottomLayout.Controls.Add(_invoicePreviewLabel, 0, 5);
 
+        var bottomScrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        bottomScrollHost.Controls.Add(bottomLayout);
+
         split.Panel1.Controls.Add(_unmappedGrid);
-        split.Panel2.Controls.Add(bottomLayout);
+        split.Panel2.Controls.Add(bottomScrollHost);
 
         tabPage.Controls.Add(split);
         return tabPage;
@@ -1363,7 +1377,7 @@ public class MappingForm : Form
 
         // 화면에는 안 붙이지만, 기존 LoadConditionRules/SelectConditionRuleById 등이 그대로
         // 동작하도록 내부 상태 보관용으로 유지한다.
-        _conditionRuleGrid = new DataGridView
+        _conditionRuleGrid = new CellCopyDataGridView
         {
             AutoGenerateColumns = false,
             ReadOnly = true,
@@ -1603,18 +1617,16 @@ public class MappingForm : Form
         _selectedConditionRuleId = -1;
         SetConditionDetailEditorEnabled(false);
 
-        // 대상 SKU 자동완성 + 하단 검색 목록 갱신. 채널이 바뀔 때마다 다시 구성한다.
+        // 대상 SKU 하단 검색 목록 갱신. 채널이 바뀔 때마다 다시 구성한다.
         var codes = _itemRepository.GetAll().Select(i => i.Sku)
             .Concat(_channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(c => c)
             .ToArray();
         _allSkuCodes = codes;
-        var source = new AutoCompleteStringCollection();
-        source.AddRange(codes);
-        _conditionTargetSkuTextBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-        _conditionTargetSkuTextBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
-        _conditionTargetSkuTextBox.AutoCompleteCustomSource = source;
+        // AutoCompleteMode(Suggest 계열)는 한글 IME 조합 중 텍스트가 깨지고 스페이스가 씹히는
+        // WinForms 고질 버그를 유발해서 뺐다 — 바로 아래 _skuSearchListBox가 타이핑할 때마다
+        // 같은 후보 목록을 실시간으로 걸러 보여주므로 기능상 손실은 없다.
         FilterSkuSearchList();
     }
 

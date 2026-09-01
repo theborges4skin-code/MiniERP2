@@ -57,6 +57,7 @@ public class FbaOrderForm : Form
     public FbaOrderForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadMasterData();
         GenerateNewFbaNo();
     }
@@ -211,12 +212,16 @@ public class FbaOrderForm : Form
         var btnExportShipment = new Button { Text = "아마존 선적명세 내보내기", Size = new Size(150, 32) };
         var btnImportTracking = new Button { Text = "운송장 불러오기", Size = new Size(110, 32) };
         var btnExportCourier = new Button { Text = "하배출고이서 내보내기", Size = new Size(130, 32) };
+        // 박스 포장용 작업지시서(피킹리스트) — 아마존 제출용이 아니라 순수 내부 포장 작업용이라
+        // 다른 재출력 버튼들과 같은 위치에 둔다(사용자 요청, 2026-08-10).
+        var btnExportWorkOrder = new Button { Text = "작업지시서 발행", Size = new Size(110, 32) };
         _btnSave = new Button { Text = "저장 (발주확정)", Size = new Size(120, 32), Font = new Font(Font, FontStyle.Bold) };
         btnExportShipment.Click += OnExportShipmentClick;
         btnImportTracking.Click += OnImportTrackingClick;
         btnExportCourier.Click += OnExportCourierClick;
+        btnExportWorkOrder.Click += OnExportWorkOrderClick;
         _btnSave.Click += OnSaveClick;
-        row6.Controls.AddRange([btnExportShipment, btnImportTracking, btnExportCourier, _btnSave]);
+        row6.Controls.AddRange([btnExportShipment, btnImportTracking, btnExportCourier, btnExportWorkOrder, _btnSave]);
 
         mainLayout.Controls.Add(row1, 0, 0);
         mainLayout.Controls.Add(row2, 0, 1);
@@ -762,11 +767,17 @@ public class FbaOrderForm : Form
     private void ApplyTemplate(FbaOrder templateOrder, List<FbaBox> templateBoxes, List<FbaBoxItem> templateItems)
     {
         var boxBySeq = templateBoxes.ToDictionary(b => b.BoxSeq, b => b);
+        var cskuByCode = _cskus.ToDictionary(c => c.Csku, c => c, StringComparer.OrdinalIgnoreCase);
 
         _rows.Clear();
         foreach (var item in templateItems.OrderBy(i => i.BoxSeq).ThenBy(i => i.ItemSeq))
         {
             var box = boxBySeq.GetValueOrDefault(item.BoxSeq);
+            // 과거 발주의 스냅샷 그대로 복사하되, 단가만은 예외 — "복사하여 신규 발주"는 아직 저장
+            // 전인 새 발주 작성 화면이므로 그 사이 품목관리에서 갱신된 최신 단가를 반영해야 한다
+            // (저장된 발주의 재출력값이 불변인 것과는 별개 — FbaOrderSnapshotImmutabilityTests 참고).
+            // 마스터에서 CSKU가 사라졌다면(비활성화/삭제) 옛 스냅샷 단가를 그대로 쓴다.
+            var currentPrice = cskuByCode.TryGetValue(item.Csku, out var csku) ? csku.ItemPrice : item.ItemPrice;
             _rows.Add(new FbaGridRow
             {
                 BoxSeq = item.BoxSeq,
@@ -781,7 +792,7 @@ public class FbaOrderForm : Form
                 Asin = item.Asin,
                 CommodityDescription = item.CommodityDescription,
                 HsCode = item.HsCode,
-                ItemPrice = item.ItemPrice,
+                ItemPrice = currentPrice,
                 UnitWeightG = item.UnitWeightG,
                 QtyPerLayer = item.QtyPerLayer,
                 Qty = item.Qty,
@@ -815,6 +826,33 @@ public class FbaOrderForm : Form
             // §3.4 상태 전이(작성중/발주확정/출고완료)에는 "출력완료" 단계가 없다 — 하배출고이서
             // 내보내기는 상태를 바꾸지 않는다(발주확정 상태 그대로 유지, 출고완료는 선적명세 출력 시점).
             FbaCourierExporter.Export(order, _config, boxes, items, filePath);
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"내보내기 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OnExportWorkOrderClick(object? sender, EventArgs e)
+    {
+        if (!_isSaved)
+        {
+            MessageBox.Show("먼저 저장하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var (order, boxes, items) = _orderRepository.GetOrder(_fbaNo);
+        if (order == null || boxes.Count == 0) return;
+
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"FBA작업지시서_{_fbaNo}_{DateTime.Now:yyyyMMdd}.xlsx",
+            _settingsService.GetLastFolder("FbaWorkOrderExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        if (filePath == null) return;
+        _settingsService.SetLastFolder("FbaWorkOrderExport", Path.GetDirectoryName(filePath)!);
+
+        try
+        {
+            FbaWorkOrderExporter.Export([new FbaWorkOrderExporter.OrderBoxSet(order.FbaNo, boxes, items)], filePath);
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
@@ -915,6 +953,16 @@ public class FbaOrderForm : Form
 
         RecalculateMatchKeys();
 
+        // 최초 저장인 경우에 한해서만 발주번호 충돌을 걱정하면 된다 — 이미 저장된 발주를 이 창에서
+        // 계속 고쳐 다시 저장하는 것은 같은 FbaNo를 의도적으로 재사용하는 것이라 문제 없다.
+        var isNewOrder = !_isSaved;
+        if (isNewOrder && _orderRepository.FbaNoExists(_fbaNo))
+        {
+            // "복사하여 신규 발주"처럼 창을 여러 개 동시에 열어둘 수 있는 흐름에서, 이 창을 연 뒤
+            // 다른 창이 먼저 같은 번호로 저장을 마쳤을 때의 경우다 — 저장 직전에 번호를 새로 받는다.
+            GenerateNewFbaNo();
+        }
+
         FbaOrder? existingOrder = null;
         List<FbaBox> existingBoxes = [];
         if (_isSaved)
@@ -977,7 +1025,20 @@ public class FbaOrderForm : Form
             ExpiryDate = string.IsNullOrWhiteSpace(row.ExpiryDate) ? null : row.ExpiryDate,
         })).ToList();
 
-        _orderRepository.SaveOrder(order, boxes, items);
+        try
+        {
+            _orderRepository.SaveOrder(order, boxes, items, isNewOrder);
+        }
+        catch (Exception) when (isNewOrder)
+        {
+            // 위의 사전 확인 이후, 저장이 실제로 실행되는 그 짧은 사이에 다른 창이 같은 번호로
+            // 먼저 저장을 마쳤을 때(레이스 컨디션) 여기서 걸린다 — 다른 발주를 덮어쓰는 대신
+            // 저장을 실패시키고 번호를 새로 받아 사용자가 다시 저장하도록 한다.
+            GenerateNewFbaNo();
+            MessageBox.Show("발주번호가 다른 창에서 먼저 사용되어 저장하지 못했습니다.\n새 발주번호를 다시 받았으니 저장을 다시 눌러주세요.",
+                "저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         _isSaved = true;
         _orderDatePicker.Enabled = false;
         UpdateSummary();

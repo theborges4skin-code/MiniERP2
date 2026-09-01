@@ -71,6 +71,7 @@ public class FbaShipmentExporterTests
         {
             new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Qty = 1, ExpiryDate = "20260805" },
             new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 2, Csku = "B", ItemName = "B", Qty = 1, ExpiryDate = null },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 3, Csku = "C", ItemName = "C", Qty = 1, ExpiryDate = "2028.07.07." },
         };
         var cskus = new List<FbaCskuModel>
         {
@@ -89,17 +90,22 @@ public class FbaShipmentExporterTests
         // 유통기한 미입력, CSKU 마스터에 없는 품목(B)은 둘 다 빈 칸이어야 한다.
         Assert.AreEqual(string.Empty, sheet.Cells[3, 14].Value);
         Assert.AreEqual(string.Empty, sheet.Cells[3, 15].Value);
+
+        // 실제 그리드에 흔한 "yyyy.MM.dd."(끝에 점) 입력 형식도 파싱돼야 한다(2026-08-05 등록 후
+        // 유효기간이 공란으로 나오던 사용자 신고 케이스 재현).
+        Assert.AreEqual("JUL.07.2028.EXP.", sheet.Cells[4, 14].Value);
     }
 
     [TestMethod]
-    public void Export_CartonAndWeightSizeOnlyOnRepresentativeRow_OthersAreTrulyBlank()
+    public void Export_WeightIsPerItemRow_NotJustBoxRepresentativeRow()
     {
-        // 500x280x300mm, Σ(UnitWeightG × Qty) = 100*2 + 50*1 = 250g (박스무게는 이미 계산돼 저장된 값을 그대로 씀)
+        // 박스 총무게(WeightG=250)가 아니라 CSKU 행별로 UnitWeightG×Qty를 계산해 모든 행에 채워야
+        // 한다(요청사항). size/carton은 여전히 대표행에만.
         var box = new FbaBox { FbaNo = "FBA-1", BoxSeq = 1, WidthMm = 500, DepthMm = 280, HeightMm = 300, WeightG = 250 };
         var items = new List<FbaBoxItem>
         {
-            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Asin = "ASIN-A", Qty = 2, ItemPrice = 1.5m },
-            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 2, Csku = "B", ItemName = "B", Asin = "ASIN-B", Qty = 1, ItemPrice = 2.5m },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Asin = "ASIN-A", Qty = 2, UnitWeightG = 150, ItemPrice = 1.5m },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 2, Csku = "B", ItemName = "B", Asin = "ASIN-B", Qty = 1, UnitWeightG = 400, ItemPrice = 2.5m },
         };
 
         FbaShipmentExporter.Export([box], items, [], _filePath);
@@ -108,16 +114,19 @@ public class FbaShipmentExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["선적명세"];
 
-        // 대표행(2행): carton=1(진짜 숫자), 무게/치수 채움
+        // 대표행(2행): carton=1(진짜 숫자), 무게=150g×2=300g=0.3kg, 치수 채움
         Assert.AreEqual(1, Convert.ToInt32(sheet.Cells[2, 6].Value));
-        Assert.AreEqual(0.3, Convert.ToDouble(sheet.Cells[2, 10].Value)); // 250g -> 0.3kg(소수1자리 반올림... 실제로는 0.25->0.3? 검증은 아래 별도 테스트에서)
+        Assert.AreEqual(0.3, Convert.ToDouble(sheet.Cells[2, 10].Value));
+        Assert.AreEqual(0.66, Convert.ToDouble(sheet.Cells[2, 11].Value));
+        Assert.AreEqual("50.0*28.0*30.0", sheet.Cells[2, 12].Value);
 
-        // 두번째 행(3행): carton은 "0"이 아니라 진짜 빈 셀(null)이어야 하고, 무게/치수도 비어야 한다.
+        // 두번째 행(3행): carton/치수는 대표행 전용이라 빈 셀이지만, 무게는 이 행의
+        // UnitWeightG×Qty(400g×1=0.4kg)로 채워져야 한다 — 박스 총무게가 아니다.
         Assert.IsNull(sheet.Cells[3, 6].Value);
-        Assert.IsNull(sheet.Cells[3, 10].Value);
-        Assert.IsNull(sheet.Cells[3, 11].Value);
         Assert.IsNull(sheet.Cells[3, 12].Value);
         Assert.IsNull(sheet.Cells[3, 13].Value);
+        Assert.AreEqual(0.4, Convert.ToDouble(sheet.Cells[3, 10].Value));
+        Assert.AreEqual(0.88, Convert.ToDouble(sheet.Cells[3, 11].Value));
     }
 
     [TestMethod]
@@ -141,11 +150,11 @@ public class FbaShipmentExporterTests
     [TestMethod]
     public void Export_UnitConversions_RoundToSpecifiedDecimalPlaces()
     {
-        // 500x280x280mm, 무게 12345g
-        var box = new FbaBox { FbaNo = "FBA-1", BoxSeq = 1, WidthMm = 500, DepthMm = 280, HeightMm = 280, WeightG = 12345 };
+        // 500x280x280mm, 무게는 CSKU 행의 UnitWeightG×Qty = 12345g×1
+        var box = new FbaBox { FbaNo = "FBA-1", BoxSeq = 1, WidthMm = 500, DepthMm = 280, HeightMm = 280 };
         var items = new List<FbaBoxItem>
         {
-            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Qty = 1, ItemPrice = 9.999m },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Qty = 1, UnitWeightG = 12345, ItemPrice = 9.999m },
         };
 
         FbaShipmentExporter.Export([box], items, [], _filePath);

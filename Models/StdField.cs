@@ -60,4 +60,11 @@ public enum StdField
     /// 대조해 실채널코드를 찾는 데만 쓰이고, 매핑/이력 등 다른 어떤 파이프라인에도 흘러가지 않는다.
     /// </summary>
     ChannelHint,
+
+    /// <summary>
+    /// 택배사명 열. 누적발주서에 택배사 열이 있는 채널만 매핑하면 되며(필수 아님), 발주/출고
+    /// 이력관리의 "누적발주서 송장번호 입력" 기능이 이 값을 읽어 매칭된 이력의 OutboundDetail.CourierName에
+    /// 그대로 채워 넣는다.
+    /// </summary>
+    CourierName,
 }

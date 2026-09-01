@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Models;
@@ -48,6 +49,7 @@ public class FboOrderForm : Form
     public FboOrderForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadMasterData();
         GenerateNewFboNo();
     }
@@ -150,7 +152,7 @@ public class FboOrderForm : Form
         row3.Controls.AddRange([btnAddRow, btnRemoveRow, btnLoadPastOrder, btnLoadRecentCsku]);
 
         // 4행: 그리드
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

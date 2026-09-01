@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -89,6 +90,7 @@ public class DocsForm : Form
     public DocsForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadDefaultSupplier();
         _lineGrid.CellValueChanged += OnGridCellValueChanged;
     }
@@ -412,7 +414,7 @@ public class DocsForm : Form
 
     private Control BuildGrid()
     {
-        _lineGrid = new DataGridView
+        _lineGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = true,

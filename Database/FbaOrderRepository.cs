@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Database;
 
@@ -22,7 +23,25 @@ public class FbaOrderRepository
         return $"FBA-{datePart}-{count + 1:00}";
     }
 
-    public void SaveOrder(FbaOrder order, List<FbaBox> boxes, List<FbaBoxItem> items)
+    /// <summary>발주번호가 이미 DB에 존재하는지 확인한다. "복사하여 신규 발주"처럼 화면을 여러 개
+    /// 동시에 열어둘 수 있는 흐름에서, 창을 연 시점에 미리 계산해 둔 번호가 저장 시점엔 다른 창이
+    /// 먼저 저장해 선점했을 수 있다 — 그 경우를 저장 직전에 걸러내기 위함이다.</summary>
+    public bool FbaNoExists(string fbaNo)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM FbaOrder WHERE FbaNo = $fbaNo";
+        command.Parameters.AddWithValue("$fbaNo", fbaNo);
+        return Convert.ToInt32(command.ExecuteScalar()) > 0;
+    }
+
+    /// <summary>
+    /// isNewOrder=true(최초 저장)면 순수 INSERT라 발주번호가 이미 존재하면 예외로 실패한다 — 동시에
+    /// 열어둔 다른 발주 작성 창과 번호가 겹쳐도 서로 다른 발주를 조용히 덮어쓰지 않도록 하기 위함
+    /// (§3.4). isNewOrder=false(같은 창에서 저장 후 이어서 수정 저장)면 같은 FbaNo를 의도적으로
+    /// 다시 저장하는 것이므로 UPSERT한다.
+    /// </summary>
+    public void SaveOrder(FbaOrder order, List<FbaBox> boxes, List<FbaBoxItem> items, bool isNewOrder = false)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -31,7 +50,12 @@ public class FbaOrderRepository
             using (var orderCommand = connection.CreateCommand())
             {
                 orderCommand.Transaction = transaction;
-                orderCommand.CommandText = """
+                orderCommand.CommandText = isNewOrder
+                    ? """
+                    INSERT INTO FbaOrder (FbaNo, OrderDate, ShipmentId, ReceiverName, Phone, Address, Status, Memo, CreatedAt, UpdatedAt)
+                    VALUES ($fbaNo, $orderDate, $shipmentId, $receiverName, $phone, $address, $status, $memo, $createdAt, $updatedAt)
+                    """
+                    : """
                     INSERT INTO FbaOrder (FbaNo, OrderDate, ShipmentId, ReceiverName, Phone, Address, Status, Memo, CreatedAt, UpdatedAt)
                     VALUES ($fbaNo, $orderDate, $shipmentId, $receiverName, $phone, $address, $status, $memo, $createdAt, $updatedAt)
                     ON CONFLICT(FbaNo) DO UPDATE SET
@@ -247,6 +271,58 @@ public class FbaOrderRepository
         command.ExecuteNonQuery();
     }
 
+    /// <summary>발주 이력 조회창(§8)에서 Shipment ID를 사후 일괄입력할 때 쓴다 — FbaOrderForm에서
+    /// 발주 작성 시점에 입력을 놓쳤거나, 아마존 발급 Shipment ID가 발주 확정 이후에야 나오는 경우
+    /// 발주 전체를 다시 열지 않고 이 값만 갱신한다. 각 박스의 MatchKey(고객주문번호, §7.1)도 새
+    /// Shipment ID로 다시 채번한다 — 그래야 이후 하배출고이서를 (재)출력할 때 고객주문번호 칸에
+    /// "[SEND] '{ShipmentId}' 총 ##박스중 ##번째"가 반영된다(원래 계획했던 동작, FbaOrderForm의
+    /// RecalculateMatchKeys와 동일한 채번 규칙). 이미 운송장번호가 등록된 박스도 함께 재채번한다 —
+    /// MatchKey는 재출력 표기용일 뿐 매칭 완료 후에는 더 쓰이지 않기 때문이다.</summary>
+    public void UpdateShipmentId(string fbaNo, string? shipmentId)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            using (var orderCommand = connection.CreateCommand())
+            {
+                orderCommand.Transaction = transaction;
+                orderCommand.CommandText = "UPDATE FbaOrder SET ShipmentId = $shipmentId WHERE FbaNo = $fbaNo";
+                orderCommand.Parameters.AddWithValue("$shipmentId", (object?)shipmentId ?? DBNull.Value);
+                orderCommand.Parameters.AddWithValue("$fbaNo", fbaNo);
+                orderCommand.ExecuteNonQuery();
+            }
+
+            var boxSeqs = new List<int>();
+            using (var selectCommand = connection.CreateCommand())
+            {
+                selectCommand.Transaction = transaction;
+                selectCommand.CommandText = "SELECT BoxSeq FROM FbaBox WHERE FbaNo = $fbaNo ORDER BY BoxSeq";
+                selectCommand.Parameters.AddWithValue("$fbaNo", fbaNo);
+                using var reader = selectCommand.ExecuteReader();
+                while (reader.Read()) boxSeqs.Add(reader.GetInt32(0));
+            }
+
+            foreach (var boxSeq in boxSeqs)
+            {
+                using var updateCommand = connection.CreateCommand();
+                updateCommand.Transaction = transaction;
+                updateCommand.CommandText = "UPDATE FbaBox SET MatchKey = $matchKey WHERE FbaNo = $fbaNo AND BoxSeq = $boxSeq";
+                updateCommand.Parameters.AddWithValue("$matchKey", FbaKeyGenerator.BuildMatchKey(shipmentId, boxSeqs.Count, boxSeq));
+                updateCommand.Parameters.AddWithValue("$fbaNo", fbaNo);
+                updateCommand.Parameters.AddWithValue("$boxSeq", boxSeq);
+                updateCommand.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
     /// <summary>이력/조회 화면(§8)에서 쓴다 — 기간(발주일)으로 필터링한 박스-품목 단위 조인 결과.
     /// FBA는 채널 개념이 없어(수취지 1곳 고정) FBO의 채널 필터 인자가 없다.</summary>
     public List<FbaHistoryRow> GetHistory(DateTime from, DateTime to)
@@ -254,7 +330,7 @@ public class FbaOrderRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT o.FbaNo, o.OrderDate, o.ShipmentId, b.BoxSeq, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status, i.ItemSeq
+            SELECT o.FbaNo, o.OrderDate, o.ShipmentId, b.BoxSeq, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status, i.ItemSeq, i.ExpiryDate
             FROM FbaOrder o
             JOIN FbaBox b ON b.FbaNo = o.FbaNo
             JOIN FbaBoxItem i ON i.FbaNo = b.FbaNo AND i.BoxSeq = b.BoxSeq
@@ -280,6 +356,7 @@ public class FbaOrderRepository
                 TrackingNo = reader.IsDBNull(7) ? null : reader.GetString(7),
                 Status = reader.GetString(8),
                 ItemSeq = reader.GetInt32(9),
+                ExpiryDate = reader.IsDBNull(10) ? null : reader.GetString(10),
             });
         }
         return result;

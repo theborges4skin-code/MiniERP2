@@ -44,6 +44,7 @@ public class ReportForm : Form
     public ReportForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadFilters();
     }
 

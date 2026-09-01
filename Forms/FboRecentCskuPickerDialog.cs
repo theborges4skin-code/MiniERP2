@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Models;
 
 namespace MiniERP2.Forms;
@@ -46,7 +47,7 @@ public class FboRecentCskuPickerDialog : Form
             new Label { Text = $"(CSKU 최대 30종 × 최근 2건, 전체 {_allGroups.Count}건)", AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(12, 5, 0, 0) },
         });
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

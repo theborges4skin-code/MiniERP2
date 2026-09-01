@@ -73,6 +73,7 @@ public class PriceQuoteForm : Form
     public PriceQuoteForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadChannels();
         RefreshList();
         NewQuote();

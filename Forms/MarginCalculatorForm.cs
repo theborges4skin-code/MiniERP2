@@ -34,6 +34,7 @@ public class MarginCalculatorForm : Form
     private readonly ChannelSkuRepository _cskuRepository = new();
     private readonly MarginCalculatorSettingsService _settingsService = new();
     private readonly MarginCalculatorSettings _settings;
+    private readonly MarginCalculatorScenarioService _scenarioService = new();
     private readonly SettingsService _lastFolderSettingsService = new();
 
     private ComboBox _modeCombo = new();
@@ -54,6 +55,7 @@ public class MarginCalculatorForm : Form
     {
         _settings = _settingsService.Load();
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         RestoreSettings();
         AddRow();
         UpdateVatConversionHeaders();
@@ -666,6 +668,14 @@ public class MarginCalculatorForm : Form
         btnExport.Click += (s, e) => OnExportClick();
         bar.Controls.Add(btnExport);
 
+        var btnSaveScenario = new Button { Text = "임시저장", Width = 90 };
+        btnSaveScenario.Click += (s, e) => OnSaveScenarioClick();
+        bar.Controls.Add(btnSaveScenario);
+
+        var btnLoadScenario = new Button { Text = "임시저장 불러오기", Width = 130 };
+        btnLoadScenario.Click += (s, e) => OnLoadScenarioClick();
+        bar.Controls.Add(btnLoadScenario);
+
         return bar;
     }
 
@@ -749,14 +759,11 @@ public class MarginCalculatorForm : Form
             if (selected.Count == 0) { MessageBox.Show("MSKU가 있는 행만 마스터 원가 적용이 가능합니다.", "알림"); return; }
         }
 
-        // §4.6.1: ItemTable.CostPrice의 VAT 기준(설정값)으로 역환산해서 저장한다.
-        var masterIsVatExcl = _settings.MasterCostVatBasis == "VatExcl";
+        // §4.6.1: ItemTable.CostPrice/CostPriceOverride 모두 VAT포함 고정으로 저장한다(확정).
         var preview = new List<(string Label, string Before, string After)>();
         foreach (var row in selected)
         {
-            var newDbValue = target == MarginCostApplyTargetDialog.Target.Master
-                ? ConvertToStorageBasis(row.CostPriceApplied, masterIsVatExcl)
-                : ConvertToStorageBasis(row.CostPriceApplied, storageIsVatExcl: false); // CostPriceOverride는 VAT포함 고정(§4.6)
+            var newDbValue = ConvertToStorageBasis(row.CostPriceApplied, storageIsVatExcl: false);
 
             var beforeText = target == MarginCostApplyTargetDialog.Target.Master
                 ? _itemRepository.GetBySku(row.Msku!)?.CostPrice.ToString("N0") ?? "-"
@@ -778,7 +785,7 @@ public class MarginCalculatorForm : Form
             {
                 var item = _itemRepository.GetBySku(row.Msku!);
                 if (item == null) continue;
-                item.CostPrice = ConvertToStorageBasis(row.CostPriceApplied, masterIsVatExcl);
+                item.CostPrice = ConvertToStorageBasis(row.CostPriceApplied, storageIsVatExcl: false);
                 _itemRepository.Upsert(item);
             }
             else
@@ -905,44 +912,127 @@ public class MarginCalculatorForm : Form
 
     // ───────────────────────── SKU 불러오기 (§5) ─────────────────────────
 
-    /// <summary>§5: CskuPickerDialog(단건, 반복 호출로 다행 구성) — 채널 미지정 마스터SKU 단독
-    /// 행도 허용(§5 전제조건, allowMasterSkuOnly=true로 다이얼로그 확장분 사용).</summary>
+    /// <summary>§5: CskuPickerDialog(다중선택 가능, allowMultiSelect=true) — 채널 미지정 마스터SKU
+    /// 단독 행도 허용(§5 전제조건, allowMasterSkuOnly=true로 다이얼로그 확장분 사용). 선택한 항목 수만큼
+    /// 그리드에 행을 채워 넣는다(단건 선택 시에도 SelectedItems에 1개만 담겨 동일 경로로 처리됨).</summary>
     private void OnLoadSkuClick()
     {
-        using var dialog = new CskuPickerDialog(allowMasterSkuOnly: true);
-        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.SelectedMsku == null) return;
+        using var dialog = new CskuPickerDialog(allowMasterSkuOnly: true, allowMultiSelect: true);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.SelectedItems.Count == 0) return;
 
-        // 첫 로딩이라 아직 아무것도 입력하지 않은 기본 빈 행이 있으면 그 행을 채우고,
-        // 아니면 새 행을 추가한다(§5 — 반복 호출로 다행 구성).
-        var row = _rows.Count == 1 && IsBlankManualRow(_rows[0]) ? _rows[0] : new MarginCalcRow();
-        if (!_rows.Contains(row)) _rows.Add(row);
+        foreach (var selected in dialog.SelectedItems)
+        {
+            // 첫 로딩이라 아직 아무것도 입력하지 않은 기본 빈 행이 있으면 그 행을 채우고,
+            // 아니면 새 행을 추가한다(§5 — 반복 호출/다중선택으로 다행 구성).
+            var row = _rows.Count == 1 && IsBlankManualRow(_rows[0]) ? _rows[0] : new MarginCalcRow();
+            if (!_rows.Contains(row)) _rows.Add(row);
 
-        row.ChannelCode = dialog.SelectedChannelCode;
-        row.ChannelName = dialog.SelectedChannelCode == null
-            ? null
-            : _channelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == dialog.SelectedChannelCode)?.ChannelName ?? dialog.SelectedChannelCode;
-        row.CskuCode = dialog.SelectedCskuCode;
-        row.Msku = dialog.SelectedMsku;
-        row.ItemName = dialog.SelectedItemName;
+            row.ChannelCode = selected.ChannelCode;
+            row.ChannelName = selected.ChannelCode == null
+                ? null
+                : _channelRepository.GetAll().FirstOrDefault(c => c.ChannelCode == selected.ChannelCode)?.ChannelName ?? selected.ChannelCode;
+            row.CskuCode = selected.CskuCode;
+            row.Msku = selected.Msku;
+            row.ItemName = selected.ItemName;
 
-        // §4.6.1: ItemTable.CostPrice(마스터)의 VAT 기준은 미확정 — 설정값으로 환산한다.
-        // CskuPickerDialog가 CostPriceOverride/CostPrice를 이미 한 값으로 합쳐 반환하므로, 이 값이
-        // 실제로 어느 쪽 출처인지는 v1에서 구분하지 않고 마스터 기준으로 일괄 환산한다(알려진 단순화).
-        var sourceIsVatExcl = _settings.MasterCostVatBasis == "VatExcl";
-        row.CostPriceDb = ConvertBasis(dialog.SelectedCostPrice, sourceIsVatExcl, toIsVatExcl: _vatExcludedRadio.Checked);
-        row.CostPriceApplied = row.CostPriceDb;
+            // §4.6.1: ItemTable.CostPrice(마스터)/CostPriceOverride 모두 VAT포함 고정으로 저장된다(확정).
+            // CskuPickerDialog가 둘을 이미 한 값으로 합쳐 반환하므로 출처를 구분할 필요 없이 그대로 환산한다.
+            row.CostPriceDb = ConvertFromVatIncludedDb(selected.CostPrice);
+            row.CostPriceApplied = row.CostPriceDb;
 
-        // §5.1: Reserve1 파싱. §4.6: DB는 VAT포함 고정 — 표시기준이 별도면 환산.
-        var item = _itemRepository.GetBySku(dialog.SelectedMsku);
-        var retailPriceRaw = ReserveTextPriceParser.Parse(item?.Reserve1);
-        row.RetailPrice = retailPriceRaw is { } r ? ConvertFromVatIncludedDb(r) : null;
+            // §5.1: Reserve1 파싱. §4.6: DB는 VAT포함 고정 — 표시기준이 별도면 환산.
+            var item = selected.Msku == null ? null : _itemRepository.GetBySku(selected.Msku);
+            var retailPriceRaw = ReserveTextPriceParser.Parse(item?.Reserve1);
+            row.RetailPrice = retailPriceRaw is { } r ? ConvertFromVatIncludedDb(r) : null;
 
-        // §5.2: SupplyPrice는 NOT NULL이라 0은 "미설정"으로 간주해 공란 처리.
-        var supplyPriceRaw = dialog.SelectedChannelCode == null || dialog.SelectedUnitPrice == 0m ? (decimal?)null : dialog.SelectedUnitPrice;
-        row.SupplyPriceDb = supplyPriceRaw is { } sp ? ConvertFromVatIncludedDb(sp) : null;
+            // §5.2: SupplyPrice는 NOT NULL이라 0은 "미설정"으로 간주해 공란 처리.
+            var supplyPriceRaw = selected.ChannelCode == null || selected.UnitPrice == 0m ? (decimal?)null : selected.UnitPrice;
+            row.SupplyPriceDb = supplyPriceRaw is { } sp ? ConvertFromVatIncludedDb(sp) : null;
 
-        RecalculateRow(row);
+            RecalculateRow(row);
+        }
+
         _mainGrid.Invalidate();
+    }
+
+    // ───────────────────────── 임시저장 (§9) ─────────────────────────
+
+    /// <summary>§9: 현재 화면(비용 항목/행/계산 설정) 전체를 스냅샷으로 저장한다. 네고 문의 등으로
+    /// 같은 계산을 반복할 때 재세팅 없이 다시 불러오도록 하기 위함 — 최근 5개까지만 보관된다
+    /// (MarginCalculatorScenarioService, 6번째부터 가장 오래된 것을 자동으로 버림).</summary>
+    private void OnSaveScenarioClick()
+    {
+        if (_rows.All(IsBlankManualRow)) { MessageBox.Show("저장할 계산 내용이 없습니다.", "알림"); return; }
+
+        var defaultLabel = BuildScenarioDefaultLabel();
+        using var promptDialog = new SimpleTextPromptDialog("임시저장", "저장 이름", defaultLabel);
+        if (FormManager.ShowDialogSafe(promptDialog, this) != DialogResult.OK) return;
+
+        var scenario = new MarginCalcScenario
+        {
+            Label = string.IsNullOrWhiteSpace(promptDialog.Value) ? defaultLabel : promptDialog.Value,
+            Mode = CurrentMode,
+            VatExcluded = _vatExcludedRadio.Checked,
+            RoundingUnitIndex = _roundingCombo.SelectedIndex,
+            QtyColumnVisible = _qtyColumnCheckBox.Checked,
+            CostItems = _costItems.ToList(),
+            Rows = _rows.Where(r => !IsBlankManualRow(r)).ToList(),
+        };
+
+        var all = _scenarioService.Save(scenario);
+        MessageBox.Show($"임시저장했습니다. ({all.Count}/5)\n5개를 넘으면 가장 오래된 저장이 자동으로 지워집니다.", "완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private string BuildScenarioDefaultLabel()
+    {
+        var names = _rows.Where(r => !string.IsNullOrWhiteSpace(r.ItemName)).Select(r => r.ItemName!).Distinct().ToList();
+        if (names.Count == 0) return $"임시저장 {DateTime.Now:MM-dd HH:mm}";
+        var summary = string.Join(", ", names.Take(2));
+        return names.Count > 2 ? $"{summary} 외 {names.Count - 2}건" : summary;
+    }
+
+    /// <summary>§9: 임시저장 목록에서 하나를 골라 현재 화면을 통째로 덮어쓴다.</summary>
+    private void OnLoadScenarioClick()
+    {
+        using var pickerDialog = new MarginScenarioPickerDialog(_scenarioService);
+        if (FormManager.ShowDialogSafe(pickerDialog, this) != DialogResult.OK || pickerDialog.SelectedScenario == null) return;
+
+        if (_rows.Any(r => !IsBlankManualRow(r)))
+        {
+            var result = MessageBox.Show(
+                "현재 작성 중인 계산 내용이 있습니다. 불러오면 사라집니다.\n계속하시겠습니까?",
+                "확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes) return;
+        }
+
+        ApplyScenario(pickerDialog.SelectedScenario);
+    }
+
+    /// <summary>저장된 스냅샷으로 화면 전체(모드/VAT/반올림/수량열/비용항목/행)를 되돌린다.</summary>
+    private void ApplyScenario(MarginCalcScenario scenario)
+    {
+        var modeIndex = Array.FindIndex(Modes, m => m.Mode == scenario.Mode);
+        if (modeIndex >= 0) _modeCombo.SelectedIndex = modeIndex;
+
+        _vatExcludedRadio.Checked = scenario.VatExcluded;
+        _vatIncludedRadio.Checked = !scenario.VatExcluded;
+        if (scenario.RoundingUnitIndex >= 0 && scenario.RoundingUnitIndex < RoundingUnits.Length)
+            _roundingCombo.SelectedIndex = scenario.RoundingUnitIndex;
+        _qtyColumnCheckBox.Checked = scenario.QtyColumnVisible;
+        ApplyQuantityColumnVisibility();
+
+        _costItems.Clear();
+        foreach (var item in scenario.CostItems) _costItems.Add(item);
+        RebuildCostItemColumns();
+        UpdateRateSumWarning();
+
+        _rows.Clear();
+        foreach (var row in scenario.Rows) _rows.Add(row);
+        if (_rows.Count == 0) AddRow();
+
+        ApplyModeToColumns();
+        UpdateVatConversionHeaders();
+        RecalculateAll();
     }
 
     private static bool IsBlankManualRow(MarginCalcRow row) =>
@@ -960,14 +1050,14 @@ public class MarginCalculatorForm : Form
         return sourceIsVatExcl ? value * VatCalculator.VatDivisor : value / VatCalculator.VatDivisor;
     }
 
-    /// <summary>환산이 발생하는 열 헤더에 "(환산)" 표시를 붙인다(§4.6).</summary>
+    /// <summary>환산이 발생하는 열 헤더에 "(환산)" 표시를 붙인다(§4.6). DB 필드(제조원가/권장소비자가/납품가)는
+    /// 모두 VAT포함 고정 저장이므로, 화면 표시기준이 "별도"일 때만 환산이 일어난다.</summary>
     private void UpdateVatConversionHeaders()
     {
         var displayIsVatExcl = _vatExcludedRadio.Checked;
-        var masterIsVatExcl = _settings.MasterCostVatBasis == "VatExcl";
 
-        SetHeaderSuffix("CostPriceDb", "제조원가(DB)", displayIsVatExcl != masterIsVatExcl);
-        SetHeaderSuffix("CostPriceApplied", "제조원가(적용)", displayIsVatExcl != masterIsVatExcl);
+        SetHeaderSuffix("CostPriceDb", "제조원가(DB)", displayIsVatExcl);
+        SetHeaderSuffix("CostPriceApplied", "제조원가(적용)", displayIsVatExcl);
         SetHeaderSuffix("RetailPrice", "권장소비자가", displayIsVatExcl);
         SetHeaderSuffix("SupplyPriceDb", "납품가(DB)", displayIsVatExcl);
     }

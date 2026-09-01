@@ -14,8 +14,9 @@ public enum MarginSupplyInputSource
 public class MarginCostItemDef
 {
     /// <summary>행별 override(<see cref="MarginCalcRow.CostOverrides"/>)를 이름이 아닌 Id로 연결한다 —
-    /// 항목명을 나중에 바꿔도 이미 입력된 override가 끊기지 않게 하기 위함.</summary>
-    public Guid Id { get; } = Guid.NewGuid();
+    /// 항목명을 나중에 바꿔도 이미 입력된 override가 끊기지 않게 하기 위함. 임시저장(§9) 직렬화 시
+    /// 이 Id가 그대로 복원되어야 CostOverrides 연결이 유지되므로 set 가능해야 한다.</summary>
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     public string Name { get; set; } = string.Empty;
     public bool IsRate { get; set; } = true;
@@ -57,8 +58,10 @@ public class MarginCalcRow
 
     public MarginSupplyInputSource SupplyInputSource { get; set; } = MarginSupplyInputSource.None;
 
-    /// <summary>비용 항목별 행 override. <see cref="MarginCostItemDef.Id"/> → 값(없으면 전역 기본값 적용, §3).</summary>
-    public Dictionary<Guid, decimal?> CostOverrides { get; } = new();
+    /// <summary>비용 항목별 행 override. <see cref="MarginCostItemDef.Id"/> → 값(없으면 전역 기본값 적용, §3).
+    /// get-only Dictionary 속성은 System.Text.Json이 역직렬화 시 채워 넣지 못해(빈 채로 남음) 임시저장
+    /// (§9) 왕복 시 값이 사라진다 — set 가능해야 한다.</summary>
+    public Dictionary<Guid, decimal?> CostOverrides { get; set; } = new();
 
     // ── 계산 결과 캐시(그리드 표시용) ──
     public bool IsComputable { get; set; }

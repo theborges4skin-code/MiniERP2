@@ -275,13 +275,14 @@ public class OutboundRepositoryTests
             new OutboundDetail
             {
                 ChannelCode = channelCode, OrderNo = "ORDER-7", TrackingNo = "", MskuCode = "SKU-1", Qty = 1, SupplyPrice = 1000m,
-                Recipient = "홍길동", Address = "서울시 강남구", ProductName = "테스트상품", Remark = "문 앞에 놔주세요",
+                Recipient = "홍길동", Phone = "010-1234-5678", Address = "서울시 강남구", ProductName = "테스트상품", Remark = "문 앞에 놔주세요",
             },
         });
 
         var result = repository.GetByChannel(channelCode, from, DateTime.Now.AddMinutes(5)).Single();
 
         Assert.AreEqual("홍길동", result.Recipient);
+        Assert.AreEqual("010-1234-5678", result.Phone);
         Assert.AreEqual("서울시 강남구", result.Address);
         Assert.AreEqual("테스트상품", result.ProductName);
         Assert.AreEqual("문 앞에 놔주세요", result.Remark);

@@ -36,6 +36,7 @@ public class DataManagementForm : Form
     public DataManagementForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     /// <summary>한 관리 테이블 탭의 상태(어댑터/현재 스테이징 중인 DataTable/그리드)를 담습니다.</summary>
@@ -436,7 +437,7 @@ public class DataManagementForm : Form
         splitContainer.Panel1.Controls.Add(topLayout);
 
         // ── 하단: 선택한 CSKU를 참조하는 매핑 규칙 패널 ──
-        var rulesGrid = new DataGridView
+        var rulesGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
@@ -626,7 +627,7 @@ public class DataManagementForm : Form
         splitContainer.Panel1.Controls.Add(topLayout);
 
         // ── 하단: 선택한 매입SKU의 매입가 변경 이력(§M2 "매입가 이력") ──
-        var historyGrid = new DataGridView
+        var historyGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,

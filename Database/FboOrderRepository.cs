@@ -246,7 +246,7 @@ public class FboOrderRepository
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT o.FboNo, o.OrderDate, o.ChannelId, b.BoxSeq, b.ReceiverDisplayName, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status, i.ItemSeq
+            SELECT o.FboNo, o.OrderDate, o.ChannelId, b.BoxSeq, b.ReceiverDisplayName, i.Csku, i.ItemName, i.Qty, b.TrackingNo, b.Status, i.ItemSeq, i.ExpiryDate
             FROM FboOrder o
             JOIN FboBox b ON b.FboNo = o.FboNo
             JOIN FboBoxItem i ON i.FboNo = b.FboNo AND i.BoxSeq = b.BoxSeq
@@ -275,6 +275,7 @@ public class FboOrderRepository
                 TrackingNo = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Status = reader.GetString(9),
                 ItemSeq = reader.GetInt32(10),
+                ExpiryDate = reader.IsDBNull(11) ? null : reader.GetString(11),
             });
         }
         return result;
@@ -320,6 +321,29 @@ public class FboOrderRepository
         command.Parameters.AddWithValue("$fboNo", fboNo);
         command.Parameters.AddWithValue("$boxSeq", boxSeq);
         command.Parameters.AddWithValue("$itemSeq", itemSeq);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 이력 조회창 그리드에서 이송장번호를 직접 입력/수정할 때 쓴다(§운송장번호 수동입력 — 파일
+    /// 불러오기 없이 소량 건을 바로 고칠 때). 빈 값으로 지우면 이송장 등록 이전 상태('대기')로
+    /// 되돌린다. ApplyTracking(자동 매칭 전용)과 달리 지우기까지 지원해야 해서 별도로 둔다.
+    /// </summary>
+    public void SetTrackingNo(string fboNo, int boxSeq, string? trackingNo)
+    {
+        var hasValue = !string.IsNullOrWhiteSpace(trackingNo);
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE FboBox SET TrackingNo = $trackingNo, TrackingLoadedAt = $loadedAt, Status = $status
+            WHERE FboNo = $fboNo AND BoxSeq = $boxSeq
+            """;
+        command.Parameters.AddWithValue("$trackingNo", hasValue ? trackingNo!.Trim() : DBNull.Value);
+        command.Parameters.AddWithValue("$loadedAt", hasValue ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$status", hasValue ? "이송장등록" : "대기");
+        command.Parameters.AddWithValue("$fboNo", fboNo);
+        command.Parameters.AddWithValue("$boxSeq", boxSeq);
         command.ExecuteNonQuery();
     }
 

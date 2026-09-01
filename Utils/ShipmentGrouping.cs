@@ -125,7 +125,11 @@ public static class ShipmentGrouping
         }
     }
 
-    private static string? StripRecipientSuffix(string? recipient) =>
+    /// <summary>
+    /// 수취인명 뒤에 붙은 분리배송 번호(예: "진도그린3" → "진도그린")를 뗀다. <see cref="RenumberSplitRecipients"/>와
+    /// OfsForm의 수령인 중복회피 기능이 공유한다.
+    /// </summary>
+    public static string? StripRecipientSuffix(string? recipient) =>
         string.IsNullOrEmpty(recipient) ? recipient : TrailingDigits.Replace(recipient, "");
 
     private static string FormatQuantityTag(string? template, int quantity)

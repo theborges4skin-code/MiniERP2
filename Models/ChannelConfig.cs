@@ -50,6 +50,10 @@ public class ChannelConfig
     [Browsable(false)]
     public List<AdFileLayout> AdFileLayouts { get; set; } = new();
 
+    // 광고매핑 창의 "채널 분리 규칙" 탭에서 편집하는 사용 여부/캠페인 소스 헤더는 여기(JSON)가
+    // 아니라 AdChannelSplitRepository(DB)에 저장한다 — "채널 설정" 창이 이 JSON 전체를 로드해
+    // 두었다가 무관한 항목을 저장할 때 값을 되돌려버리는 경쟁 문제를 피하기 위함.
+
     // 채널설정 창의 "보조 소스" 전용 탭에서 편집한다(PropertyGrid의 CollectionEditor는 쓰기 불편함).
     [Browsable(false)]
     public List<GrowthAuxSource> GrowthAuxSources { get; set; } = new();

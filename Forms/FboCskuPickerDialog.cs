@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Models;
 
 namespace MiniERP2.Forms;
@@ -45,7 +46,7 @@ public class FboCskuPickerDialog : Form
             new Label { Text = "검색:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) }, _searchBox
         });
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AllowUserToAddRows = false,

@@ -1,4 +1,5 @@
 using MiniERP2.Config;
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Models;
@@ -35,6 +36,7 @@ public class FboHistoryForm : Form
     public FboHistoryForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     private void InitializeComponent()
@@ -138,7 +140,7 @@ public class FboHistoryForm : Form
         // 기본 뷰가 상세보기(ViewModeDetail)이므로 라인 액션도 처음부터 활성화한다(위
         // SelectedIndexChanged는 이후 사용자가 뷰를 바꿀 때만 실행되므로 초기값은 직접 맞춰야 함).
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
@@ -149,6 +151,9 @@ public class FboHistoryForm : Form
         };
         // "발주번호별" 뷰에서만 의미가 있다 — 다른 뷰에서는 OnGridCellDoubleClick 안에서 무시한다.
         _grid.CellDoubleClick += OnGridCellDoubleClick;
+        // 상세보기에서만 "이송장번호" 셀을 직접 입력할 수 있게 한다(Render()에서 그리드/열별
+        // ReadOnly를 뷰에 맞게 재조정함). 파일로 불러오는 대신 소량 건을 바로 고치는 용도.
+        _grid.CellEndEdit += OnTrackingNoCellEndEdit;
 
         _statusLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
@@ -491,6 +496,34 @@ public class FboHistoryForm : Form
         }
     }
 
+    /// <summary>상세보기에서 "이송장번호" 셀을 직접 고쳤을 때 박스에 반영한다(§운송장번호 수동입력).
+    /// 이송장번호는 박스 단위 필드라 같은 박스의 다른 CSKU 라인에도 반영되도록 조회를 다시 돈다.</summary>
+    private void OnTrackingNoCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (_viewModeCombo.SelectedIndex != ViewModeDetail) return;
+        if (e.RowIndex < 0 || _grid.Columns[e.ColumnIndex].Name != "TrackingNo") return;
+
+        var row = _grid.Rows[e.RowIndex];
+        var fboNo = row.Cells["FboNo"].Value?.ToString();
+        if (string.IsNullOrWhiteSpace(fboNo) || !int.TryParse(row.Cells["BoxSeq"].Value?.ToString(), out var boxSeq))
+            return;
+
+        var newValue = row.Cells["TrackingNo"].Value?.ToString()?.Trim();
+        var original = _rows.FirstOrDefault(r => r.FboNo == fboNo && r.BoxSeq == boxSeq)?.TrackingNo;
+        if (string.Equals(string.IsNullOrEmpty(original) ? null : original, string.IsNullOrEmpty(newValue) ? null : newValue, StringComparison.Ordinal))
+            return;
+
+        _orderRepository.SetTrackingNo(fboNo, boxSeq, newValue);
+        // CellEndEdit 처리 중 곧바로 그리드를 다시 그리면 편집 종료 마무리와 충돌할 수 있어 한 틱 미룬다.
+        BeginInvoke(() =>
+        {
+            RunQuery();
+            _statusLabel.Text = string.IsNullOrEmpty(newValue)
+                ? $"'{fboNo}' 박스{boxSeq}의 이송장번호를 지웠습니다."
+                : $"'{fboNo}' 박스{boxSeq}의 이송장번호를 '{newValue}'(으)로 입력했습니다.";
+        });
+    }
+
     private void RunQuery()
     {
         var channelId = _channelCombo.SelectedValue as string;
@@ -578,6 +611,7 @@ public class FboHistoryForm : Form
             _grid.Columns.Add("Csku", "CSKU");
             _grid.Columns.Add("ItemName", "품목명");
             _grid.Columns.Add("Qty", "수량");
+            _grid.Columns.Add("ExpiryDate", "유통기한");
             _grid.Columns.Add("TrackingNo", "이송장번호");
             _grid.Columns.Add("Status", "상태");
             // 라인 단위 수정/복사/삭제(§선택 라인 액션)가 이 CSKU 줄 하나를 정확히 지목하는 데
@@ -589,8 +623,18 @@ public class FboHistoryForm : Form
             {
                 var channelName = channelNames.TryGetValue(r.ChannelId, out var name) ? name : r.ChannelId;
                 _grid.Rows.Add(r.FboNo, r.OrderDate.ToString("yyyy-MM-dd"), channelName, r.BoxSeq,
-                    r.ReceiverDisplayName, r.Csku, r.ItemName, r.Qty, r.TrackingNo, r.Status, r.ItemSeq);
+                    r.ReceiverDisplayName, r.Csku, r.ItemName, r.Qty, r.ExpiryDate, r.TrackingNo, r.Status, r.ItemSeq);
             }
+        }
+
+        // 상세보기에서만 "이송장번호" 열을 직접 입력할 수 있게 열고, 나머지 열/뷰는 그대로 읽기전용
+        // 유지한다(§운송장번호 수동입력).
+        var isDetailView = _viewModeCombo.SelectedIndex == ViewModeDetail;
+        _grid.ReadOnly = !isDetailView;
+        if (isDetailView)
+        {
+            foreach (DataGridViewColumn column in _grid.Columns)
+                column.ReadOnly = column.Name != "TrackingNo";
         }
 
         _statusLabel.Text = $"{filtered.Count}건 조회됨 (원본 {_rows.Count}건 중)";

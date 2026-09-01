@@ -37,7 +37,13 @@ public static class AdConditionEvaluator
 
     private static bool EvaluateSingle(AdConditionDetail detail, AdSpendItem item)
     {
-        var rawValue = GetFieldValue(item, detail.HeaderField) ?? string.Empty;
+        var fieldValue = GetFieldValue(item, detail.HeaderField);
+        // 이 파일의 레이아웃에 해당 필드가 매핑되어 있지 않으면(값이 null) 연산자와 무관하게
+        // 조건 불성립으로 처리한다. 그러지 않으면 NotContains/NotEquals가 빈 문자열과 비교해
+        // 항상 true가 되어 전 행이 오분류되는 버그가 생긴다(AdChannelSplit_Spec.md §4.5 참고).
+        if (fieldValue == null) return false;
+
+        var rawValue = fieldValue;
 
         if (detail.Operator == AdConditionOperator.IsZero)
         {
@@ -80,6 +86,9 @@ public static class AdConditionEvaluator
         AdStdField.Cost => item.Cost.ToString(),
         AdStdField.Extra1 => item.Extra1,
         AdStdField.Extra2 => item.Extra2,
+        AdStdField.Note1 => item.Note1,
+        AdStdField.Note2 => item.Note2,
+        AdStdField.Note3 => item.Note3,
         _ => null,
     };
 }

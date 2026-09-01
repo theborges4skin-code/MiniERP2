@@ -50,7 +50,9 @@ public class AssignMasterSkuDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var items = _itemRepository.GetAll().OrderBy(i => i.Sku).ToList();
-        _skuCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown, AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.ListItems };
+        // AutoCompleteMode(Suggest 계열)는 한글 IME 조합 중 텍스트가 깨지고 스페이스가 씹히는
+        // WinForms 고질 버그를 유발해서 뺐다 — 드롭다운(화살표/Alt+Down)으로 목록 선택은 그대로 된다.
+        _skuCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown };
         _skuCombo.Items.AddRange(items.Select(i => $"{i.Sku} — {i.ItemName}").Cast<object>().ToArray());
         if (!string.IsNullOrWhiteSpace(currentMsku)) _skuCombo.Text = currentMsku;
 

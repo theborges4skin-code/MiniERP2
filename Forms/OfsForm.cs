@@ -87,14 +87,23 @@ public class OfsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         _mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
-        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        // 툴바 버튼이 계속 늘어나 창 폭이 좁으면 자주 잘린다는 지적(사용자 신고)에 따라, 폭에
+        // 따라 줄 수가 들쭉날쭉 바뀌는 자동 줄바꿈 대신 항상 2줄로 고정 배치한다 — 그래서 이 행
+        // 높이도 버튼 2줄(각 40)만큼 고정으로 넉넉히 잡는다.
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // QuickMappingPanel (collapsed)
         _mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
         var mainLayout = _mainLayout; // alias for rest of method
 
-        // 1. Toolbar
-        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        // 1. Toolbar — 항상 2줄로 고정 배치(위: 주문 관리, 아래: 매핑/저장/내보내기).
+        var toolStripContainer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        toolStripContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        toolStripContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 5, 5, 0), WrapContents = false, AutoSize = false };
+        var toolStripRow2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 5), WrapContents = false, AutoSize = false };
+        toolStripContainer.Controls.Add(toolStrip, 0, 0);
+        toolStripContainer.Controls.Add(toolStripRow2, 0, 1);
 
         // 채널 콤보 — 수동 주문 추가의 기준 채널. 파일 로드 시 자동 동기화.
         var lblChannel = new Label
@@ -137,18 +146,21 @@ public class OfsForm : Form
         btnUnmappedBatch.Click += OnUnmappedBatchClick;
         btnOutboundHistory.Click += (s, e) => FormManager.Show<OutboundHistoryForm>();
 
+        // 1줄: 채널 선택 + 주문 목록 관리(불러오기/추가/삭제).
         toolStrip.Controls.Add(lblChannel);
         toolStrip.Controls.Add(_channelCombo);
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
-        toolStrip.Controls.Add(btnDeleteSelected);
         toolStrip.Controls.Add(btnLoadAddressBook);
-        toolStrip.Controls.Add(btnMappingAssistant);
-        toolStrip.Controls.Add(btnUnmappedBatch);
-        toolStrip.Controls.Add(btnSave);
-        toolStrip.Controls.Add(btnOutboundHistory);
-        toolStrip.Controls.Add(btnExportSelected);
-        toolStrip.Controls.Add(btnExportAll);
+        toolStrip.Controls.Add(btnDeleteSelected);
+
+        // 2줄: 매핑/저장/내보내기.
+        toolStripRow2.Controls.Add(btnMappingAssistant);
+        toolStripRow2.Controls.Add(btnUnmappedBatch);
+        toolStripRow2.Controls.Add(btnSave);
+        toolStripRow2.Controls.Add(btnOutboundHistory);
+        toolStripRow2.Controls.Add(btnExportSelected);
+        toolStripRow2.Controls.Add(btnExportAll);
 
         // 2. Data Grid
         _ordersGrid = new ExcelLikeDataGridView
@@ -202,7 +214,6 @@ public class OfsForm : Form
         _ordersGrid.CellValueChanged += OnOrdersGridCellValueChanged;
 
         // "매핑된 SKU" 셀 자동완성 + 유효성 검사
-        _ordersGrid.EditingControlShowing += OnOrdersGridEditingControlShowing;
         _ordersGrid.CellValidating += OnOrdersGridCellValidating;
 
         // "묶음" 열 표시 + 분리배송/합포장 컨텍스트 메뉴
@@ -230,7 +241,7 @@ public class OfsForm : Form
         _ordersGrid.SelectionChanged += OnOrdersGridSelectionChanged;
 
         // Add controls to layout
-        mainLayout.Controls.Add(toolStrip, 0, 0);
+        mainLayout.Controls.Add(toolStripContainer, 0, 0);
         mainLayout.Controls.Add(_quickMapPanel, 0, 1);
         mainLayout.Controls.Add(gridSplit, 0, 2);
         mainLayout.Controls.Add(_statusStrip, 0, 3);
@@ -764,22 +775,6 @@ public class OfsForm : Form
         MessageBox.Show(
             $"불러온 발주건수(엑셀 행 기준): {_totalLoadedRowCount}건\n발주확정 건수: {confirmedCount}건\n\n{diffNote}",
             "발주확정 결과 확인", MessageBoxButtons.OK, MessageBoxIcon.Information);
-    }
-
-    private void OnOrdersGridEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
-    {
-        if (_ordersGrid.CurrentCell?.OwningColumn?.Name != "MappedSku" || e.Control is not TextBox textBox) return;
-
-        var channelCode = (_ordersGrid.CurrentRow?.DataBoundItem as OfsOrderItem)?.ChannelCode ?? _lastChannelCode;
-        if (string.IsNullOrEmpty(channelCode)) return;
-
-        var cskuCodes = _channelSkuRepository.GetAllByChannel(channelCode).Select(c => c.CskuCode).ToArray();
-        var source = new AutoCompleteStringCollection();
-        source.AddRange(cskuCodes);
-
-        textBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-        textBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
-        textBox.AutoCompleteCustomSource = source;
     }
 
     private void OnOrdersGridCellValidating(object? sender, DataGridViewCellValidatingEventArgs e)
@@ -1665,9 +1660,11 @@ public class OfsForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("합포장(선택한 묶음들을 하나로 합치기)", null, OnMergePreviewGroupsClick);
-        menu.Items.Add("분리배송 처리(묶음 풀기/줄이 1개면 복사해서 새 송장으로)", null, OnResetPreviewGroupsClick);
+        menu.Items.Add("분리배송 처리(묶음 풀기/줄이 1개면 행 수 입력받아 분리)", null, OnResetPreviewGroupsClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("이 묶음 복사(별도 송장으로 추가)", null, OnDuplicatePreviewRowClick);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("수령인 중복회피(선택한 묶음에 새 번호 부여)", null, OnAvoidRecipientDuplicateClick);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("실행취소", null, OnUndoPreviewEditClick);
         _previewGrid.ContextMenuStrip = menu;
@@ -1726,14 +1723,13 @@ public class OfsForm : Form
 
     /// <summary>
     /// 줄이 2개 이상인 묶음(합포장돼 있던 것)을 선택하면 각자 단독 묶음으로 풀어준다(기존 동작).
-    /// 줄이 1개뿐인 묶음은 항상 새 송장 1건만 복제해 정확히 2건으로 나눈다 — 수량만큼(예: 20개면
-    /// 20건) 전부 쪼개던 이전 동작은 새 행이 너무 많이 생긴다는 신고를 받아 되돌렸다. 수량이 2개
-    /// 이상이면 두 송장 모두 원래 수량 그대로 보여 중복 발송처럼 보이는 문제(예전 버그)를 막기
-    /// 위해 반씩 나눠 시작하지만, 정확히 절반으로 나눌 필요가 없는 주문도 많으므로 이 값은
-    /// 시작점일 뿐 그리드에서 바로 수정하면 된다. 수량이 이미 1개뿐이면 그대로 복제만 하고
-    /// 품목/수량은 사용자가 직접 수동으로 나눠 입력한다. 두 동작 모두 한 메뉴("분리배송 처리")로
-    /// 묶어 제공하며, 결과가 2건 이상의 송장이 되면 수취인명이 같아 택배사 시스템에서
-    /// 자동합포장되지 않도록 뒤에 1,2,3...을 붙인다.
+    /// 줄이 1개뿐이고 수량이 2개 이상인 묶음은 <see cref="SplitRowCountDialog"/>로 몇 개의
+    /// 송장(행)으로 나눌지 물어본 뒤, 그 개수만큼 수량을 균등 분배한다(예: 100개를 5행으로
+    /// 나누면 20개씩 5행). 나머지가 남으면 앞쪽 행부터 1개씩 더 배분하지만, 정확한 배분이 필요
+    /// 없는 주문도 많으므로 이 값은 시작점일 뿐 그리드에서 바로 수정하면 된다. 수량이 이미
+    /// 1개뿐이면 나눌 수 없으므로 그대로 복제만 하고 품목/수량은 사용자가 직접 수동으로 나눠
+    /// 입력한다. 세 동작 모두 한 메뉴("분리배송 처리")로 묶어 제공하며, 결과가 2건 이상의
+    /// 송장이 되면 수취인명이 같아 택배사 시스템에서 자동합포장되지 않도록 뒤에 1,2,3...을 붙인다.
     /// </summary>
     private void OnResetPreviewGroupsClick(object? sender, EventArgs e)
     {
@@ -1746,9 +1742,22 @@ public class OfsForm : Form
                 return;
             }
 
+            var multiItemGroups = selected.Where(r => r.Items.Count > 1).ToList();
+            var singleItemGroups = selected.Where(r => r.Items.Count == 1).ToList();
+            var splittableGroups = singleItemGroups.Where(r => r.Items[0].Quantity > 1).ToList();
+
+            var splitCount = 2;
+            if (splittableGroups.Count > 0)
+            {
+                var maxSplitCount = splittableGroups.Min(r => r.Items[0].Quantity);
+                var previewQuantity = splittableGroups.Count == 1 ? splittableGroups[0].Items[0].Quantity : (int?)null;
+                using var dialog = new SplitRowCountDialog(maxSplitCount, previewQuantity);
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                splitCount = dialog.SplitCount;
+            }
+
             PushPreviewUndoSnapshot();
 
-            var multiItemGroups = selected.Where(r => r.Items.Count > 1).ToList();
             foreach (var row in multiItemGroups)
             {
                 ClearStaleInvoiceLabelOverrides(row.Items);
@@ -1757,7 +1766,6 @@ public class OfsForm : Form
             }
             var ungroupedCount = multiItemGroups.Count;
 
-            var singleItemGroups = selected.Where(r => r.Items.Count == 1).ToList();
             var splitInvoiceCount = 0;
             var duplicatedForManualEditCount = 0;
             foreach (var row in singleItemGroups)
@@ -1766,28 +1774,52 @@ public class OfsForm : Form
                 var baseId = ShipmentGrouping.GetEffectiveGroupId(template);
                 ClearStaleInvoiceLabelOverrides([template]);
 
-                var duplicate = CloneOrderItem(template);
-                duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
-                duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
-                duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
-
                 if (template.Quantity > 1)
                 {
-                    // 반씩 나눠 시작한다(예: 20개 → 10+10, 3개 → 2+1). 정확한 배분은 그리드에서
-                    // 바로 고치면 된다 — 목적은 항상 정확히 2건으로만 나누는 것.
-                    var firstQty = (template.Quantity + 1) / 2;
-                    duplicate.Quantity = template.Quantity - firstQty;
-                    template.Quantity = firstQty;
+                    // 입력한 행 수만큼 수량을 균등 분배한다(예: 100개를 5행으로 → 20개씩 5행).
+                    // 나머지가 있으면 앞쪽 행부터 1개씩 더 받는다. 정확한 배분은 그리드에서
+                    // 바로 고치면 된다 — 목적은 항상 정확히 splitCount건으로 나누는 것.
+                    var n = Math.Min(splitCount, template.Quantity);
+                    var baseQty = template.Quantity / n;
+                    var remainder = template.Quantity % n;
+
+                    var duplicates = new List<OfsOrderItem>();
+                    for (var i = 1; i < n; i++)
+                    {
+                        var duplicate = CloneOrderItem(template);
+                        duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
+                        duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                        duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+                        duplicate.Quantity = baseQty + (i < remainder ? 1 : 0);
+                        duplicates.Add(duplicate);
+                    }
+
+                    template.Quantity = baseQty + (remainder > 0 ? 1 : 0);
                     template.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+
+                    var insertAt = _orders.IndexOf(template);
+                    for (var i = 0; i < duplicates.Count; i++)
+                    {
+                        _orders.Insert(insertAt + 1 + i, duplicates[i]);
+                    }
+
+                    var shipments = new List<IReadOnlyList<OfsOrderItem>> { new List<OfsOrderItem> { template } };
+                    shipments.AddRange(duplicates.Select(d => (IReadOnlyList<OfsOrderItem>)new List<OfsOrderItem> { d }));
+                    ShipmentGrouping.RenumberSplitRecipients(shipments);
+
                     splitInvoiceCount++;
                 }
                 else
                 {
+                    var duplicate = CloneOrderItem(template);
+                    duplicate.TrackingNo = null;
+                    duplicate.InvoiceLabel = null;
+                    duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
+
+                    _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
+                    ShipmentGrouping.RenumberSplitRecipients([[template], [duplicate]]);
                     duplicatedForManualEditCount++;
                 }
-
-                _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
-                ShipmentGrouping.RenumberSplitRecipients([[template], [duplicate]]);
             }
 
             _ordersGrid.Invalidate();
@@ -1795,7 +1827,7 @@ public class OfsForm : Form
 
             var messageParts = new List<string>();
             if (ungroupedCount > 0) messageParts.Add($"{ungroupedCount}개 묶음을 분리배송 처리");
-            if (splitInvoiceCount > 0) messageParts.Add($"{splitInvoiceCount}건을 수량 절반씩 나눠 2건으로 분리");
+            if (splitInvoiceCount > 0) messageParts.Add($"{splitInvoiceCount}건을 {splitCount}건으로 분리");
             if (duplicatedForManualEditCount > 0) messageParts.Add($"{duplicatedForManualEditCount}건을 복사해 새 송장으로 분리(품목/수량을 직접 수정하세요)");
             _statusLabel.Text = $"{string.Join(", ", messageParts)}했습니다. ({DateTime.Now:HH:mm:ss})";
         });
@@ -1843,6 +1875,57 @@ public class OfsForm : Form
             _ordersGrid.Invalidate();
             RefreshExportPreview();
             _statusLabel.Text = $"묶음을 복사해 별도 송장으로 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+        });
+    }
+
+    /// <summary>
+    /// 서로 다른 수동주문 건들이 우연히 같은 수취인명을 쓰면(예: 여러 건을 같은 사람 앞으로 각각
+    /// 1박스씩 보내는 경우), <see cref="ShipmentGrouping.RenumberSplitRecipients"/>가 건마다 따로
+    /// 1부터 번호를 매겨 "진도그린1", "진도그린1", "진도그린2"...처럼 서로 다른 건인데 이름이
+    /// 겹치는 경우가 생긴다. 택배사 시스템은 수취인명(+주소)이 같으면 자동으로 합포장해버리므로
+    /// (사용자 피드백), 이렇게 겹친 채로 나가면 원치 않는 합포장이 발생한다. 이 기능은 선택한
+    /// 묶음들에 한해 기존 번호를 떼고, 선택하지 않은 다른 모든 줄의 수취인명과도 겹치지 않는
+    /// 새 번호를 순서대로 부여한다.
+    /// </summary>
+    private void OnAvoidRecipientDuplicateClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedPreviewRows();
+        BeginInvoke(() =>
+        {
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("수령인 중복회피를 적용할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            PushPreviewUndoSnapshot();
+
+            // 선택되지 않은 나머지 모든 줄의 수취인명은 그대로 "충돌을 피해야 할 이름"으로 삼는다.
+            // 선택된 줄들의 현재 이름은 어차피 새로 바뀔 것이므로 여기서 제외한다.
+            var selectedItems = new HashSet<OfsOrderItem>(selected.SelectMany(r => r.Items));
+            var usedNames = new HashSet<string>(
+                _orders.Where(o => !selectedItems.Contains(o) && !string.IsNullOrEmpty(o.Recipient)).Select(o => o.Recipient!),
+                StringComparer.Ordinal);
+
+            foreach (var row in selected)
+            {
+                var template = row.Items.FirstOrDefault(i => !string.IsNullOrEmpty(i.Recipient));
+                if (template == null) continue;
+
+                var baseName = ShipmentGrouping.StripRecipientSuffix(template.Recipient);
+                if (string.IsNullOrEmpty(baseName)) continue;
+
+                var n = 1;
+                string candidate;
+                do { candidate = $"{baseName}{n}"; n++; } while (usedNames.Contains(candidate));
+
+                foreach (var item in row.Items) item.Recipient = candidate;
+                usedNames.Add(candidate);
+            }
+
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+            _statusLabel.Text = $"{selected.Count}개 묶음의 수령인 중복을 회피했습니다. ({DateTime.Now:HH:mm:ss})";
         });
     }
 

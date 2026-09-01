@@ -15,6 +15,13 @@ public class OutboundDetail
     public string TrackingNo { get; set; } = string.Empty;
 
     /// <summary>
+    /// 택배사명. 발주/출고 이력 관리창의 "누적발주서 송장번호 입력" 기능이 채널 발주서매핑의
+    /// 택배사 열(StdField.CourierName)을 읽어 채워 넣는다 — 그 외 경로(발주확정, 운송장번호
+    /// 불러오기)로는 채워지지 않는다.
+    /// </summary>
+    public string CourierName { get; set; } = string.Empty;
+
+    /// <summary>
     /// 이름과 달리 마스터SKU가 아니라 CSKU 코드입니다(OfsOrderItem.MappedSku를 그대로 저장 —
     /// SkuMapper가 매핑 규칙의 TargetSku, 즉 CSKU 코드로 해석하기 때문). B2B 원가 스냅샷 등에서
     /// 실제 마스터SKU가 필요하면 ChannelSkuRepository.ResolveMasterSku(ChannelCode, MskuCode)로
@@ -29,6 +36,13 @@ public class OutboundDetail
     // 주소/품목이 불분명하게 나와 신뢰할 수 없음) 발주확정 시점의 수령인/주소/품목명을 함께
     // 보관해둔다. 발주/출고 이력 관리창에서 동명이인 구분 시에도 이 정보를 보여준다.
     public string Recipient { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 수령인 전화번호. 발주확정 시점의 <see cref="OfsOrderItem.Phone"/> 스냅샷 — 발주/출고 이력
+    /// 관리창에서 "선택 건 택배사 양식 출력"을 할 때 이 값이 없으면 택배사 양식의 연락처 칸이
+    /// 항상 공란으로 나가므로 Recipient/Address와 같은 이유로 함께 보관한다.
+    /// </summary>
+    public string Phone { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
 

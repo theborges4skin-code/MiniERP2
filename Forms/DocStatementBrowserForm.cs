@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
@@ -29,6 +30,7 @@ public class DocStatementBrowserForm : Form
     public DocStatementBrowserForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         Load += (s, e) => OnLoadClick(this, EventArgs.Empty);
     }
 

@@ -29,12 +29,18 @@ public class SelectChannelDialog : Form
 
     private List<SalesChannel> _allChannels = new();
     private readonly HashSet<string> _expandedGroupKeys = new() { FavKey };
+    private readonly string? _pinnedGroupName;
     private bool _suppressExpandEvents;
 
     public SalesChannel? SelectedChannel { get; private set; }
 
-    public SelectChannelDialog()
+    /// <param name="pinnedGroupName">지정하면 해당 이름의 채널 그룹 폴더를 트리 맨 위에 고정하고
+    /// 항상 펼쳐진 상태로 유지한다(사용자가 접어도 즉시 다시 펼쳐짐). 특정 창에서 자주 쓰는
+    /// 그룹(예: 광고 매핑 창의 "온라인")을 매번 찾아 펼치지 않아도 되게 하기 위함이다.</param>
+    public SelectChannelDialog(string? pinnedGroupName = null)
     {
+        _pinnedGroupName = pinnedGroupName;
+        if (_pinnedGroupName != null) _expandedGroupKeys.Add(_pinnedGroupName);
         InitializeComponent();
         LoadChannels();
     }
@@ -154,7 +160,8 @@ public class SelectChannelDialog : Form
 
         var groups = poolList
             .GroupBy(c => string.IsNullOrWhiteSpace(c.GroupName) ? UnclassifiedKey : c.GroupName!)
-            .OrderBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase);
+            .OrderBy(g => g.Key == _pinnedGroupName ? 0 : 1)
+            .ThenBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase);
 
         foreach (var g in groups)
         {
@@ -323,6 +330,14 @@ public class SelectChannelDialog : Form
     private void OnTreeAfterCollapse(object? sender, TreeViewEventArgs e)
     {
         if (_suppressExpandEvents || e.Node.Parent != null) return;
+        if (e.Node.Name == _pinnedGroupName)
+        {
+            // 고정 그룹은 "열린 상태로 고정"이 요구사항이라 접히는 즉시 다시 펼친다.
+            _suppressExpandEvents = true;
+            e.Node.Expand();
+            _suppressExpandEvents = false;
+            return;
+        }
         _expandedGroupKeys.Remove(e.Node.Name);
     }
 

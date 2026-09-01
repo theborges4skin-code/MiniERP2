@@ -26,6 +26,7 @@ public class MasterSkuForm : Form
     public MasterSkuForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         LoadData();
     }
 

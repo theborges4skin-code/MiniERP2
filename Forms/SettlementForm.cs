@@ -50,6 +50,7 @@ public class SettlementForm : Form
 
     private ExcelLikeDataGridView _summaryGrid = new();
     private CheckBox _unmappedOnlyCheckBox = new();
+    private CheckBox _zeroRevenueExcludeCheckBox = new();
     private CheckBox _krwDisplayCheckBox = new();
     private DataGridViewCellStyle _summaryMoneyStyle = new();
     private Label _summaryTotalsLabel = new();
@@ -64,6 +65,7 @@ public class SettlementForm : Form
     public SettlementForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
     }
 
     private void InitializeComponent()
@@ -118,6 +120,11 @@ public class SettlementForm : Form
         _unmappedOnlyCheckBox = new CheckBox { Text = "미매핑건만 보기", AutoSize = true, Checked = true, Padding = new Padding(10, 7, 0, 0) };
         _unmappedOnlyCheckBox.CheckedChanged += (s, e) => RefreshProfitAnalysisView();
         toolStrip.Controls.Add(_unmappedOnlyCheckBox);
+
+        // 매출액 0인 행(취소/환불 등으로 정산액이 잡히지 않은 건)을 목록에서 걸러내는 토글.
+        _zeroRevenueExcludeCheckBox = new CheckBox { Text = "매출액 0건 제외", AutoSize = true, Padding = new Padding(10, 7, 0, 0) };
+        _zeroRevenueExcludeCheckBox.CheckedChanged += (s, e) => RefreshProfitAnalysisView();
+        toolStrip.Controls.Add(_zeroRevenueExcludeCheckBox);
 
         // 아마존 등 외화 채널에서만 의미가 있는 표시 전용 토글 — 저장/DB 값과는 무관하고, 하단
         // 상품그룹별 요약(매출액/배송비/입출고비/순이익)만 원화 환산해서 보여준다.
@@ -232,9 +239,14 @@ public class SettlementForm : Form
         var totalStopwatch = Stopwatch.StartNew();
 
         var filterStopwatch = Stopwatch.StartNew();
+        IEnumerable<SettlementData> filtered = _settlementRows;
+        if (_zeroRevenueExcludeCheckBox.Checked)
+        {
+            filtered = filtered.Where(r => r.Revenue != 0);
+        }
         var view = _unmappedOnlyCheckBox.Checked
-            ? _settlementRows.Where(SettlementRowStatus.IsUnresolved).ToList()
-            : _settlementRows.OrderByDescending(SettlementRowStatus.IsUnresolved).ToList();
+            ? filtered.Where(SettlementRowStatus.IsUnresolved).ToList()
+            : filtered.OrderByDescending(SettlementRowStatus.IsUnresolved).ToList();
         filterStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 필터링 완료 — 표시대상 {view.Count}건 ({filterStopwatch.Elapsed.TotalSeconds:F2}s)");
 
@@ -1051,26 +1063,23 @@ public class SettlementForm : Form
     private string? _msEditOriginalValue;
 
     /// <summary>
-    /// "매핑 SKU" 셀 편집을 시작할 때, 마스터SKU/현재 채널의 CSKU 코드 목록으로 자동완성을 단다.
-    /// 사용자가 요청한 안전장치: 자동완성 목록에 있는 코드를 그대로 입력해야만(대소문자 무관 완전
+    /// "매핑 SKU" 셀 편집을 시작할 때 편집 전 원래 값을 기억해둔다.
+    /// 사용자가 요청한 안전장치: 등록된 SKU/CSKU 코드와 정확히 일치해야만(대소문자 무관 완전
     /// 일치) 1:1 규칙으로 확정되고, 그 외 임의 문자열은 OnSettlementGridCellValidating에서 막는다.
     /// </summary>
     private void OnSettlementGridEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
     {
-        if (_settlementGrid.CurrentCell?.OwningColumn?.Name != "Msku" || e.Control is not TextBox textBox) return;
+        if (_settlementGrid.CurrentCell?.OwningColumn?.Name != "Msku" || e.Control is not TextBox) return;
 
         if (_settlementGrid.CurrentRow?.DataBoundItem is SettlementData data)
         {
             _msEditOriginalValue = data.Msku;
         }
 
-        var codes = BuildSkuAutoCompleteSource((_settlementGrid.CurrentRow?.DataBoundItem as SettlementData)?.ChannelCode);
-        var source = new AutoCompleteStringCollection();
-        source.AddRange(codes.ToArray());
-
-        textBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-        textBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
-        textBox.AutoCompleteCustomSource = source;
+        // AutoCompleteMode(Suggest 계열)는 한글 IME 조합 중 텍스트가 깨지고 스페이스가 씹히는
+        // WinForms 고질 버그를 유발해서 뺐다 — "자동완성 목록에 있는 코드와 정확히 일치해야
+        // 확정된다"는 안전장치는 OnSettlementGridCellValidating이 BuildSkuAutoCompleteSource를
+        // 이 자동완성 소스와 무관하게 다시 조회해서 그대로 유지한다.
     }
 
     /// <summary>

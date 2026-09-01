@@ -226,6 +226,41 @@ public static class DbSchema
                 TargetValue TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS AdChannelSplitSettings (
+                ChannelCode TEXT PRIMARY KEY,
+                Enabled INTEGER NOT NULL DEFAULT 0,
+                CampaignSourceHeaders TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS AdChannelSplitInventory (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                HeaderName TEXT NOT NULL,
+                Value TEXT NOT NULL,
+                TargetChannel TEXT NOT NULL,
+                ConfirmedAt TEXT,
+                LastSeenYymm TEXT,
+                LastCost REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS AdChannelSplitPrerule (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ChannelCode TEXT NOT NULL,
+                Priority INTEGER NOT NULL DEFAULT 0,
+                TargetChannel TEXT NOT NULL,
+                Note TEXT,
+                Enabled INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS AdChannelSplitPreruleDetail (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RuleId INTEGER NOT NULL,
+                HeaderName TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetValue TEXT NOT NULL,
+                Logic TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS ClosingRun (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 FolderPath TEXT NOT NULL,
@@ -406,6 +441,23 @@ public static class DbSchema
             );
 
             CREATE INDEX IF NOT EXISTS IX_PartnerClosingLine_ClosingId ON PartnerClosingLineTable (ClosingId);
+
+            -- 거래처 마감보드 메모. 거래처 전체에 대한 메모(OutboundDetailIds='')와, 특정 라인(들)을
+            -- 참조하는 메모(OutboundDetailIds에 쉼표구분 Id 목록) 두 종류를 같은 테이블에서 다룬다.
+            -- 명세표/매출장 발행 문서에 그대로 노출되므로 ShowOnStatement/ShowOnLedger로 각각 켜고 끈다
+            -- (PartnerClosingDocumentBuilder 참고).
+            CREATE TABLE IF NOT EXISTS PartnerClosingMemoTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period TEXT NOT NULL,
+                PartyKey TEXT NOT NULL,
+                MemoText TEXT NOT NULL DEFAULT '',
+                ShowOnStatement INTEGER NOT NULL DEFAULT 1,
+                ShowOnLedger INTEGER NOT NULL DEFAULT 1,
+                OutboundDetailIds TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_PartnerClosingMemo_Period_PartyKey ON PartnerClosingMemoTable (Period, PartyKey);
 
             CREATE TABLE IF NOT EXISTS FboCskuMaster (
                 Csku TEXT PRIMARY KEY,
@@ -702,6 +754,53 @@ public static class DbSchema
                 ChannelCode TEXT NOT NULL,
                 PRIMARY KEY (AddressId, ChannelCode)
             );
+
+            -- CSKU별 통계(CSKU별통계_개발기획서.md §5). 배치 단위 스냅샷 누적 — 같은 기간·채널을
+            -- 다시 로드해도 기존 배치를 덮어쓰지 않는다.
+            CREATE TABLE IF NOT EXISTS CskuStatBatchTable (
+                Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period       TEXT NOT NULL,
+                Memo         TEXT NOT NULL DEFAULT '',
+                ExchangeRate REAL NOT NULL DEFAULT 0,
+                FileCount    INTEGER NOT NULL DEFAULT 0,
+                RowCount     INTEGER NOT NULL DEFAULT 0,
+                CreatedAt    TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS CskuStatLineTable (
+                Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                BatchId      INTEGER NOT NULL,
+                FileKind     TEXT NOT NULL,
+                ChannelCode  TEXT NOT NULL,
+                ChannelName  TEXT NOT NULL DEFAULT '',
+                CskuCode     TEXT NOT NULL,
+                ProductGroup TEXT NOT NULL DEFAULT '',
+                ProductName  TEXT NOT NULL DEFAULT '',
+                RowCount     INTEGER NOT NULL DEFAULT 0,
+                Qty          INTEGER NOT NULL DEFAULT 0,
+                Revenue      REAL NOT NULL DEFAULT 0,
+                Settlement   REAL NOT NULL DEFAULT 0,
+                Shipping     REAL NOT NULL DEFAULT 0,
+                Fee          REAL NOT NULL DEFAULT 0,
+                Profit       REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_CskuStatLine_BatchId ON CskuStatLineTable (BatchId);
+
+            -- 배치에 포함된 파일 이력(중복판정 근거, §7).
+            CREATE TABLE IF NOT EXISTS CskuStatFileTable (
+                Id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                BatchId    INTEGER NOT NULL,
+                FileName   TEXT NOT NULL,
+                FileKind   TEXT NOT NULL,
+                RowCount   INTEGER NOT NULL DEFAULT 0,
+                SumQty     INTEGER NOT NULL DEFAULT 0,
+                SumRevenue REAL NOT NULL DEFAULT 0,
+                SumProfit  REAL NOT NULL DEFAULT 0,
+                LoadedAt   TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_CskuStatFile_FileName ON CskuStatFileTable (FileName);
             """;
         command.ExecuteNonQuery();
 
@@ -750,6 +849,9 @@ public static class DbSchema
         EnsureColumn(connection, "OutboundDetailTable", "Status", "TEXT NOT NULL DEFAULT '발송대기'");
         EnsureColumn(connection, "OutboundDetailTable", "ConfirmedAt", "TEXT");
         EnsureColumn(connection, "OutboundDetailTable", "Recipient", "TEXT NOT NULL DEFAULT ''");
+        // 발주/출고 이력 관리창에서 "선택 건 택배사 양식 출력" 시 연락처 칸이 항상 공란으로 나가던
+        // 문제 — Recipient/Address와 같은 이유(발주확정 시점 스냅샷)로 Phone도 함께 저장한다.
+        EnsureColumn(connection, "OutboundDetailTable", "Phone", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "OutboundDetailTable", "Address", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "OutboundDetailTable", "ProductName", "TEXT NOT NULL DEFAULT ''");
         // B2B 견적관리(§2.8): 판매 출고 라인에 매입처/원가 스냅샷/중량을 붙인다. CSKU는 별도 컬럼을
@@ -828,6 +930,10 @@ public static class DbSchema
         EnsureColumn(connection, "ClosingUnmapped", "SampleRevenue", "REAL");
         // FBA 품목마스터 관리용 필드: MOCRA(미국 화장품 규제) Listing No.
         EnsureColumn(connection, "FbaCskuMaster", "MocraListingNo", "TEXT NOT NULL DEFAULT ''");
+
+        // 발주/출고 이력관리 "누적발주서 송장번호 입력"이 채널 발주서매핑의 택배사 열에서 읽어
+        // 채워 넣는 값(§StdField.CourierName). 그 외 경로로는 채워지지 않는다.
+        EnsureColumn(connection, "OutboundDetailTable", "CourierName", "TEXT NOT NULL DEFAULT ''");
 
         // 발주확정/출고확정 용어로 바뀌기 전에 저장된 옛 상태값("발송대기"/"발송완료")이 남아있으면
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.

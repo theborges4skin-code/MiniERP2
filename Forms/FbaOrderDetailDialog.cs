@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Models;
 
 namespace MiniERP2.Forms;
@@ -34,7 +35,7 @@ public class FbaOrderDetailDialog : Form
             Text = $"발주번호: {order.FbaNo}   발주일: {order.OrderDate:yyyy-MM-dd}   Shipment ID: {order.ShipmentId}   상태: {order.Status}",
         };
 
-        var grid = new DataGridView
+        var grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,

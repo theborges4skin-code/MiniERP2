@@ -51,6 +51,7 @@ public class DocLineHistoryForm : Form
     public DocLineHistoryForm()
     {
         InitializeComponent();
+        FormManager.ApplyBoundsTracking(this);
         Load += (s, e) => OnQueryClick(this, EventArgs.Empty);
     }
 
@@ -140,7 +141,7 @@ public class DocLineHistoryForm : Form
     {
         var group = new GroupBox { Text = "CSKU별 요약 — 더블클릭하면 아래 상세 이력이 뜹니다", Dock = DockStyle.Fill };
 
-        _summaryGrid = new DataGridView
+        _summaryGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -172,7 +173,7 @@ public class DocLineHistoryForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
 
-        _detailGrid = new DataGridView
+        _detailGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

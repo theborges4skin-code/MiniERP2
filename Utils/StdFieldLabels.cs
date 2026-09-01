@@ -25,6 +25,7 @@ public static class StdFieldLabels
         StdField.OrderDate => "발주일(누적발주서용)",
         StdField.Remark => "비고(내부관리용)",
         StdField.ChannelHint => "채널힌트(자동발주 전용)",
+        StdField.CourierName => "택배사",
         StdField.Revenue => "매출액",
         StdField.TrackingNo => "실제발송송장수(원본 송장번호 열)",
         _ => field.ToString(),

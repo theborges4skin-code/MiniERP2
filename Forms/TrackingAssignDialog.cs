@@ -9,12 +9,15 @@ namespace MiniERP2.Forms;
 /// 여러 운송장번호 중 어느 걸 어느 주문에 적용할지 판단하는 참고용으로만 쓴다. 고객주문번호/
 /// 상세주소/품목 헤더는 택배사 양식 설정에서 선택 항목이라 전부 비어있을 수 있다.
 /// </summary>
-public class TrackingFileRow(string trackingNo, string? orderNo, string? address, string? productName)
+public class TrackingFileRow(string trackingNo, string? orderNo, string? address, string? productName, string? courierName = null)
 {
     public string TrackingNo { get; } = trackingNo;
     public string? OrderNo { get; } = orderNo;
     public string? Address { get; } = address;
     public string? ProductName { get; set; } = productName;
+
+    /// <summary>택배사명("누적발주서 송장번호 입력" 전용 — 그 외 경로에서 만든 행은 항상 null).</summary>
+    public string? CourierName { get; } = courierName;
 }
 
 /// <summary>

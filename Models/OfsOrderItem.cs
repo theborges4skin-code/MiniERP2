@@ -51,6 +51,13 @@ public class OfsOrderItem
     public string? TrackingNo { get; set; }
 
     /// <summary>
+    /// 택배사명(채널설정 발주서매핑에서 StdField.CourierName을 매핑한 채널만 채워짐). 발주/출고
+    /// 이력관리의 "누적발주서 송장번호 입력" 기능이 매칭된 이력의 OutboundDetail.CourierName에
+    /// 그대로 복사한다.
+    /// </summary>
+    public string? CourierName { get; set; }
+
+    /// <summary>
     /// 매핑된 CSKU의 채널별 송장표시명입니다(SkuMapper가 매핑 시 채워줌, 설정이 없으면 null —
     /// 이 경우 <see cref="Utils.ShipmentGrouping"/>이 ProductName으로 대체합니다). 수량은 포함되지
     /// 않습니다 — 수량 표기 방식(택배사별 커스텀 형식)은 내보내기 시점에 따로 붙습니다.

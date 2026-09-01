@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 
@@ -46,7 +47,7 @@ public class FboOrderPickerDialog : Form
             new Label { Text = "검색:", AutoSize = true, Padding = new Padding(0, 5, 4, 0) }, _searchBox
         });
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,

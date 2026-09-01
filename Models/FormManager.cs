@@ -11,6 +11,12 @@ public static class FormManager
 {
     private static readonly WindowBoundsService WindowBoundsService = new();
 
+    // 매핑관리창처럼 OFS/마감 화면 등에서 "OpenForms에 있으면 그걸, 없으면 new T()"로 직접 생성되는
+    // 창은 Show&lt;T&gt;()를 거치지 않아 크기/위치 기억이 전혀 붙지 않았다. 그래서 각 주요 작업창
+    // 생성자에서도 ApplyBoundsTracking(this)을 직접 호출하게 했는데, Show&lt;T&gt;() 경로로 열릴 때는
+    // 두 번 호출될 수 있으므로(중복 구독 방지) 이미 추적 중인 폼은 건너뛴다.
+    private static readonly HashSet<Form> TrackedForms = new();
+
     public static void Show<T>() where T : Form, new()
     {
         // 이미 열려 있는 폼이 있는지 확인합니다.
@@ -57,8 +63,11 @@ public static class FormManager
     /// </summary>
     public static void ApplyBoundsTracking(Form form)
     {
+        if (!TrackedForms.Add(form)) return;
+
         RestoreBounds(form);
         form.FormClosing += (s, e) => SaveBounds(form);
+        form.FormClosed += (s, e) => TrackedForms.Remove(form);
     }
 
     private static void RestoreBounds(Form form)
