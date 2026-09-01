@@ -14,8 +14,7 @@ namespace MiniERP2.Forms;
 /// 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §6) — 이익분석 내보내기 결과 xlsx
 /// 여러 개를 상호명(DocPartyTable.CompanyName) 단위로 재취합하는 화면. 마감/이익분석 창의
 /// 계산 로직(SettlementLoader/ProfitCalculator)은 건드리지 않고 그 결과 파일만 다시 읽는다(§1).
-/// 지금까지(S5~S6) 파일 로드·_META 파싱·CSKU 정규화·집계(납품매출액/납품이익액)를 다룬다.
-/// 배송건수·배송비청구액(§6.3)은 다음 단계(S7)에서 채운다.
+/// 파일 로드·_META 파싱·CSKU 정규화·집계(납품매출액/납품이익액)·배송건수 산정(§6.3)까지 다룬다.
 /// </summary>
 public class PartnerConsolidationForm : Form
 {
@@ -23,19 +22,24 @@ public class PartnerConsolidationForm : Form
     private readonly ChannelSkuRepository _channelSkuRepository = new();
     private readonly DocPartyRepository _docPartyRepository = new();
     private readonly ItemRepository _itemRepository = new();
+    private readonly ChannelConfigService _channelConfigService = new();
     private readonly PartnerConsolidationAggregator _aggregator;
+
+    private const decimal DefaultShippingFeePerShipment = 3000m;
 
     private readonly BindingList<PartnerConsolidationFile> _files = [];
     private readonly BindingList<PartnerConsolidationCompanySummary> _companySummaries = [];
     private readonly BindingList<PartnerConsolidationCskuDetail> _cskuDetails = [];
     private readonly BindingList<PartnerConsolidationCskuDetail> _unassignedPriceRows = [];
     private readonly BindingList<PartnerConsolidationRow> _unmappedExcludedRows = [];
+    private readonly BindingList<PartnerConsolidationChannelShipment> _channelShipments = [];
 
     private ExcelLikeDataGridView _fileGrid = new();
     private ExcelLikeDataGridView _companyGrid = new();
     private ExcelLikeDataGridView _cskuDetailGrid = new();
     private ExcelLikeDataGridView _unassignedGrid = new();
     private ExcelLikeDataGridView _unmappedGrid = new();
+    private ExcelLikeDataGridView _channelShipmentGrid = new();
     private Label _statusLabel = new();
 
     public PartnerConsolidationForm()
@@ -160,10 +164,21 @@ public class PartnerConsolidationForm : Form
         );
         _unmappedGrid.DataSource = _unmappedExcludedRows;
 
+        _channelShipmentGrid = BuildDetailGrid("PartnerConsolidationForm.ChannelShipmentGrid");
+        _channelShipmentGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 130 },
+            new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelName", DataPropertyName = "ChannelName", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "건수", Name = "ShipmentCount", DataPropertyName = "ShipmentCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "산정근거", Name = "BasisDisplay", DataPropertyName = "BasisDisplay", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비총액", Name = "ShippingTotal", DataPropertyName = "ShippingTotal", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+        );
+        _channelShipmentGrid.DataSource = _channelShipments;
+
         var cskuTab = new TabPage("CSKU 상세"); cskuTab.Controls.Add(_cskuDetailGrid);
         var unassignedTab = new TabPage("단가 미배정"); unassignedTab.Controls.Add(_unassignedGrid);
         var unmappedTab = new TabPage("미매핑·제외"); unmappedTab.Controls.Add(_unmappedGrid);
-        tabs.TabPages.AddRange(cskuTab, unassignedTab, unmappedTab);
+        var channelShipmentTab = new TabPage("채널별 배송건수"); channelShipmentTab.Controls.Add(_channelShipmentGrid);
+        tabs.TabPages.AddRange(cskuTab, unassignedTab, unmappedTab, channelShipmentTab);
 
         // ── 5행: 상태표시줄 ──────────────────────────────────────────────
         _statusLabel = new Label { Dock = DockStyle.Fill, Text = "파일을 추가한 뒤 '집계 실행'을 누르세요.", Padding = new Padding(6, 4, 0, 0) };
@@ -208,7 +223,7 @@ public class PartnerConsolidationForm : Form
             if (_files.Any(f => string.Equals(f.FilePath, path, StringComparison.OrdinalIgnoreCase)))
                 continue; // 같은 경로는 중복 추가하지 않음(W6은 "같은 채널의 다른 파일"이 대상이지 동일 경로 재추가가 아니다).
 
-            var file = PartnerConsolidationFileLoader.Load(path, _channelSkuRepository);
+            var file = PartnerConsolidationFileLoader.Load(path, _channelSkuRepository, _channelConfigService);
             _files.Add(file);
             addedCount++;
         }
@@ -231,7 +246,7 @@ public class PartnerConsolidationForm : Form
         var paths = _files.Select(f => f.FilePath).ToList();
         _files.Clear();
         foreach (var path in paths)
-            _files.Add(PartnerConsolidationFileLoader.Load(path, _channelSkuRepository));
+            _files.Add(PartnerConsolidationFileLoader.Load(path, _channelSkuRepository, _channelConfigService));
         _statusLabel.Text = $"{paths.Count}개 파일을 다시 불러왔습니다. '집계 실행'을 눌러 반영하세요.";
     }
 
@@ -258,7 +273,7 @@ public class PartnerConsolidationForm : Form
 
         // 파일 전체를 그 채널 기준으로 다시 읽는다 — 행의 CSKU 정규화가 채널코드에 좌우되므로
         // (수동 지정 전에는 채널을 몰라 원래 행의 '채널' 컬럼 값을 그대로 썼을 수 있다).
-        var reloaded = PartnerConsolidationFileLoader.Load(selected.FilePath, _channelSkuRepository);
+        var reloaded = PartnerConsolidationFileLoader.Load(selected.FilePath, _channelSkuRepository, _channelConfigService);
         reloaded.ChannelCode = channel.ChannelCode;
         reloaded.ChannelName = channel.ChannelName;
         reloaded.CompanyName = companyName;
@@ -297,10 +312,18 @@ public class PartnerConsolidationForm : Form
         var allRows = _files.Where(f => !f.LoadFailed).SelectMany(f => f.Rows).ToList();
 
         var result = _aggregator.Aggregate(allRows);
+        var (shipmentByCompany, zeroShippingChannels) = RunShipmentCalculation();
 
         _companySummaries.Clear();
         foreach (var s in result.CompanySummaries.OrderBy(s => s.CompanyName, StringComparer.Ordinal))
+        {
+            if (shipmentByCompany.TryGetValue(s.CompanyName, out var shipment))
+            {
+                s.ShipmentCount = shipment.ShipmentCount;
+                s.ShippingFeeTotal = shipment.ShippingFeeTotal;
+            }
             _companySummaries.Add(s);
+        }
 
         _cskuDetails.Clear();
         foreach (var d in result.CskuDetails.OrderBy(d => d.CompanyName, StringComparer.Ordinal).ThenBy(d => d.CskuCode, StringComparer.Ordinal))
@@ -316,5 +339,58 @@ public class PartnerConsolidationForm : Form
 
         _statusLabel.Text = $"집계 완료 — 거래처 {_companySummaries.Count}곳, CSKU {_cskuDetails.Count}건 " +
             $"(단가 미배정 {_unassignedPriceRows.Count}건, 미매핑·제외 {_unmappedExcludedRows.Count}건).";
+
+        if (zeroShippingChannels.Count > 0)
+        {
+            MessageBox.Show(this,
+                $"다음 채널은 배송비 총액이 0이라 배송건수가 0건으로 계산되었습니다 — 정산서 매핑에 송장번호/배송비 필드가 없을 수 있습니다(W3):\n{string.Join(", ", zeroShippingChannels)}",
+                "배송건수 0건 경고", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>
+    /// §6.3 — 파일(=채널) 단위로 배송건수를 산정하고, 거래처 요약의 ShipmentCount/ShippingFeeTotal을
+    /// 채운다. 청구 단가(ShippingFeePerShipment)는 거래처의 대표단가 채널 설정값을 쓴다(대표가 없으면
+    /// 기본 3,000원) — D14가 이 값을 상수가 아닌 설정값으로 두라고 했을 뿐 회사 단위로 어느 채널의
+    /// 값을 대표로 쓸지는 스펙에 명시돼 있지 않아, 이미 "회사의 대표"로 정의된 대표단가 채널을 그대로
+    /// 재사용하기로 정했다(§5의 대표단가 채널과 동일한 개념적 지위).
+    /// </summary>
+    /// <returns>
+    /// 거래처별 (배송건수, 배송비청구액) 딕셔너리와, 배송비 총액이 0이라 W3 경고 대상인 채널명 목록.
+    /// </returns>
+    private (Dictionary<string, (int ShipmentCount, decimal ShippingFeeTotal)> ByCompany, List<string> ZeroShippingChannels) RunShipmentCalculation()
+    {
+        _channelShipments.Clear();
+        var zeroShippingChannels = new List<string>();
+        var byCompany = new Dictionary<string, (int, decimal)>();
+
+        var filesByCompany = _files
+            .Where(f => !f.LoadFailed && !string.IsNullOrWhiteSpace(f.ChannelCode))
+            .GroupBy(f => string.IsNullOrWhiteSpace(f.CompanyName) ? "" : f.CompanyName);
+
+        foreach (var companyGroup in filesByCompany)
+        {
+            var companyName = companyGroup.Key;
+            var channelResults = new List<PartnerConsolidationChannelShipment>();
+
+            foreach (var file in companyGroup)
+            {
+                var shippingFeePerShipment = _docPartyRepository.GetByChannelCode(file.ChannelCode)?.ShippingFeePerShipment ?? DefaultShippingFeePerShipment;
+                var result = PartnerConsolidationShipmentCalculator.ComputeChannel(
+                    companyName, file.ChannelCode, file.ChannelName, file.TrackingNumbers, file.ShippingTotal, shippingFeePerShipment);
+                channelResults.Add(result);
+                _channelShipments.Add(result);
+
+                if (result.ShippingTotal == 0)
+                    zeroShippingChannels.Add(string.IsNullOrWhiteSpace(file.ChannelName) ? file.ChannelCode : file.ChannelName);
+            }
+
+            if (string.IsNullOrWhiteSpace(companyName)) continue; // "(미지정)" 그룹은 거래처 요약 자체가 없다.
+
+            var billingRate = _docPartyRepository.GetPriceMasterByCompanyName(companyName)?.ShippingFeePerShipment ?? DefaultShippingFeePerShipment;
+            byCompany[companyName] = PartnerConsolidationShipmentCalculator.ComputeCompanyBilling(channelResults, billingRate);
+        }
+
+        return (byCompany, zeroShippingChannels);
     }
 }

@@ -1,3 +1,4 @@
+using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -14,14 +15,17 @@ namespace MiniERP2.DataLoaders;
 public static class PartnerConsolidationFileLoader
 {
     private const string DetailSheetName = "분석결과상세";
+    private const string RawDataSheetName = "원본데이터";
 
-    public static PartnerConsolidationFile Load(string filePath, ChannelSkuRepository channelSkuRepository)
+    /// <param name="channelConfigService">§6.3 송장번호 추출용. null이면 배송건수 산정에 필요한
+    /// TrackingNumbers를 채우지 않는다(파일 목록만 볼 때는 불필요).</param>
+    public static PartnerConsolidationFile Load(string filePath, ChannelSkuRepository channelSkuRepository, ChannelConfigService? channelConfigService = null)
     {
         try
         {
             ExcelLicense.Ensure();
             using var package = ExcelFileOpener.Open(filePath);
-            return LoadFromPackage(package, filePath, channelSkuRepository);
+            return LoadFromPackage(package, filePath, channelSkuRepository, channelConfigService);
         }
         catch (Exception ex)
         {
@@ -33,7 +37,8 @@ public static class PartnerConsolidationFileLoader
         }
     }
 
-    public static PartnerConsolidationFile LoadFromPackage(ExcelPackage package, string filePath, ChannelSkuRepository channelSkuRepository)
+    public static PartnerConsolidationFile LoadFromPackage(ExcelPackage package, string filePath,
+        ChannelSkuRepository channelSkuRepository, ChannelConfigService? channelConfigService = null)
     {
         var meta = MetaSheetHelper.TryReadFromPackage(package);
 
@@ -69,6 +74,7 @@ public static class PartnerConsolidationFileLoader
             var mappedSku = GetText(sheet, headerMap, r, "매핑SKU") ?? "";
             var status = GetText(sheet, headerMap, r, "상태") ?? "";
             var qty = GetQuantity(sheet, headerMap, r);
+            var shipping = GetDecimal(sheet, headerMap, r, "배송비");
 
             // 완전 공백 행(꼬리 서식 등)은 건너뛴다.
             if (string.IsNullOrWhiteSpace(channelCode) && string.IsNullOrWhiteSpace(productName) &&
@@ -93,6 +99,7 @@ public static class PartnerConsolidationFileLoader
                 ProductName = productName,
                 OptionName = optionName,
                 Quantity = qty,
+                Shipping = shipping,
                 RawMappedSku = mappedSku,
                 RawStatus = status,
                 Kind = kind,
@@ -107,7 +114,40 @@ public static class PartnerConsolidationFileLoader
 
         file.Rows = rows;
         file.RowCount = rows.Count;
+
+        if (channelConfigService != null && !string.IsNullOrWhiteSpace(file.ChannelCode))
+            file.TrackingNumbers = ExtractTrackingNumbers(package, file.ChannelCode, channelConfigService);
+
         return file;
+    }
+
+    /// <summary>
+    /// §6.3 — 송장번호는 '분석결과상세'에 컬럼이 없어 '원본데이터' 시트에서 읽어야 한다. 어느 열이
+    /// 송장번호인지는 채널의 정산서 매핑(SettlementFieldMappings의 TrackingNo 표준필드)에 지정된
+    /// 원본 헤더명으로 찾는다. 매핑이 없거나 그 헤더가 원본데이터에 없으면 빈 목록을 반환한다
+    /// (호출자는 이를 "송장번호 전무"로 보고 배송비÷단가 추정으로 넘어간다 — D11).
+    /// </summary>
+    private static List<string> ExtractTrackingNumbers(ExcelPackage package, string channelCode, ChannelConfigService channelConfigService)
+    {
+        var channelConfig = channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == channelCode);
+        var headerName = channelConfig?.SettlementFieldMappings.GetValueOrDefault(StdField.TrackingNo)?.Column;
+        if (string.IsNullOrWhiteSpace(headerName)) return [];
+
+        var rawSheet = package.Workbook.Worksheets[RawDataSheetName];
+        if (rawSheet == null) return [];
+
+        var rawHeaderMap = BuildHeaderMap(rawSheet);
+        if (!rawHeaderMap.TryGetValue(headerName, out var col)) return [];
+
+        var lastRow = rawSheet.Dimension?.End.Row ?? 1;
+        var values = new List<string>();
+        for (int r = 2; r <= lastRow; r++)
+        {
+            var text = rawSheet.Cells[r, col].Text?.Trim();
+            if (!string.IsNullOrEmpty(text))
+                values.Add(text);
+        }
+        return values;
     }
 
     /// <summary>
@@ -168,6 +208,19 @@ public static class PartnerConsolidationFileLoader
             double d => (int)Math.Round(d),
             int i => i,
             _ => int.TryParse(sheet.Cells[row, col].Text?.Replace(",", ""), out var parsed) ? parsed : 0,
+        };
+    }
+
+    private static decimal GetDecimal(ExcelWorksheet sheet, Dictionary<string, int> headerMap, int row, string header)
+    {
+        if (!headerMap.TryGetValue(header, out var col)) return 0m;
+        var value = sheet.Cells[row, col].Value;
+        return value switch
+        {
+            double d => (decimal)d,
+            int i => i,
+            decimal m => m,
+            _ => decimal.TryParse(sheet.Cells[row, col].Text?.Replace(",", ""), out var parsed) ? parsed : 0m,
         };
     }
 }

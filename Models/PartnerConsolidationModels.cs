@@ -46,6 +46,15 @@ public class PartnerConsolidationFile
 
     public List<PartnerConsolidationRow> Rows { get; set; } = [];
 
+    /// <summary>
+    /// '원본데이터' 시트에서 채널의 정산서 매핑(TrackingNo 표준필드) 헤더로 찾아 읽은 송장번호
+    /// 원본 값(공백/중복 제거 전). 채널의 필드 매핑이 없거나 그 헤더가 원본데이터에 없으면 빈 목록.
+    /// </summary>
+    public List<string> TrackingNumbers { get; set; } = [];
+
+    /// <summary>이 파일(채널)의 배송비 총액 — 분석결과상세 '배송비' 열 합계(§6.3 배송건수 추정 분모).</summary>
+    public decimal ShippingTotal => Rows.Sum(r => r.Shipping);
+
     public bool LoadFailed => ErrorMessage != null;
 
     // ── 화면 표시용(취합 화면 §6.5 상단 파일 목록 그리드 바인딩) ──────────────
@@ -82,6 +91,10 @@ public class PartnerConsolidationRow
     public string ProductName { get; set; } = "";
     public string OptionName { get; set; } = "";
     public int Quantity { get; set; }
+
+    /// <summary>'분석결과상세'의 '배송비' 열 값. CSKU 집계에는 쓰지 않고(§6.2), 채널별 배송비
+    /// 총액 산정(§6.3)에만 쓴다.</summary>
+    public decimal Shipping { get; set; }
 
     /// <summary>원본 '매핑SKU' 텍스트(CSKU 코드 또는 마스터SKU — F4).</summary>
     public string RawMappedSku { get; set; } = "";
@@ -143,10 +156,10 @@ public class PartnerConsolidationCompanySummary
     public decimal TotalSupplyProfit { get; set; }
     public int UnassignedPriceCount { get; set; }
 
-    /// <summary>§6.3(S7 단계) — 그때까지는 0으로 둔다.</summary>
+    /// <summary>§6.3 — 소속 채널 배송건수의 단순 합.</summary>
     public int ShipmentCount { get; set; }
 
-    /// <summary>§6.3(S7 단계) — 그때까지는 0으로 둔다.</summary>
+    /// <summary>§6.3 — 배송건수 × 대표단가 채널의 ShippingFeePerShipment(대표 없으면 기본 3,000원).</summary>
     public decimal ShippingFeeTotal { get; set; }
 }
 
@@ -154,4 +167,20 @@ public class PartnerConsolidationAggregationResult
 {
     public List<PartnerConsolidationCompanySummary> CompanySummaries { get; } = [];
     public List<PartnerConsolidationCskuDetail> CskuDetails { get; } = [];
+}
+
+/// <summary>§6.3 채널별 배송건수 산정 결과 1행(§6.5 "채널별 배송건수" 탭).</summary>
+public class PartnerConsolidationChannelShipment
+{
+    public required string CompanyName { get; set; }
+    public required string ChannelCode { get; set; }
+    public string ChannelName { get; set; } = "";
+    public int ShipmentCount { get; set; }
+
+    /// <summary>true면 송장번호가 전무해 배송비÷단가로 추정한 값(D11/D12), false면 송장번호 실제 카운트.</summary>
+    public bool IsEstimated { get; set; }
+
+    public decimal ShippingTotal { get; set; }
+
+    public string BasisDisplay => IsEstimated ? "배송비÷단가 추정" : "송장 기준";
 }

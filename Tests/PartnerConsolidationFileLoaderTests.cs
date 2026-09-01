@@ -186,6 +186,69 @@ public class PartnerConsolidationFileLoaderTests
     }
 
     [TestMethod]
+    public void Load_TracksNumbers_FromRawDataSheet_UsingChannelFieldMapping()
+    {
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage();
+        var detail = package.Workbook.Worksheets.Add("분석결과상세");
+        for (int i = 0; i < DetailHeaders.Length; i++) detail.Cells[1, i + 1].Value = DetailHeaders[i];
+        detail.Cells[2, 1].Value = "CH1"; detail.Cells[2, 5].Value = "CSKU-A"; detail.Cells[2, 6].Value = 1; detail.Cells[2, 12].Value = "매핑(1:1)";
+
+        var raw = package.Workbook.Worksheets.Add("원본데이터");
+        raw.Cells[1, 1].Value = "운송장번호"; raw.Cells[1, 2].Value = "기타";
+        raw.Cells[2, 1].Value = "TRK001"; raw.Cells[3, 1].Value = "TRK002";
+
+        MetaSheetHelper.WriteToPackage(package, new FileMeta { ChannelCode = "CH1", CompanyName = "펩투나" });
+
+        var channelConfigService = new ChannelConfigService();
+        channelConfigService.Save(
+        [
+            new ChannelConfig
+            {
+                ChannelCode = "CH1",
+                ChannelName = "쿠팡일반",
+                SettlementFieldMappings = new Dictionary<StdField, FieldMapping>
+                {
+                    [StdField.TrackingNo] = new FieldMapping { Column = "운송장번호" },
+                },
+            },
+        ]);
+
+        var file = PartnerConsolidationFileLoader.LoadFromPackage(package, "a.xlsx", _channelSkuRepository, channelConfigService);
+
+        CollectionAssert.AreEquivalent(new[] { "TRK001", "TRK002" }, file.TrackingNumbers);
+    }
+
+    [TestMethod]
+    public void Load_NoFieldMappingForTrackingNo_ReturnsEmptyTrackingNumbers()
+    {
+        using var package = BuildPackage(
+            [["CH1", "그룹1", "상품A", "옵션1", "CSKU-A", 1, 1000, 900, 100, 0, 500, "매핑(1:1)"]],
+            new FileMeta { ChannelCode = "CH1", CompanyName = "펩투나" });
+
+        var channelConfigService = new ChannelConfigService();
+        channelConfigService.Save([new ChannelConfig { ChannelCode = "CH1", ChannelName = "쿠팡일반" }]);
+
+        var file = PartnerConsolidationFileLoader.LoadFromPackage(package, "a.xlsx", _channelSkuRepository, channelConfigService);
+
+        Assert.IsEmpty(file.TrackingNumbers);
+    }
+
+    [TestMethod]
+    public void Load_ShippingColumn_SummedIntoFileShippingTotal()
+    {
+        using var package = BuildPackage(
+        [
+            ["CH1", "그룹1", "상품A", "옵션1", "CSKU-A", 1, 1000, 900, 1500, 0, 500, "매핑(1:1)"],
+            ["CH1", "그룹1", "상품B", "옵션1", "CSKU-B", 1, 1000, 900, 2500, 0, 500, "매핑(1:1)"],
+        ], new FileMeta { ChannelCode = "CH1", CompanyName = "펩투나" });
+
+        var file = PartnerConsolidationFileLoader.LoadFromPackage(package, "a.xlsx", _channelSkuRepository);
+
+        Assert.AreEqual(4000m, file.ShippingTotal);
+    }
+
+    [TestMethod]
     public void Load_SchemaV1Meta_FlagsIsSchemaV1()
     {
         using var package = BuildPackage(
