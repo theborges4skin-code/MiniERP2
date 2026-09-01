@@ -1,3 +1,5 @@
+using MiniERP2.Mapping;
+
 namespace MiniERP2.Models;
 
 /// <summary>온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §6.1) — 행 1건의 분류 결과.</summary>
@@ -96,4 +98,60 @@ public class PartnerConsolidationRow
     public string? ResolvedMsku { get; set; }
 
     public string SourceFileName { get; set; } = "";
+}
+
+/// <summary>§6.2 집계 결과 — 거래처 × 마스터SKU 단위 1행(§6.5 "CSKU 상세" 탭).</summary>
+public class PartnerConsolidationCskuDetail
+{
+    public required string CompanyName { get; set; }
+
+    /// <summary>대표 CSKU 코드 — 그룹의 채널별 CSKU 코드가 다를 수 있어 화면 표시용으로 1개만 고른다.</summary>
+    public required string CskuCode { get; set; }
+
+    public required string Msku { get; set; }
+    public string ProductName { get; set; } = "";
+    public int Quantity { get; set; }
+    public decimal SupplyPrice { get; set; }
+    public SupplyPriceSource PriceSource { get; set; }
+    public string? MasterChannelName { get; set; }
+    public decimal SupplyRevenue { get; set; }
+
+    /// <summary>null이면 W7 — ItemTable 미등록(제조원가 없음). 0으로 계산하지 않는다.</summary>
+    public decimal? CostPrice { get; set; }
+
+    /// <summary>null이면 CostPrice가 없어 계산할 수 없음(W7) — 화면에 공란으로 표기한다.</summary>
+    public decimal? SupplyProfit { get; set; }
+
+    public string PriceSourceDisplay => PriceSource switch
+    {
+        SupplyPriceSource.Own => "자체",
+        SupplyPriceSource.Inherited => $"상속({MasterChannelName})",
+        _ => "미배정",
+    };
+
+    public bool IsPriceUnassigned => PriceSource == SupplyPriceSource.Unassigned;
+    public bool IsCostMissing => !CostPrice.HasValue;
+}
+
+/// <summary>§6.2/§6.5 "거래처 요약" — 거래처(CompanyName) 1행.</summary>
+public class PartnerConsolidationCompanySummary
+{
+    public required string CompanyName { get; set; }
+    public int ChannelCount { get; set; }
+    public int TotalQuantity { get; set; }
+    public decimal TotalSupplyRevenue { get; set; }
+    public decimal TotalSupplyProfit { get; set; }
+    public int UnassignedPriceCount { get; set; }
+
+    /// <summary>§6.3(S7 단계) — 그때까지는 0으로 둔다.</summary>
+    public int ShipmentCount { get; set; }
+
+    /// <summary>§6.3(S7 단계) — 그때까지는 0으로 둔다.</summary>
+    public decimal ShippingFeeTotal { get; set; }
+}
+
+public class PartnerConsolidationAggregationResult
+{
+    public List<PartnerConsolidationCompanySummary> CompanySummaries { get; } = [];
+    public List<PartnerConsolidationCskuDetail> CskuDetails { get; } = [];
 }

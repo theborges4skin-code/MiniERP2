@@ -3,6 +3,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.DataLoaders;
+using MiniERP2.Mapping;
 using MiniERP2.Models;
 using MiniERP2.UI;
 using MiniERP2.Utils;
@@ -13,38 +14,34 @@ namespace MiniERP2.Forms;
 /// 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §6) — 이익분석 내보내기 결과 xlsx
 /// 여러 개를 상호명(DocPartyTable.CompanyName) 단위로 재취합하는 화면. 마감/이익분석 창의
 /// 계산 로직(SettlementLoader/ProfitCalculator)은 건드리지 않고 그 결과 파일만 다시 읽는다(§1).
-/// 지금 단계(S5)는 파일 로드·_META 파싱·거래처 그룹화·CSKU 정규화까지만 다룬다 — 집계(§6.2 이후)는
-/// 다음 단계에서 이 파일에 이어 붙인다.
+/// 지금까지(S5~S6) 파일 로드·_META 파싱·CSKU 정규화·집계(납품매출액/납품이익액)를 다룬다.
+/// 배송건수·배송비청구액(§6.3)은 다음 단계(S7)에서 채운다.
 /// </summary>
 public class PartnerConsolidationForm : Form
 {
     private readonly SettingsService _settingsService = new();
     private readonly ChannelSkuRepository _channelSkuRepository = new();
     private readonly DocPartyRepository _docPartyRepository = new();
+    private readonly ItemRepository _itemRepository = new();
+    private readonly PartnerConsolidationAggregator _aggregator;
 
     private readonly BindingList<PartnerConsolidationFile> _files = [];
-    private readonly BindingList<CompanyGroupSummary> _companyGroups = [];
+    private readonly BindingList<PartnerConsolidationCompanySummary> _companySummaries = [];
+    private readonly BindingList<PartnerConsolidationCskuDetail> _cskuDetails = [];
+    private readonly BindingList<PartnerConsolidationCskuDetail> _unassignedPriceRows = [];
+    private readonly BindingList<PartnerConsolidationRow> _unmappedExcludedRows = [];
 
     private ExcelLikeDataGridView _fileGrid = new();
-    private ExcelLikeDataGridView _groupGrid = new();
+    private ExcelLikeDataGridView _companyGrid = new();
+    private ExcelLikeDataGridView _cskuDetailGrid = new();
+    private ExcelLikeDataGridView _unassignedGrid = new();
+    private ExcelLikeDataGridView _unmappedGrid = new();
     private Label _statusLabel = new();
-
-    private const string NoCompanyGroupLabel = "(미지정)";
-
-    /// <summary>§6.5 "중단 — 거래처 요약" 이전 단계의 그룹화 미리보기(집계 없음, 건수만).</summary>
-    private class CompanyGroupSummary
-    {
-        public required string CompanyName { get; init; }
-        public int FileCount { get; init; }
-        public int RowCount { get; init; }
-        public int MappedCount { get; init; }
-        public int UnmappedCount { get; init; }
-        public int CskuUnresolvedCount { get; init; }
-        public int ExcludedCount { get; init; }
-    }
 
     public PartnerConsolidationForm()
     {
+        _aggregator = new PartnerConsolidationAggregator(
+            new PartnerSupplyPriceResolver(_channelSkuRepository, _docPartyRepository), _itemRepository);
         InitializeComponent();
         FormManager.ApplyBoundsTracking(this);
     }
@@ -52,30 +49,34 @@ public class PartnerConsolidationForm : Form
     private void InitializeComponent()
     {
         Text = "온라인 거래처 취합";
-        Size = new Size(1200, 760);
+        Size = new Size(1280, 800);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 28));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 47));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
-        // ── 1행: 파일 추가/제거 ──────────────────────────────────────────
+        // ── 1행: 파일 추가/제거 + 집계 실행 ────────────────────────────────
         var topPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         var btnAddFiles = new Button { Text = "파일 추가", Size = new Size(90, 30) };
         var btnRemoveFiles = new Button { Text = "선택 파일 제거", Size = new Size(110, 30) };
         var btnReload = new Button { Text = "다시 불러오기", Size = new Size(100, 30) };
         var btnAssignChannel = new Button { Text = "채널 수동 지정...", Size = new Size(120, 30) };
+        var btnAggregate = new Button { Text = "집계 실행", Size = new Size(90, 30), Font = new Font(Font, FontStyle.Bold) };
         btnAddFiles.Click += (s, e) => AddFiles();
         btnRemoveFiles.Click += (s, e) => RemoveSelectedFiles();
         btnReload.Click += (s, e) => ReloadAllFiles();
         btnAssignChannel.Click += (s, e) => AssignChannelToSelectedFile();
+        btnAggregate.Click += (s, e) => RunAggregate();
         topPanel.Controls.Add(btnAddFiles);
         topPanel.Controls.Add(btnRemoveFiles);
         topPanel.Controls.Add(btnReload);
         topPanel.Controls.Add(btnAssignChannel);
+        topPanel.Controls.Add(btnAggregate);
 
         // ── 2행: 파일 목록(§6.5 상단) ────────────────────────────────────
         _fileGrid = new ExcelLikeDataGridView
@@ -96,40 +97,96 @@ public class PartnerConsolidationForm : Form
         );
         _fileGrid.DataSource = _files;
 
-        var groupLabel = new Label { Dock = DockStyle.Fill, Text = "거래처 그룹화 미리보기(건수만 — 집계는 다음 단계)", Padding = new Padding(6, 4, 0, 0), Font = new Font(Font, FontStyle.Bold) };
+        var companyLabel = new Label { Dock = DockStyle.Fill, Text = "거래처 요약", Padding = new Padding(6, 4, 0, 0), Font = new Font(Font, FontStyle.Bold) };
 
-        // ── 4행: 거래처 그룹화 미리보기 ──────────────────────────────────
-        _groupGrid = new ExcelLikeDataGridView
+        // ── 3행: 거래처 요약(§6.5 중단) ────────────────────────────────────
+        _companyGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
-            PersistenceKey = "PartnerConsolidationForm.GroupGrid",
+            PersistenceKey = "PartnerConsolidationForm.CompanyGrid",
             AutoGenerateColumns = false,
             SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
             MultiSelect = false,
             ReadOnly = true,
         };
-        _groupGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 160 },
-            new DataGridViewTextBoxColumn { HeaderText = "파일수", Name = "FileCount", DataPropertyName = "FileCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "행수", Name = "RowCount", DataPropertyName = "RowCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "매핑됨", Name = "MappedCount", DataPropertyName = "MappedCount", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "미매핑", Name = "UnmappedCount", DataPropertyName = "UnmappedCount", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "CSKU 미확정", Name = "CskuUnresolvedCount", DataPropertyName = "CskuUnresolvedCount", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "제외", Name = "ExcludedCount", DataPropertyName = "ExcludedCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+        _companyGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 140 },
+            new DataGridViewTextBoxColumn { HeaderText = "채널수", Name = "ChannelCount", DataPropertyName = "ChannelCount", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "총수량", Name = "TotalQuantity", DataPropertyName = "TotalQuantity", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품매출액", Name = "TotalSupplyRevenue", DataPropertyName = "TotalSupplyRevenue", Width = 110, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품이익액", Name = "TotalSupplyProfit", DataPropertyName = "TotalSupplyProfit", Width = 110, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "배송건수", Name = "ShipmentCount", DataPropertyName = "ShipmentCount", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "배송비청구액", Name = "ShippingFeeTotal", DataPropertyName = "ShippingFeeTotal", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "미배정건수", Name = "UnassignedPriceCount", DataPropertyName = "UnassignedPriceCount", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
-        _groupGrid.DataSource = _companyGroups;
+        _companyGrid.DataSource = _companySummaries;
+
+        // ── 4행: 하단 탭(§6.5) ────────────────────────────────────────────
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+
+        _cskuDetailGrid = BuildDetailGrid("PartnerConsolidationForm.CskuDetailGrid");
+        _cskuDetailGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130 },
+            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 160 },
+            new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품단가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "단가출처", Name = "PriceSourceDisplay", DataPropertyName = "PriceSourceDisplay", Width = 110 },
+            new DataGridViewTextBoxColumn { HeaderText = "납품매출액", Name = "SupplyRevenue", DataPropertyName = "SupplyRevenue", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "제조원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품이익액", Name = "SupplyProfit", DataPropertyName = "SupplyProfit", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+        );
+        _cskuDetailGrid.DataSource = _cskuDetails;
+
+        _unassignedGrid = BuildDetailGrid("PartnerConsolidationForm.UnassignedGrid");
+        _unassignedGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 130 },
+            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130 },
+            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 180 },
+            new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+        );
+        _unassignedGrid.DataSource = _unassignedPriceRows;
+
+        _unmappedGrid = BuildDetailGrid("PartnerConsolidationForm.UnmappedGrid");
+        _unmappedGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelCode", DataPropertyName = "ChannelCode", Width = 80 },
+            new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 160 },
+            new DataGridViewTextBoxColumn { HeaderText = "매핑SKU", Name = "RawMappedSku", DataPropertyName = "RawMappedSku", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "RawStatus", DataPropertyName = "RawStatus", Width = 120 },
+            new DataGridViewTextBoxColumn { HeaderText = "분류", Name = "Kind", DataPropertyName = "Kind", Width = 100 },
+            new DataGridViewTextBoxColumn { HeaderText = "파일", Name = "SourceFileName", DataPropertyName = "SourceFileName", Width = 180 }
+        );
+        _unmappedGrid.DataSource = _unmappedExcludedRows;
+
+        var cskuTab = new TabPage("CSKU 상세"); cskuTab.Controls.Add(_cskuDetailGrid);
+        var unassignedTab = new TabPage("단가 미배정"); unassignedTab.Controls.Add(_unassignedGrid);
+        var unmappedTab = new TabPage("미매핑·제외"); unmappedTab.Controls.Add(_unmappedGrid);
+        tabs.TabPages.AddRange(cskuTab, unassignedTab, unmappedTab);
 
         // ── 5행: 상태표시줄 ──────────────────────────────────────────────
-        _statusLabel = new Label { Dock = DockStyle.Fill, Text = "파일을 추가하세요.", Padding = new Padding(6, 4, 0, 0) };
+        _statusLabel = new Label { Dock = DockStyle.Fill, Text = "파일을 추가한 뒤 '집계 실행'을 누르세요.", Padding = new Padding(6, 4, 0, 0) };
 
         mainLayout.Controls.Add(topPanel, 0, 0);
         mainLayout.Controls.Add(_fileGrid, 0, 1);
-        mainLayout.Controls.Add(groupLabel, 0, 2);
-        mainLayout.Controls.Add(_groupGrid, 0, 3);
-        mainLayout.Controls.Add(_statusLabel, 0, 4);
+        mainLayout.Controls.Add(companyLabel, 0, 2);
+        mainLayout.Controls.Add(_companyGrid, 0, 3);
+        mainLayout.Controls.Add(tabs, 0, 4);
+        mainLayout.Controls.Add(_statusLabel, 0, 5);
 
         Controls.Add(mainLayout);
     }
+
+    private static ExcelLikeDataGridView BuildDetailGrid(string persistenceKey) => new()
+    {
+        Dock = DockStyle.Fill,
+        PersistenceKey = persistenceKey,
+        AutoGenerateColumns = false,
+        SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
+        MultiSelect = true,
+        ReadOnly = true,
+    };
 
     // ── 파일 추가/제거 ──────────────────────────────────────────────────
 
@@ -156,9 +213,8 @@ public class PartnerConsolidationForm : Form
             addedCount++;
         }
 
-        RefreshGroupSummary();
         WarnDuplicateChannelFiles();
-        _statusLabel.Text = $"파일 {addedCount}개 추가됨. 총 {_files.Count}개 로드됨.";
+        _statusLabel.Text = $"파일 {addedCount}개 추가됨. 총 {_files.Count}개 로드됨. '집계 실행'을 눌러 반영하세요.";
     }
 
     private void RemoveSelectedFiles()
@@ -168,7 +224,6 @@ public class PartnerConsolidationForm : Form
             .Where(f => f != null)
             .ToList();
         foreach (var f in selected) _files.Remove(f!);
-        RefreshGroupSummary();
     }
 
     private void ReloadAllFiles()
@@ -177,8 +232,7 @@ public class PartnerConsolidationForm : Form
         _files.Clear();
         foreach (var path in paths)
             _files.Add(PartnerConsolidationFileLoader.Load(path, _channelSkuRepository));
-        RefreshGroupSummary();
-        _statusLabel.Text = $"{paths.Count}개 파일을 다시 불러왔습니다.";
+        _statusLabel.Text = $"{paths.Count}개 파일을 다시 불러왔습니다. '집계 실행'을 눌러 반영하세요.";
     }
 
     /// <summary>
@@ -202,10 +256,6 @@ public class PartnerConsolidationForm : Form
         var channel = dialog.SelectedChannel;
         var companyName = _docPartyRepository.GetByChannelCode(channel.ChannelCode)?.CompanyName ?? "";
 
-        selected.ChannelCode = channel.ChannelCode;
-        selected.ChannelName = channel.ChannelName;
-        selected.CompanyName = companyName;
-
         // 파일 전체를 그 채널 기준으로 다시 읽는다 — 행의 CSKU 정규화가 채널코드에 좌우되므로
         // (수동 지정 전에는 채널을 몰라 원래 행의 '채널' 컬럼 값을 그대로 썼을 수 있다).
         var reloaded = PartnerConsolidationFileLoader.Load(selected.FilePath, _channelSkuRepository);
@@ -221,8 +271,7 @@ public class PartnerConsolidationForm : Form
         var index = _files.IndexOf(selected);
         _files[index] = reloaded;
 
-        RefreshGroupSummary();
-        _statusLabel.Text = $"'{reloaded.FileName}'의 채널을 '{channel.ChannelName}'(으)로 지정했습니다.";
+        _statusLabel.Text = $"'{reloaded.FileName}'의 채널을 '{channel.ChannelName}'(으)로 지정했습니다. '집계 실행'을 눌러 반영하세요.";
     }
 
     /// <summary>W6: 같은 채널의 파일이 2개 이상 로드되면 기간 중복 가능성을 경고만 한다(제거하지 않음).</summary>
@@ -241,29 +290,31 @@ public class PartnerConsolidationForm : Form
             "중복 채널 경고", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
-    // ── 거래처 그룹화 미리보기(§6.1 ②③④ 결과 확인용, 집계는 다음 단계) ──────
+    // ── 집계(§6.2) ──────────────────────────────────────────────────────
 
-    private void RefreshGroupSummary()
+    private void RunAggregate()
     {
-        _companyGroups.Clear();
-        var groups = _files
-            .Where(f => !f.LoadFailed)
-            .SelectMany(f => f.Rows, (f, row) => row)
-            .GroupBy(row => string.IsNullOrWhiteSpace(row.CompanyName) ? NoCompanyGroupLabel : row.CompanyName);
+        var allRows = _files.Where(f => !f.LoadFailed).SelectMany(f => f.Rows).ToList();
 
-        foreach (var group in groups.OrderBy(g => g.Key == NoCompanyGroupLabel).ThenBy(g => g.Key, StringComparer.Ordinal))
-        {
-            var rows = group.ToList();
-            _companyGroups.Add(new CompanyGroupSummary
-            {
-                CompanyName = group.Key,
-                FileCount = rows.Select(r => r.SourceFileName).Distinct().Count(),
-                RowCount = rows.Count,
-                MappedCount = rows.Count(r => r.Kind == PartnerConsolidationRowKind.Mapped),
-                UnmappedCount = rows.Count(r => r.Kind == PartnerConsolidationRowKind.Unmapped),
-                CskuUnresolvedCount = rows.Count(r => r.Kind == PartnerConsolidationRowKind.CskuUnresolved),
-                ExcludedCount = rows.Count(r => r.Kind == PartnerConsolidationRowKind.Excluded),
-            });
-        }
+        var result = _aggregator.Aggregate(allRows);
+
+        _companySummaries.Clear();
+        foreach (var s in result.CompanySummaries.OrderBy(s => s.CompanyName, StringComparer.Ordinal))
+            _companySummaries.Add(s);
+
+        _cskuDetails.Clear();
+        foreach (var d in result.CskuDetails.OrderBy(d => d.CompanyName, StringComparer.Ordinal).ThenBy(d => d.CskuCode, StringComparer.Ordinal))
+            _cskuDetails.Add(d);
+
+        _unassignedPriceRows.Clear();
+        foreach (var d in result.CskuDetails.Where(d => d.IsPriceUnassigned))
+            _unassignedPriceRows.Add(d);
+
+        _unmappedExcludedRows.Clear();
+        foreach (var row in allRows.Where(r => r.Kind != PartnerConsolidationRowKind.Mapped))
+            _unmappedExcludedRows.Add(row);
+
+        _statusLabel.Text = $"집계 완료 — 거래처 {_companySummaries.Count}곳, CSKU {_cskuDetails.Count}건 " +
+            $"(단가 미배정 {_unassignedPriceRows.Count}건, 미매핑·제외 {_unmappedExcludedRows.Count}건).";
     }
 }
