@@ -5,7 +5,7 @@ namespace MiniERP2.Database;
 
 public class DocPartyRepository
 {
-    private const string SelectCols = "Id, ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath";
+    private const string SelectCols = "Id, ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath, IsPriceMaster, ShippingFeePerShipment";
 
     public List<DocParty> GetAll()
     {
@@ -96,8 +96,8 @@ public class DocPartyRepository
             using var cmd = conn.CreateCommand();
             cmd.Transaction = transaction;
             cmd.CommandText = """
-                INSERT INTO DocPartyTable (ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath)
-                VALUES ($pn, $rn, $cn, $ceo, $addr, $bt, $bi, $tel, $email, $sup, $chan, $active, $created, $stamp)
+                INSERT INTO DocPartyTable (ProfileName, RegNo, CompanyName, CeoName, Address, BizType, BizItem, Tel, Email, IsDefaultSupplier, ChannelCode, IsActive, CreatedAt, StampImagePath, IsPriceMaster, ShippingFeePerShipment)
+                VALUES ($pn, $rn, $cn, $ceo, $addr, $bt, $bi, $tel, $email, $sup, $chan, $active, $created, $stamp, $pricemaster, $shipfee)
                 """;
             Bind(cmd, party);
             cmd.Parameters.AddWithValue("$created", party.CreatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -114,13 +114,64 @@ public class DocPartyRepository
             cmd.CommandText = """
                 UPDATE DocPartyTable SET ProfileName=$pn, RegNo=$rn, CompanyName=$cn, CeoName=$ceo,
                     Address=$addr, BizType=$bt, BizItem=$bi, Tel=$tel, Email=$email, IsDefaultSupplier=$sup,
-                    ChannelCode=$chan, IsActive=$active, StampImagePath=$stamp
+                    ChannelCode=$chan, IsActive=$active, StampImagePath=$stamp,
+                    IsPriceMaster=$pricemaster, ShippingFeePerShipment=$shipfee
                 WHERE Id=$id
                 """;
             Bind(cmd, party);
             cmd.Parameters.AddWithValue("$id", party.Id);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>같은 CompanyName을 가진 행 중 현재 대표단가 채널(IsPriceMaster=1)을 찾는다(자기 자신 제외).</summary>
+    public DocParty? FindPriceMasterInGroup(string companyName, int excludeId)
+    {
+        if (string.IsNullOrWhiteSpace(companyName)) return null;
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT {SelectCols} FROM DocPartyTable WHERE CompanyName = $cn AND IsPriceMaster = 1 AND Id != $id LIMIT 1";
+        cmd.Parameters.AddWithValue("$cn", companyName);
+        cmd.Parameters.AddWithValue("$id", excludeId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
+    }
+
+    /// <summary>
+    /// 지정한 행을 대표단가 채널로 지정하고, 같은 CompanyName을 가진 다른 행의 대표단가 표시는
+    /// 해제한다(§4.3 — CompanyName 그룹당 1개 유지).
+    /// </summary>
+    public void SetPriceMaster(int id, string companyName)
+    {
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var transaction = conn.BeginTransaction();
+        using (var clearCmd = conn.CreateCommand())
+        {
+            clearCmd.Transaction = transaction;
+            clearCmd.CommandText = "UPDATE DocPartyTable SET IsPriceMaster = 0 WHERE CompanyName = $cn";
+            clearCmd.Parameters.AddWithValue("$cn", companyName);
+            clearCmd.ExecuteNonQuery();
+        }
+        using (var setCmd = conn.CreateCommand())
+        {
+            setCmd.Transaction = transaction;
+            setCmd.CommandText = "UPDATE DocPartyTable SET IsPriceMaster = 1 WHERE Id = $id";
+            setCmd.Parameters.AddWithValue("$id", id);
+            setCmd.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    /// <summary>CompanyName 그룹의 대표단가 채널 행을 조회한다(온라인 거래처 취합 §5 ResolveSupplyPrice용).</summary>
+    public DocParty? GetPriceMasterByCompanyName(string companyName)
+    {
+        if (string.IsNullOrWhiteSpace(companyName)) return null;
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT {SelectCols} FROM DocPartyTable WHERE CompanyName = $cn AND IsPriceMaster = 1 LIMIT 1";
+        cmd.Parameters.AddWithValue("$cn", companyName);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
     }
 
     public void SetDefaultSupplier(int id)
@@ -160,7 +211,9 @@ public class DocPartyRepository
         ChannelCode = r.IsDBNull(11) ? "" : r.GetString(11),
         IsActive = !r.IsDBNull(12) && r.GetInt32(12) == 1,
         CreatedAt = r.IsDBNull(13) || string.IsNullOrWhiteSpace(r.GetString(13)) ? null : DateTime.Parse(r.GetString(13)),
-        StampImagePath = r.IsDBNull(14) ? null : r.GetString(14)
+        StampImagePath = r.IsDBNull(14) ? null : r.GetString(14),
+        IsPriceMaster = !r.IsDBNull(15) && r.GetInt32(15) == 1,
+        ShippingFeePerShipment = r.IsDBNull(16) ? 3000m : (decimal)r.GetDouble(16),
     };
 
     private static void Bind(SqliteCommand cmd, DocParty p)
@@ -178,5 +231,7 @@ public class DocPartyRepository
         cmd.Parameters.AddWithValue("$chan", p.ChannelCode);
         cmd.Parameters.AddWithValue("$active", p.IsActive ? 1 : 0);
         cmd.Parameters.AddWithValue("$stamp", (object?)p.StampImagePath ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$pricemaster", p.IsPriceMaster ? 1 : 0);
+        cmd.Parameters.AddWithValue("$shipfee", p.ShippingFeePerShipment);
     }
 }

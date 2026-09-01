@@ -939,6 +939,14 @@ public static class DbSchema
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.
         // 기동 시마다 실행해도 안전한 정규화(이미 새 값이면 매치 없음 → no-op)이다.
         NormalizeLegacyOutboundStatus(connection);
+
+        // 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §4.3). 같은 CompanyName(상호명)을
+        // 공유하는 여러 채널 중 납품단가 조회의 기준이 되는 대표 채널을 표시한다. DocPartyTable.
+        // IsDefaultSupplier(테이블 전체 단일 대표 거래처 개념)와는 무관 — IsPriceMaster는
+        // "상호명 그룹당 1개"라는 별도 스코프이며, DB 제약 대신 저장 시점 검증(ChannelConfigForm)으로
+        // 유일성을 지킨다.
+        EnsureColumn(connection, "DocPartyTable", "IsPriceMaster", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "DocPartyTable", "ShippingFeePerShipment", "REAL NOT NULL DEFAULT 3000");
     }
 
     private static void NormalizeLegacyOutboundStatus(SqliteConnection connection)

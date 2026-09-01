@@ -29,6 +29,17 @@ public class DocParty
     /// </summary>
     public string? StampImagePath { get; set; }
 
+    /// <summary>
+    /// 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §4.3·§5). 같은 CompanyName을 공유하는
+    /// 여러 채널 중 납품단가(ChannelSkuTable.SupplyPrice) 조회의 기준이 되는 대표 채널인지.
+    /// CompanyName 그룹당 1개여야 하며, DB 제약이 아니라 저장 시점(ChannelConfigForm)에 검증한다.
+    /// DocPartyTable 전체에서 단일한 IsDefaultSupplier(대표 공급받는자)와는 스코프가 다르다.
+    /// </summary>
+    public bool IsPriceMaster { get; set; }
+
+    /// <summary>배송 1건당 청구액(원). 온라인 거래처 취합의 배송비 청구액 계산에 쓰인다. 기본 3,000원.</summary>
+    public decimal ShippingFeePerShipment { get; set; } = 3000m;
+
     public DocParty Clone() => (DocParty)MemberwiseClone();
 
     public override string ToString() => string.IsNullOrWhiteSpace(CompanyName) ? "(이름 없음)" : CompanyName;

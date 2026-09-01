@@ -32,6 +32,10 @@ public class ChannelConfigForm : Form
     private TextBox _partyTel = new(), _partyEmail = new();
     private Label _partyStatusLabel = new();
 
+    // 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §4.4).
+    private CheckBox _partyIsPriceMaster = new();
+    private NumericUpDown _partyShippingFeePerShipment = new();
+
     private PropertyGrid _propertyGrid = new();
     // B2B 견적관리(§2.1) — 한 채널이 매입·매출을 동시에 겸할 수 있어 SalesChannel에 별도 플래그로
     // 둔다. ChannelConfig(PropertyGrid 대상)가 아니라 SalesChannel 소속이라 PropertyGrid 밖에 둔다.
@@ -232,15 +236,15 @@ public class ChannelConfigForm : Form
     {
         var tabPage = new TabPage("거래처 정보(공급받는자)");
         var outer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Padding = new Padding(10) };
-        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 185));
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
-        var tbl = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4 };
+        var tbl = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 5 };
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
         tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
-        for (int i = 0; i < 4; i++) tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        for (int i = 0; i < 5; i++) tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
 
         _partyRegNo = new TextBox { Dock = DockStyle.Fill, PlaceholderText = "000-00-00000" };
         _partyCompany = new TextBox { Dock = DockStyle.Fill };
@@ -261,6 +265,21 @@ public class ChannelConfigForm : Form
         tbl.Controls.Add(L("종목"), 2, 2);     tbl.Controls.Add(_partyBizItem, 3, 2);
         tbl.Controls.Add(L("전화"), 0, 3);     tbl.Controls.Add(_partyTel, 1, 3);
         tbl.Controls.Add(L("이메일"), 2, 3);   tbl.Controls.Add(_partyEmail, 3, 3);
+
+        _partyIsPriceMaster = new CheckBox { Text = "대표단가 채널", AutoSize = true, Dock = DockStyle.Fill };
+        _partyShippingFeePerShipment = new NumericUpDown
+        {
+            Dock = DockStyle.Fill,
+            Minimum = 0,
+            Maximum = 1_000_000,
+            Increment = 100,
+            ThousandsSeparator = true,
+            Value = 3000,
+        };
+        tbl.Controls.Add(_partyIsPriceMaster, 0, 4);
+        tbl.SetColumnSpan(_partyIsPriceMaster, 2);
+        tbl.Controls.Add(L("배송 1건당 청구액(원)"), 2, 4);
+        tbl.Controls.Add(_partyShippingFeePerShipment, 3, 4);
 
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) };
         var btnSave = new Button { Text = "저장", Width = 90 };
@@ -287,6 +306,8 @@ public class ChannelConfigForm : Form
         _partyBizItem.Text = p?.BizItem ?? "";
         _partyTel.Text = p?.Tel ?? "";
         _partyEmail.Text = p?.Email ?? "";
+        _partyIsPriceMaster.Checked = p?.IsPriceMaster ?? false;
+        _partyShippingFeePerShipment.Value = p?.ShippingFeePerShipment ?? 3000m;
         _partyStatusLabel.Text = "";
     }
 
@@ -295,6 +316,8 @@ public class ChannelConfigForm : Form
         _currentChannelParty = null;
         _partyRegNo.Text = _partyCompany.Text = _partyCeo.Text = _partyAddress.Text = "";
         _partyBizType.Text = _partyBizItem.Text = _partyTel.Text = _partyEmail.Text = "";
+        _partyIsPriceMaster.Checked = false;
+        _partyShippingFeePerShipment.Value = 3000m;
         _partyStatusLabel.Text = "";
     }
 
@@ -307,12 +330,28 @@ public class ChannelConfigForm : Form
             return;
         }
 
+        var companyName = _partyCompany.Text.Trim();
+        var wantsPriceMaster = _partyIsPriceMaster.Checked;
+
+        // §4.3: 같은 상호명 그룹에 이미 다른 대표단가 채널이 있으면 확인 후에만 넘겨받는다.
+        if (wantsPriceMaster)
+        {
+            var existingMaster = _docPartyRepository.FindPriceMasterInGroup(companyName, _currentChannelParty?.Id ?? 0);
+            if (existingMaster != null)
+            {
+                var confirm = MessageBox.Show(
+                    $"'{existingMaster.ProfileName}' 채널이 현재 '{companyName}' 그룹의 대표단가 채널입니다.\n이 채널로 변경하시겠습니까?",
+                    "대표단가 채널 변경 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (confirm != DialogResult.Yes) return;
+            }
+        }
+
         var party = new DocParty
         {
             Id = _currentChannelParty?.Id ?? 0,
             ProfileName = _currentConfig.ChannelName,
             RegNo = _partyRegNo.Text.Trim(),
-            CompanyName = _partyCompany.Text.Trim(),
+            CompanyName = companyName,
             CeoName = _partyCeo.Text.Trim(),
             Address = _partyAddress.Text.Trim(),
             BizType = _partyBizType.Text.Trim(),
@@ -321,8 +360,12 @@ public class ChannelConfigForm : Form
             Email = _partyEmail.Text.Trim(),
             ChannelCode = _currentConfig.ChannelCode,
             IsDefaultSupplier = _currentChannelParty?.IsDefaultSupplier ?? false,
+            IsPriceMaster = wantsPriceMaster,
+            ShippingFeePerShipment = _partyShippingFeePerShipment.Value,
         };
         _docPartyRepository.Save(party);
+        if (wantsPriceMaster)
+            _docPartyRepository.SetPriceMaster(party.Id, companyName);
         _currentChannelParty = party;
         _partyStatusLabel.Text = "저장되었습니다.";
     }
