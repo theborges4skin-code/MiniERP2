@@ -70,7 +70,10 @@ public class FileMeta
     public string SourceType { get; set; } = "settlement";
     public string FileCreatedAt { get; set; } = "";
     public string Period { get; set; } = "";
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
+
+    /// <summary>거래처 상호명(DocPartyTable.CompanyName). schema_version 2부터 기록. 없으면 공란.</summary>
+    public string CompanyName { get; set; } = "";
 }
 
 // ─── 파일 스캔 결과 1건 ──────────────────────────────────────────────────────

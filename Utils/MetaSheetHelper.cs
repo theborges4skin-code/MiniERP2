@@ -39,6 +39,8 @@ public static class MetaSheetHelper
                 SourceType = kvp.GetValueOrDefault("source_type") ?? "settlement",
                 FileCreatedAt = kvp.GetValueOrDefault("file_created_at") ?? "",
                 Period = kvp.GetValueOrDefault("period") ?? "",
+                // v1 파일에는 company_name 키가 없다 — 공란 처리(하위호환).
+                CompanyName = kvp.GetValueOrDefault("company_name") ?? "",
             };
         }
         catch
@@ -50,13 +52,24 @@ public static class MetaSheetHelper
     // ── 쓰기 ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 대상 파일(원본의 복사본)에 _META 시트를 추가/갱신한다.
+    /// 대상 파일(원본의 복사본)에 _META 시트를 추가/갱신하고 저장한다.
     /// 원본 파일은 건드리지 않는다.
     /// </summary>
     public static void Write(string targetFilePath, FileMeta meta)
     {
         using var package = ExcelFileOpener.Open(targetFilePath);
+        WriteToPackage(package, meta);
+        package.Save();
+    }
 
+    /// <summary>
+    /// 이미 메모리에 조립된 <see cref="ExcelPackage"/>에 _META 시트를 추가/갱신한다.
+    /// 저장(<see cref="ExcelPackage.Save()"/>)은 호출하지 않는다 — 대용량 워크북을 파일로
+    /// 저장한 뒤 다시 열어 쓰는 비용을 피하려는 내보내기 흐름(예: 이익분석/광고분석)에서
+    /// 시트 조립 마지막 단계로 이 메서드를 호출하고, 그 다음 한 번만 저장한다.
+    /// </summary>
+    public static void WriteToPackage(ExcelPackage package, FileMeta meta)
+    {
         // 기존 _META 시트가 있으면 삭제 후 재생성
         var existing = package.Workbook.Worksheets[SheetName];
         if (existing != null)
@@ -71,16 +84,15 @@ public static class MetaSheetHelper
         WriteRow(sheet, 2, "source_type", meta.SourceType);
         WriteRow(sheet, 3, "channel_name", meta.ChannelName);
         WriteRow(sheet, 4, "channel_code", meta.ChannelCode);
-        WriteRow(sheet, 5, "file_created_at",
+        WriteRow(sheet, 5, "company_name", meta.CompanyName);
+        WriteRow(sheet, 6, "file_created_at",
             string.IsNullOrEmpty(meta.FileCreatedAt)
                 ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
                 : meta.FileCreatedAt);
-        WriteRow(sheet, 6, "period", meta.Period);
+        WriteRow(sheet, 7, "period", meta.Period);
 
         sheet.Column(1).Width = 20;
         sheet.Column(2).Width = 30;
-
-        package.Save();
     }
 
     /// <summary>
