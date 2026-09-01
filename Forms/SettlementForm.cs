@@ -28,6 +28,7 @@ public class SettlementForm : Form
     private readonly OutboundRepository _outboundRepository = new();
     private readonly SettlementLoader _settlementLoader = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly DocPartyRepository _docPartyRepository = new();
 
     private readonly ProfitFactRepository _profitFactRepository = new();
 
@@ -822,7 +823,9 @@ public class SettlementForm : Form
         var exportChannelName = exportChannelCfg?.ChannelName ?? exportChannelCode;
         var exportChannelType = exportChannelCfg?.ChannelType ?? ChannelType.General;
         var exportChannelPrefix = exportChannelName.Length > 0 ? exportChannelName[..Math.Min(5, exportChannelName.Length)] + "_" : "";
-        DiagnosticsLogger.Log($"[이익분석 내보내기] 채널명 조회 완료 — 채널: {exportChannelCode} ({exportChannelName}, {exportChannelType})");
+        var exportCompanyName = string.IsNullOrEmpty(exportChannelCode) ? "" :
+            (_docPartyRepository.GetByChannelCode(exportChannelCode)?.CompanyName ?? "");
+        DiagnosticsLogger.Log($"[이익분석 내보내기] 채널명 조회 완료 — 채널: {exportChannelCode} ({exportChannelName}, {exportChannelType}), 거래처: {exportCompanyName}");
 
         var lastFolder = _settingsService.GetLastFolder("SettlementExport");
         DiagnosticsLogger.Log($"[이익분석 내보내기] SaveFileDialog 열기 전 — InitialDirectory: {lastFolder ?? "(Documents)"}");
@@ -871,6 +874,16 @@ public class SettlementForm : Form
                 DiagnosticsLogger.Log("[이익분석 내보내기] 미매핑·예외건 시트 완료");
                 WriteRawDataSheet(package, "원본데이터", rowsSnapshot);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 원본데이터 시트 완료");
+
+                MetaSheetHelper.WriteToPackage(package, new FileMeta
+                {
+                    SourceType = "settlement",
+                    ChannelCode = exportChannelCode,
+                    ChannelName = exportChannelName,
+                    CompanyName = exportCompanyName,
+                    Period = DateTime.Now.ToString("yyyyMM"),
+                });
+                DiagnosticsLogger.Log("[이익분석 내보내기] _META 시트 완료");
 
                 ExportHelper.SaveExcel(package, filePath);
                 DiagnosticsLogger.Log("[이익분析 내보내기] 파일 저장 완료");

@@ -21,6 +21,7 @@ public class AdMappingForm : Form
 {
     private readonly AdMappingRepository _adMappingRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly DocPartyRepository _docPartyRepository = new();
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly SettingsService _settingsService = new();
     private readonly AdSpendLoader _adSpendLoader = new();
@@ -740,6 +741,9 @@ public class AdMappingForm : Form
 
         var itemsSnapshot = _loadedAdItems.ToList();
         var splitEnabled = _channelSplitResolver != null;
+        var exportChannelCode = _selectedChannel?.ChannelCode ?? "";
+        var exportCompanyName = string.IsNullOrEmpty(exportChannelCode) ? "" :
+            (_docPartyRepository.GetByChannelCode(exportChannelCode)?.CompanyName ?? "");
 
         Cursor = Cursors.WaitCursor;
         try
@@ -752,6 +756,14 @@ public class AdMappingForm : Form
                 WriteAdGroupSummarySheetStatic(package.Workbook.Worksheets.Add("그룹별_광고비"), channelName, itemsSnapshot, splitEnabled);
                 if (splitEnabled)
                     WriteChannelVerificationSheetStatic(package.Workbook.Worksheets.Add("채널검증"), itemsSnapshot);
+                MetaSheetHelper.WriteToPackage(package, new FileMeta
+                {
+                    SourceType = "ad",
+                    ChannelCode = exportChannelCode,
+                    ChannelName = channelName,
+                    CompanyName = exportCompanyName,
+                    Period = DateTime.Now.ToString("yyyyMM"),
+                });
                 ExportHelper.SaveExcel(package, filePath);
             });
             ExportHelper.ShowPostExportDialog(this, filePath);
