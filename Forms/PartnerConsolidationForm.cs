@@ -24,6 +24,7 @@ public class PartnerConsolidationForm : Form
     private readonly ItemRepository _itemRepository = new();
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly PartnerConsolidationAggregator _aggregator;
+    private readonly PartnerConsolidationPriceEntryService _priceEntryService;
 
     private const decimal DefaultShippingFeePerShipment = 3000m;
 
@@ -41,11 +42,13 @@ public class PartnerConsolidationForm : Form
     private ExcelLikeDataGridView _unmappedGrid = new();
     private ExcelLikeDataGridView _channelShipmentGrid = new();
     private Label _statusLabel = new();
+    private Label _unassignedStatusLabel = new();
 
     public PartnerConsolidationForm()
     {
         _aggregator = new PartnerConsolidationAggregator(
             new PartnerSupplyPriceResolver(_channelSkuRepository, _docPartyRepository), _itemRepository);
+        _priceEntryService = new PartnerConsolidationPriceEntryService(_channelSkuRepository, _docPartyRepository);
         InitializeComponent();
         FormManager.ApplyBoundsTracking(this);
     }
@@ -142,13 +145,23 @@ public class PartnerConsolidationForm : Form
         );
         _cskuDetailGrid.DataSource = _cskuDetails;
 
-        _unassignedGrid = BuildDetailGrid("PartnerConsolidationForm.UnassignedGrid");
+        // 단가 미배정 탭은 "입력할 납품단가" 한 열만 편집 가능해야 하므로 BuildDetailGrid(전체
+        // ReadOnly)를 쓰지 않고 그리드는 편집 가능하게 두되 나머지 열만 개별로 ReadOnly 처리한다.
+        _unassignedGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            PersistenceKey = "PartnerConsolidationForm.UnassignedGrid",
+            AutoGenerateColumns = false,
+            SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
+            MultiSelect = true,
+        };
         _unassignedGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 130 },
-            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130 },
-            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 180 },
-            new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120 },
-            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+            new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 180, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "입력할 납품단가", Name = "EnteredPrice", DataPropertyName = "EnteredPrice", Width = 120, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         _unassignedGrid.DataSource = _unassignedPriceRows;
 
@@ -175,7 +188,22 @@ public class PartnerConsolidationForm : Form
         _channelShipmentGrid.DataSource = _channelShipments;
 
         var cskuTab = new TabPage("CSKU 상세"); cskuTab.Controls.Add(_cskuDetailGrid);
-        var unassignedTab = new TabPage("단가 미배정"); unassignedTab.Controls.Add(_unassignedGrid);
+
+        // "단가 미배정" 탭 전용: 입력란에 값을 채운 뒤 이 버튼으로 대표단가 채널에 저장한다(§8-S8).
+        var unassignedTab = new TabPage("단가 미배정");
+        var unassignedLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        unassignedLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        unassignedLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var unassignedToolPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+        var btnSaveEnteredPrices = new Button { Text = "입력된 단가 저장", Size = new Size(120, 26) };
+        btnSaveEnteredPrices.Click += (s, e) => SaveEnteredPrices();
+        _unassignedStatusLabel = new Label { AutoSize = true, Padding = new Padding(10, 6, 0, 0) };
+        unassignedToolPanel.Controls.Add(btnSaveEnteredPrices);
+        unassignedToolPanel.Controls.Add(_unassignedStatusLabel);
+        unassignedLayout.Controls.Add(unassignedToolPanel, 0, 0);
+        unassignedLayout.Controls.Add(_unassignedGrid, 0, 1);
+        unassignedTab.Controls.Add(unassignedLayout);
+
         var unmappedTab = new TabPage("미매핑·제외"); unmappedTab.Controls.Add(_unmappedGrid);
         var channelShipmentTab = new TabPage("채널별 배송건수"); channelShipmentTab.Controls.Add(_channelShipmentGrid);
         tabs.TabPages.AddRange(cskuTab, unassignedTab, unmappedTab, channelShipmentTab);
@@ -392,5 +420,54 @@ public class PartnerConsolidationForm : Form
         }
 
         return (byCompany, zeroShippingChannels);
+    }
+
+    // ── 단가 미배정 탭 인라인 저장(§6.5, §8-S8) ─────────────────────────────
+
+    /// <summary>
+    /// "입력할 납품단가" 열에 값이 채워진 모든 행을 대표단가 채널의 SupplyPrice에 저장한다.
+    /// 대표단가 채널이 없는 거래처는 저장을 막고 채널설정에서 먼저 지정하도록 안내한다(§6.5).
+    /// 저장 후에는 전체를 다시 집계한다(가격 변경이 같은 대표채널을 공유하는 다른 CSKU/거래처
+    /// 표시에도 영향을 줄 수 있으므로 — §6.5 "저장 후 재계산").
+    /// </summary>
+    private void SaveEnteredPrices()
+    {
+        var toSave = _unassignedPriceRows.Where(r => r.EnteredPrice.HasValue).ToList();
+        if (toSave.Count == 0)
+        {
+            _unassignedStatusLabel.Text = "입력된 단가가 없습니다.";
+            return;
+        }
+
+        var savedCount = 0;
+        var noMasterCompanies = new HashSet<string>();
+        var ambiguousCompanies = new HashSet<string>();
+
+        foreach (var row in toSave)
+        {
+            var outcome = _priceEntryService.SavePrice(row.CompanyName, row.Msku, row.EnteredPrice!.Value, reason: "온라인 거래처 취합 화면에서 입력");
+            switch (outcome.Result)
+            {
+                case PartnerConsolidationPriceEntryResult.Saved:
+                    savedCount++;
+                    break;
+                case PartnerConsolidationPriceEntryResult.NoPriceMasterChannel:
+                    noMasterCompanies.Add(row.CompanyName);
+                    break;
+                case PartnerConsolidationPriceEntryResult.AmbiguousMasterCsku:
+                    ambiguousCompanies.Add(row.CompanyName);
+                    break;
+            }
+        }
+
+        if (savedCount > 0)
+            RunAggregate();
+
+        var message = $"{savedCount}건 저장됨.";
+        if (noMasterCompanies.Count > 0)
+            message += $" 대표단가 채널이 지정되지 않아 저장하지 못한 거래처(채널설정에서 먼저 지정하세요): {string.Join(", ", noMasterCompanies)}.";
+        if (ambiguousCompanies.Count > 0)
+            message += $" 대표단가 채널에 같은 마스터SKU의 CSKU가 여러 개 있어 저장하지 못한 거래처(CSKU 관리창에서 직접 정리하세요): {string.Join(", ", ambiguousCompanies)}.";
+        _unassignedStatusLabel.Text = message;
     }
 }

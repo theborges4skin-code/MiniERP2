@@ -144,6 +144,9 @@ public class PartnerConsolidationCskuDetail
 
     public bool IsPriceUnassigned => PriceSource == SupplyPriceSource.Unassigned;
     public bool IsCostMissing => !CostPrice.HasValue;
+
+    /// <summary>§6.5 "단가 미배정" 탭의 입력란 버퍼 — 화면 편집용이며 집계 결과 자체와는 무관하다.</summary>
+    public decimal? EnteredPrice { get; set; }
 }
 
 /// <summary>§6.2/§6.5 "거래처 요약" — 거래처(CompanyName) 1행.</summary>
