@@ -70,6 +70,50 @@ public class ShipmentGroupingTests
     }
 
     [TestMethod]
+    public void GetEffectiveGroupId_SameFileNameAndRow_DiffersWhenOrderNoDiffers()
+    {
+        // 온늘의집처럼 매번 같은 파일명("주문배송 내역.xlsx")으로 발주서를 내려주는 채널에서는
+        // 날짜가 다른 발주서의 같은 행이 옛 키 형식("채널|파일명#행")으로 겹쳤고, 품목까지 같으면
+        // SaveOutbound의 ON CONFLICT가 지난 이력을 덮어써 버렸다(2026-09-21 사고). 주문번호가
+        // 키에 들어가므로 이제는 절대 겹치지 않아야 한다.
+        var sep18 = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342530865", SourceRowKey = "주문배송 내역.xlsx#8" };
+        var sep21 = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342729034", SourceRowKey = "주문배송 내역.xlsx#8" };
+
+        Assert.AreNotEqual(ShipmentGrouping.GetEffectiveGroupId(sep18), ShipmentGrouping.GetEffectiveGroupId(sep21));
+    }
+
+    [TestMethod]
+    public void GetEffectiveGroupId_SameOrderAndRow_IsStableAcrossReload()
+    {
+        // 같은 발주서를 다시 불러와 저장하면(이중 출고 방지) 여전히 같은 키가 나와야 한다.
+        var firstLoad = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342729034", SourceRowKey = "주문배송 내역.xlsx#8" };
+        var reloaded = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342729034", SourceRowKey = "주문배송 내역.xlsx#8" };
+
+        Assert.AreEqual("CH066|342729034|주문배송 내역.xlsx#8", ShipmentGrouping.GetEffectiveGroupId(firstLoad));
+        Assert.AreEqual(ShipmentGrouping.GetEffectiveGroupId(firstLoad), ShipmentGrouping.GetEffectiveGroupId(reloaded));
+    }
+
+    [TestMethod]
+    public void GetEffectiveGroupId_WithoutOrderNo_KeepsFileRowKey()
+    {
+        // 주문번호가 없는 발주서(B2B 등)는 예전처럼 "채널|파일명#행"을 그대로 쓴다.
+        var item = new OfsOrderItem { ChannelCode = "CH001", SourceRowKey = "20260921발주요청.xlsx#4" };
+
+        Assert.AreEqual("CH001|20260921발주요청.xlsx#4", ShipmentGrouping.GetEffectiveGroupId(item));
+    }
+
+    [TestMethod]
+    public void GetEffectiveGroupId_SameOrderDifferentRows_StillSeparateLines()
+    {
+        // 한 주문에 줄이 여러 개여도(같은 품목이 두 줄로 들어오는 경우 포함) 줄마다 별도 키여야
+        // 한 줄이 다른 줄을 덮어쓰지 않는다 — 합포장은 여전히 명시 지정으로만 묶인다.
+        var line1 = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342729013", SourceRowKey = "주문배송 내역.xlsx#6" };
+        var line2 = new OfsOrderItem { ChannelCode = "CH066", OrderNo = "342729013", SourceRowKey = "주문배송 내역.xlsx#7" };
+
+        Assert.AreNotEqual(ShipmentGrouping.GetEffectiveGroupId(line1), ShipmentGrouping.GetEffectiveGroupId(line2));
+    }
+
+    [TestMethod]
     public void GetEffectiveGroupId_WithoutSourceRowKey_FallsBackToObjectHash()
     {
         // 수동 추가 등 SourceRowKey가 없는 항목은 기존처럼 객체 식별 해시로 폴백해야 한다.

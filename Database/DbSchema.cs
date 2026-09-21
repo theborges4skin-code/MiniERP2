@@ -830,6 +830,8 @@ public static class DbSchema
             // 기존 중복 데이터로 인덱스 전환이 실패해도 무시하고 계속 진행한다.
         }
 
+        MigrateShipmentGroupKeyToIncludeOrderNoIfNeeded(connection);
+
         // CREATE TABLE IF NOT EXISTS는 이미 존재하는 테이블에 새 컬럼을 추가해주지 않으므로,
         // 이전 버전의 DB 파일에서도 신규 컬럼이 누락되지 않도록 직접 보강한다.
         EnsureColumn(connection, "ItemTable", "Reserve1", "TEXT");
@@ -957,6 +959,61 @@ public static class DbSchema
             UPDATE OutboundDetailTable SET Status = '출고확정' WHERE Status = '발송완료';
             """;
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 발주/출고 이력의 ShipmentGroupKey를 "채널|파일명#행"에서 "채널|주문번호|파일명#행"으로 옮긴다
+    /// (<see cref="Utils.ShipmentGrouping.GetEffectiveGroupId"/>와 같은 형식). 옛 형식은 채널이 매번
+    /// 똑같은 파일명으로 발주서를 내려줄 때 날짜가 다른 발주서의 같은 행끼리 키가 겹쳐, 품목까지 같으면
+    /// (ShipmentGroupKey, MskuCode) UNIQUE 충돌로 지난 이력이 덮어써졌다(2026-09-21 사고). 키에
+    /// 주문번호가 들어가면 겹치지 않는다. 이 마이그레이션이 없으면 사고 이전에 저장된 이력은 옛 형식
+    /// 키를 그대로 들고 있어, 같은 발주서를 다시 저장할 때 갱신 대신 중복 행이 생긴다.
+    ///
+    /// 주문번호가 없는 줄(B2B 발주서 등)과 사용자가 직접 합포장을 지정해 만든 키(채널 접두사가 없음),
+    /// 세션 한정 해시 키(__row_…)는 그대로 둔다. 새 키는 옛 키보다 항상 더 구체적이므로(접두사·접미사
+    /// 모두 보존) 이 변환으로 서로 다른 행의 키가 같아지는 일은 없다.
+    /// </summary>
+    private static void MigrateShipmentGroupKeyToIncludeOrderNoIfNeeded(SqliteConnection connection)
+    {
+        // 옛 형식(= 채널코드로 시작하되 그 다음이 주문번호가 아닌 키)인 행만 고른다. LIKE는 채널코드에
+        // 들어갈 수 있는 _/% 를 와일드카드로 해석하므로 substr 비교를 쓴다.
+        const string legacyKeyFilter = """
+            OrderNo <> '' AND ChannelCode <> ''
+            AND substr(ShipmentGroupKey, 1, length(ChannelCode) + 1) = ChannelCode || '|'
+            AND substr(ShipmentGroupKey, length(ChannelCode) + 2, length(OrderNo) + 1) <> OrderNo || '|'
+            """;
+        const string newKeyExpr = """
+            ChannelCode || '|' || OrderNo || '|' || substr(ShipmentGroupKey, length(ChannelCode) + 2)
+            """;
+
+        try
+        {
+            // 운임 헤더(OutboundShipmentTable)가 옛 키로 연결돼 있으므로 이력보다 먼저 옮긴다. 옛 키
+            // 하나가 여러 주문(=여러 새 키)으로 갈라지는 경우에는 어느 쪽 운임인지 알 수 없으므로
+            // 건드리지 않고 남겨둔다(고아 행이 되지만 운임은 발송 단위 참고값이라 계산을 깨지 않는다).
+            using (var shipmentCmd = connection.CreateCommand())
+            {
+                shipmentCmd.CommandText = $"""
+                    UPDATE OutboundShipmentTable
+                       SET ShipmentGroupKey = (
+                           SELECT DISTINCT {newKeyExpr} FROM OutboundDetailTable d
+                            WHERE d.ShipmentGroupKey = OutboundShipmentTable.ShipmentGroupKey AND {legacyKeyFilter})
+                     WHERE (SELECT COUNT(DISTINCT {newKeyExpr}) FROM OutboundDetailTable d
+                             WHERE d.ShipmentGroupKey = OutboundShipmentTable.ShipmentGroupKey AND {legacyKeyFilter}) = 1
+                    """;
+                shipmentCmd.ExecuteNonQuery();
+            }
+
+            using var detailCmd = connection.CreateCommand();
+            detailCmd.CommandText = $"""
+                UPDATE OutboundDetailTable SET ShipmentGroupKey = {newKeyExpr} WHERE {legacyKeyFilter}
+                """;
+            detailCmd.ExecuteNonQuery();
+        }
+        catch (SqliteException)
+        {
+            // 예상치 못한 데이터로 변환이 실패해도 앱 기동 자체는 막지 않는다(옛 키는 그대로 동작한다).
+        }
     }
 
     private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string columnType)

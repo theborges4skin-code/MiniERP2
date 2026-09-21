@@ -25,8 +25,21 @@ public static class ShipmentGrouping
         // 이 키는 OutboundDetailTable에 ShipmentGroupKey로 영속 저장되므로(발주/출고 이력), 발주서를
         // 재로드해 다시 저장해도 같은 발주 줄이면 같은 값이 나와야 한다. 파일에서 로드된 줄은
         // SourceRowKey(파일명#엑셀행번호)가 있으므로 그걸 채널코드와 묶어 결정적 키로 쓴다.
+        //
+        // 다만 "채널|파일명#행"만으로는 채널이 매번 똑같은 파일명으로 발주서를 내려줄 때(예: 온늘의집
+        // "주문배송 내역.xlsx") 날짜가 다른 발주서의 같은 행끼리 키가 겹친다. 품목(MskuCode)까지 같으면
+        // (ShipmentGroupKey, MskuCode) UNIQUE에 걸려 SaveOutbound의 ON CONFLICT DO UPDATE가 새 행을
+        // 넣는 대신 지난 이력을 통째로 덮어써 버린다 — 2026-09-21에 9/18자 이력 1건이 그렇게 사라졌고,
+        // 덮어쓴 건도 CreatedAt이 옛 날짜로 남아 이력 조회(CreatedAt 기준)에서 사라진 것처럼 보였다.
+        // 주문번호를 키에 끼워 넣으면 날짜가 달라도 절대 겹치지 않으면서, 같은 발주서를 재로드해 다시
+        // 저장할 때는 주문번호·행번호가 모두 그대로라 여전히 같은 키가 나온다(이중 출고 방지 유지).
+        // 줄 단위 키라는 성격은 그대로이므로 합포장/미리보기 그룹화 동작에는 영향이 없다.
         if (!string.IsNullOrWhiteSpace(item.SourceRowKey))
-            return $"{item.ChannelCode}|{item.SourceRowKey}";
+        {
+            return string.IsNullOrWhiteSpace(item.OrderNo)
+                ? $"{item.ChannelCode}|{item.SourceRowKey}"
+                : $"{item.ChannelCode}|{item.OrderNo}|{item.SourceRowKey}";
+        }
 
         // 수동 추가 등 SourceRowKey가 없는 항목은 객체 식별 해시로 폴백한다(같은 인스턴스에 대해서는
         // 항상 같은 값 — GC로 인스턴스가 옮겨져도 .NET이 동일하게 유지해준다). 이 경우 재로드 개념이
