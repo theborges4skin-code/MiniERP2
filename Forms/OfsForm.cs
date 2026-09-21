@@ -700,7 +700,7 @@ public class OfsForm : Form
                         LineKind = order.LineKind ?? string.Empty,
                     });
 
-                    // 샘플 라인은 CSKU가 없는 게 정상이므로 "납품가 없음" 실패 처리에서 제외한다.
+                    // 샘플 라인은 CSKU가 없는 게 정상이므로 "CSKU 미등록" 실패 처리에서 제외한다.
                     if (csku == null && order.LineKind != LineKinds.Sample) failedOrders.Add(order);
                 }
 
@@ -751,10 +751,13 @@ public class OfsForm : Form
             order.Status = string.IsNullOrWhiteSpace(order.TrackingNo) ? "발주확정" : "출고확정";
         }
 
-        // 실패한 주문들의 상태를 '납품가 없음'으로 변경
+        // 실패한 주문들의 상태 표시. 실패 조건은 "납품가가 0/비어 있음"이 아니라 "이 채널에 그
+        // CSKU 레코드 자체가 없음"(GetByChannelAndCskuCode가 null)이다 — 예전 문구가 "납품가 없음"
+        // 이라, 납품가 0으로 등록된 다른 CSKU는 잘 저장되는데 왜 이 건만 실패하는지 혼선을 줬다
+        // (2026-09-21: 실제 원인은 CSKU 코드 철자가 매핑 규칙의 TargetSku와 달랐던 것).
         foreach (var order in failedOrders)
         {
-            order.Status = "납품가 없음";
+            order.Status = "CSKU 미등록";
         }
 
         // 그리드 새로고침
@@ -763,7 +766,7 @@ public class OfsForm : Form
         var successCount = savedDetails.Count;
         var failCount = failedOrders.Count;
         var confirmedCount = _orders.Count(o => o.Status is "발주확정" or "출고확정");
-        _statusLabel.Text = $"저장 완료: {successCount}건 성공, {failCount}건 실패 (납품가 없음)  |  불러온 주문 {_totalLoadedRowCount}건 중 발주확정 {confirmedCount}건";
+        _statusLabel.Text = $"저장 완료: {successCount}건 성공, {failCount}건 실패 (CSKU 미등록)  |  불러온 주문 {_totalLoadedRowCount}건 중 발주확정 {confirmedCount}건";
 
         // 엑셀에서 불러온 행 수와 실제 발주확정된 건수를 나란히 보여줘 사용자가 한 번 더 확인하게
         // 한다. 품절 등으로 일부 품목을 의도적으로 발주확정하지 않을 수 있어 항상 같을 필요는
@@ -814,7 +817,7 @@ public class OfsForm : Form
         // 매핑 상태에 따라 배경색 설정. 시스템 다크모드에서는 컨트롤 기본 글자색이 흰색으로
         // 바뀔 수 있으므로, 배경색을 칠할 때는 항상 검은 글자색을 함께 지정해 다크/라이트
         // 모드 어느 쪽에서도 잘 보이도록 한다.
-        if (item.Status == "매핑 실패" || item.Status == "매핑 키 없음" || item.Status == "납품가 없음")
+        if (item.Status == "매핑 실패" || item.Status == "매핑 키 없음" || item.Status == "CSKU 미등록")
         {
             row.DefaultCellStyle.BackColor = Color.MistyRose;
             row.DefaultCellStyle.ForeColor = Color.Black;

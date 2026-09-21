@@ -565,6 +565,14 @@ public class OutboundHistoryForm : Form
             _historyGrid.Rows[e.RowIndex].Cells["PurchasePrice"].Value = detail.PurchasePrice;
         }
 
+        // 셀을 비우면(Delete 또는 빈 문자열 입력) 바인딩이 non-nullable string 속성에도 null을 써넣는다.
+        // 저장 시점(OutboundRepository.UpdateDetail)에서도 막지만, null을 그대로 들고 다니면 내보내기·
+        // 마감 집계 등 다른 경로에서 NullReferenceException이 나므로 편집 직후에 정규화한다.
+        detail.TrackingNo ??= string.Empty;
+        detail.Remark ??= string.Empty;
+        detail.LineKind ??= string.Empty;
+        if (string.IsNullOrEmpty(detail.Status)) detail.Status = "발주확정";
+
         if (detail.Status == "출고확정" && detail.ConfirmedAt is null)
         {
             detail.ConfirmedAt = DateTime.Now;

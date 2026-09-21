@@ -224,11 +224,15 @@ public class OutboundRepository
         command.Parameters.AddWithValue("$purchaseChannelCode", (object?)detail.PurchaseChannelCode ?? DBNull.Value);
         command.Parameters.AddWithValue("$purchasePrice", (object?)detail.PurchasePrice ?? DBNull.Value);
         command.Parameters.AddWithValue("$weightKg", (object?)detail.WeightKg ?? DBNull.Value);
-        command.Parameters.AddWithValue("$trackingNo", detail.TrackingNo);
-        command.Parameters.AddWithValue("$status", detail.Status);
+        // 이 네 값은 타입상 non-nullable string이지만, 이력 그리드에서 셀을 비우면(운송장번호 지우기,
+        // 구분/상태 콤보 Delete) DataGridView 바인딩이 속성에 null을 써넣는다. 그대로 넘기면
+        // Microsoft.Data.Sqlite가 "Value must be set"으로 저장 전체를 중단시킨다(2026-09-21 사고).
+        command.Parameters.AddWithValue("$trackingNo", detail.TrackingNo ?? string.Empty);
+        // 상태만은 빈 값으로 덮으면 확정 이력이 지워지므로, 비어 있으면 DB의 기존 상태를 유지한다.
+        command.Parameters.AddWithValue("$status", string.IsNullOrEmpty(detail.Status) ? (existingStatus ?? "발주확정") : detail.Status);
         command.Parameters.AddWithValue("$confirmedAt", (object?)detail.ConfirmedAt ?? DBNull.Value);
-        command.Parameters.AddWithValue("$remark", detail.Remark);
-        command.Parameters.AddWithValue("$lineKind", detail.LineKind);
+        command.Parameters.AddWithValue("$remark", detail.Remark ?? string.Empty);
+        command.Parameters.AddWithValue("$lineKind", detail.LineKind ?? string.Empty);
         command.Parameters.AddWithValue("$id", detail.Id);
         command.ExecuteNonQuery();
 
