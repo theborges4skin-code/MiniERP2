@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
@@ -519,6 +519,92 @@ public class OutboundRepositoryTests
         Assert.AreEqual(60000m, repository.FindByOrderNos(["ORDER-22"]).Single().SupplyPrice); // 기준일 이전 — 안 바뀜
         Assert.AreEqual(59091m, repository.FindByOrderNos(["ORDER-23"]).Single().SupplyPrice); // 기준일 이후 — 바뀜
         Assert.AreEqual(60000m, repository.FindByOrderNos(["ORDER-24"]).Single().SupplyPrice); // 다른 채널 — 안 바뀜
+    }
+
+    /// <summary>
+    /// 옛 버전이 nullable로 추가해둔 CskuCode 열 때문에 구버전 행은 빈 문자열이 아니라 NULL을
+    /// 들고 있다. 그 행들이 "CskuCode = ''"류 조건에 하나도 걸리지 않아 마감보드의 CSKU 단가
+    /// 일괄 정정이 0건만 고치던 회귀(2026-09-22)를 막는다 — 스키마 점검이 NULL을 정규화해야 한다.
+    /// </summary>
+    [TestMethod]
+    public void EnsureCreated_NormalizesNullCskuCodeLeftByLegacyNullableColumn()
+    {
+        // 정상 경로로 행을 하나 만든 뒤, 옛 DB 상태를 흉내 내 CskuCode를 NULL로 되돌린다
+        // (현재 스키마는 NOT NULL이라 열 제약을 잠시 풀어야 한다).
+        var repository = new OutboundRepository();
+        repository.SaveOutbound(new[] { new OutboundDetail { ChannelCode = "CH-N", OrderNo = "ORDER-25", TrackingNo = "T025", MskuCode = "LEGACY1", Qty = 1, SupplyPrice = 60000m } });
+        var row = repository.FindByOrderNos(["ORDER-25"]).Single();
+        ForceNullCskuCode(row.Id);
+        Assert.AreEqual(1, CountNullCskuCode());
+
+        using (var connection = SqliteConnectionFactory.OpenConnection())
+        {
+            DbSchema.EnsureCreated(connection);
+        }
+
+        Assert.AreEqual(0, CountNullCskuCode());
+
+        // 정규화 후에는 CSKU 기준 일괄 정정에도 정상적으로 걸린다.
+        var target = DateTime.Today;
+        Assert.AreEqual(1, repository.CountForCskuFromDate("CH-N", "LEGACY1", target));
+        Assert.AreEqual(1, repository.CorrectSupplyPriceForCskuFromDate("CH-N", "LEGACY1", target, 59091m));
+        Assert.AreEqual(59091m, repository.FindByOrderNos(["ORDER-25"]).Single().SupplyPrice);
+    }
+
+    /// <summary>
+    /// 아직 출고확정 전(ConfirmedAt=NULL)인 미출고 라인도 마감보드 라인 상세에 함께 뜨므로
+    /// 단가 일괄 정정 대상이어야 한다 — 날짜 기준은 ConfirmedAt ?? CreatedAt.
+    /// </summary>
+    [TestMethod]
+    public void CorrectSupplyPriceForCskuFromDate_AlsoUpdatesUnconfirmedRows()
+    {
+        var repository = new OutboundRepository();
+        repository.SaveOutbound(new[] { new OutboundDetail { ChannelCode = "CH-U", OrderNo = "ORDER-26", TrackingNo = "T026", MskuCode = "SLES19", CskuCode = "SLES19", Qty = 1, SupplyPrice = 60000m } });
+        var row = repository.FindByOrderNos(["ORDER-26"]).Single();
+        ClearConfirmedAt(row.Id);
+
+        var updatedCount = repository.CorrectSupplyPriceForCskuFromDate("CH-U", "SLES19", DateTime.Today, 59091m);
+
+        Assert.AreEqual(1, updatedCount);
+        Assert.AreEqual(59091m, repository.FindByOrderNos(["ORDER-26"]).Single().SupplyPrice);
+    }
+
+    /// <summary>NOT NULL 제약을 잠시 풀고(writable_schema) CskuCode를 NULL로 되돌려 옛 DB를 재현한다.</summary>
+    private static void ForceNullCskuCode(long id)
+    {
+        var quotedEmpty = "''" + "''";
+        var patchSql = $"UPDATE sqlite_master SET sql = replace(sql, 'CskuCode TEXT NOT NULL DEFAULT {quotedEmpty}', 'CskuCode TEXT') WHERE type = 'table' AND name = 'OutboundDetailTable'";
+        using (var connection = SqliteConnectionFactory.OpenConnection())
+        {
+            foreach (var sql in new[] { "PRAGMA writable_schema = ON", patchSql, "PRAGMA writable_schema = OFF" })
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = sql;
+                command.ExecuteNonQuery();
+            }
+        }
+        SqliteConnection.ClearAllPools();
+
+        ExecuteNonQuery("UPDATE OutboundDetailTable SET CskuCode = NULL WHERE Id = $id", id);
+    }
+
+    private static int CountNullCskuCode()
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM OutboundDetailTable WHERE CskuCode IS NULL";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void ClearConfirmedAt(long id) => ExecuteNonQuery("UPDATE OutboundDetailTable SET ConfirmedAt = NULL WHERE Id = $id", id);
+
+    private static void ExecuteNonQuery(string sql, long id)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
     }
 
     private static void BackdateConfirmedAt(long id, DateTime confirmedAt)

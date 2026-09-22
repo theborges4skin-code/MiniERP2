@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using MiniERP2.Config;
@@ -1217,6 +1217,27 @@ public class PartnerClosingForm : Form
         return (line, detailId);
     }
 
+    /// <summary>
+    /// 선택한 라인 전체(원본 발주/출고 라인이 있는 것만)를 돌려준다. 같은 CSKU가 수십 줄로
+    /// 쪼개져 들어오는 거래처에서 단가/수량을 한 줄씩 고치는 게 번거롭다는 요청에 따라,
+    /// 수량·단가 수정 메뉴는 여러 줄을 한 번에 처리한다(2026-09-22).
+    /// </summary>
+    private List<(LineRow Line, long DetailId)> RequireSelectedSourceLines()
+    {
+        var lines = _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .OrderBy(r => r.Index)
+            .Select(r => r.DataBoundItem as LineRow)
+            .Where(l => l?.Source.OutboundDetailId != null)
+            .Select(l => (Line: l!, DetailId: l!.Source.OutboundDetailId!.Value))
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("수정할 라인을 선택하세요(원본 발주/출고 라인이 없는 확정 스냅샷은 여기서 수정할 수 없습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        return lines;
+    }
+
     private void RefreshBoardKeepingSelection()
     {
         var partyKey = (_partyGrid.CurrentRow?.DataBoundItem as PartyRow)?.PartyKey;
@@ -1319,15 +1340,18 @@ public class PartnerClosingForm : Form
 
     private void OnEditQtyClick(object? sender, EventArgs e)
     {
-        if (RequireSelectedSourceLine() is not { } sel) return;
+        var selected = RequireSelectedSourceLines();
+        if (selected.Count == 0) return;
 
-        using var dlg = new SimpleTextPromptDialog("수량 수정", "새 수량:", sel.Line.Qty.ToString("0"),
+        var label = selected.Count == 1 ? "새 수량:" : $"선택한 {selected.Count}건에 똑같이 적용할 새 수량:";
+        using var dlg = new SimpleTextPromptDialog("수량 수정", label, selected[0].Line.Qty.ToString("0"),
             value => decimal.TryParse(value, out var v) && v > 0 ? null : "0보다 큰 숫자를 입력하세요.");
         if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
-        _outboundRepo.UpdateQty(sel.DetailId, decimal.Parse(dlg.Value));
+        var qty = decimal.Parse(dlg.Value);
+        foreach (var (_, detailId) in selected) _outboundRepo.UpdateQty(detailId, qty);
         RefreshBoardKeepingSelection();
-        _statusLabel.Text = $"수량을 {dlg.Value}(으)로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+        _statusLabel.Text = $"{selected.Count}건의 수량을 {dlg.Value}(으)로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     /// <summary>
@@ -1336,15 +1360,35 @@ public class PartnerClosingForm : Form
     /// </summary>
     private void OnEditUnitPriceClick(object? sender, EventArgs e)
     {
-        if (RequireSelectedSourceLine() is not { } sel) return;
+        var selected = RequireSelectedSourceLines();
+        if (selected.Count == 0) return;
 
-        var vatLabel = _vatExcludedCheck.Checked ? "VAT 별도" : "VAT 포함";
-        using var dlg = new SimpleTextPromptDialog("단가 수정", $"{sel.Line.CskuCode} 새 단가 ({vatLabel} 기준, 원):", sel.Line.UnitPrice.ToString("0"),
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var vatLabel = vatExcluded ? "VAT 별도" : "VAT 포함";
+        var label = selected.Count == 1
+            ? $"{selected[0].Line.CskuCode} 새 단가 ({vatLabel} 기준, 원):"
+            : $"선택한 {selected.Count}건에 똑같이 적용할 새 단가 ({vatLabel} 기준, 원):";
+        using var dlg = new SimpleTextPromptDialog("단가 수정", label, selected[0].Line.UnitPrice.ToString("0"),
             value => decimal.TryParse(value, out var v) && v >= 0 ? null : "0 이상의 숫자를 입력하세요.");
         if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
 
-        sel.Line.UnitPrice = decimal.Parse(dlg.Value);
-        HandleUnitPriceEdit(sel.Line, sel.DetailId);
+        var entered = decimal.Parse(dlg.Value);
+
+        // 1건이면 기존대로 "이 건만/전체 CSKU" 범위를 물어본다. 여러 건을 직접 골랐다면 범위는
+        // 이미 그 선택으로 정해진 것이므로 되묻지 않고 고른 라인에만 적용한다.
+        if (selected.Count == 1)
+        {
+            selected[0].Line.UnitPrice = entered;
+            HandleUnitPriceEdit(selected[0].Line, selected[0].DetailId);
+            return;
+        }
+
+        var newPrice = vatExcluded
+            ? Math.Round(entered * VatCalculator.VatDivisor, 0, MidpointRounding.AwayFromZero)
+            : entered;
+        foreach (var (_, detailId) in selected) _outboundRepo.CorrectSupplyPrice(detailId, newPrice);
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"선택한 {selected.Count}건의 단가를 {newPrice:N0}원(VAT포함 기준)으로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     /// <summary>
@@ -1402,21 +1446,21 @@ public class PartnerClosingForm : Form
         var lineDate = (line.Source.LineDate ?? DateTime.Today).Date;
 
         var priceLabel = vatExcluded ? $"{newPrice:N0}원(VAT포함, 입력한 VAT별도 값 {line.UnitPrice:N0}원 환산)" : $"{newPrice:N0}원";
-        var choice = MessageBox.Show(
-            $"단가를 {priceLabel}으로 변경합니다.\n\n" +
-            "[예] 이 건에만 적용\n" +
-            $"[아니오] {lineDate:yyyy-MM-dd} 이후 이 CSKU({line.CskuCode}) 전체에 적용(등록 단가도 함께 갱신)\n" +
-            "[취소] 변경 취소",
-            "단가 변경 범위 선택", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        var targetCount = _outboundRepo.CountForCskuFromDate(channelCode, line.CskuCode, lineDate);
+        using var dlg = new UnitPriceScopeDialog(
+            priceLabel,
+            $"{lineDate:yyyy-MM-dd} 이후 이 거래처의 CSKU '{line.CskuCode}' {targetCount}건 + CSKU 등록 단가까지 함께 변경",
+            $"지금 고른 이 1건({line.CskuCode}, {lineDate:yyyy-MM-dd})만 변경");
+        FormManager.ShowDialogSafe(dlg, this);
 
-        if (choice == DialogResult.Cancel)
+        if (dlg.SelectedScope is not { } scope)
         {
             RefreshBoard();
             SelectPartyByKey(partyRow.PartyKey);
             return;
         }
 
-        if (choice == DialogResult.Yes)
+        if (scope == UnitPriceScopeDialog.Scope.ThisLineOnly)
         {
             _outboundRepo.CorrectSupplyPrice(detailId, newPrice);
             _statusLabel.Text = $"이 건의 단가를 {newPrice:N0}원으로 수정했습니다. ({DateTime.Now:HH:mm:ss})";
@@ -1432,6 +1476,15 @@ public class PartnerClosingForm : Form
                 registered.SupplyPrice = newPrice;
                 _channelSkuRepo.Upsert(registered);
                 registeredNote = " + 등록 단가";
+            }
+
+            if (updatedCount == 0)
+            {
+                // 조용히 넘기면 [취소]와 구분이 안 된다 — 실제로 0건이면 반드시 알린다.
+                MessageBox.Show(
+                    $"{lineDate:yyyy-MM-dd} 이후 이 거래처의 CSKU '{line.CskuCode}'에 해당하는 출고 라인이 없어 라인 단가는 바뀌지 않았습니다." +
+                    (registered != null ? Environment.NewLine + "(CSKU 등록 단가는 변경했습니다)" : ""),
+                    "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
 
             _statusLabel.Text = $"{lineDate:yyyy-MM-dd} 이후 {line.CskuCode} {updatedCount}건{registeredNote}을 {newPrice:N0}원으로 일괄 수정했습니다. ({DateTime.Now:HH:mm:ss})";

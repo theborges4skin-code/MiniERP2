@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 
@@ -617,27 +617,63 @@ public class OutboundRepository
     }
 
     /// <summary>
-    /// 같은 채널의 같은 CSKU(구버전 데이터는 CskuCode가 비어있고 MskuCode에만 값이 있을 수 있어
-    /// 그 경우도 함께 봄)를 가진 건 중, 지정한 날짜(포함) 이후 출고확정된 모든 라인의 납품가를
-    /// 한꺼번에 정정한다(§4.2 ② 소급 경로 — 여러 건에 걸쳐 잘못 등록된 단가를 한 번에 바로잡을 때).
+    /// 같은 채널의 같은 CSKU를 가진 건 중, 지정한 날짜(포함) 이후의 모든 라인의 납품가를 한꺼번에
+    /// 정정한다(§4.2 ② 소급 경로 — 여러 건에 걸쳐 잘못 등록된 단가를 한 번에 바로잡을 때).
+    /// 대상 판정은 <see cref="CskuMatchWhere"/> 참고.
     /// </summary>
     public int CorrectSupplyPriceForCskuFromDate(string channelCode, string cskuCode, DateTime fromDateInclusive, decimal newSupplyPrice)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             UPDATE OutboundDetailTable
             SET SupplyPrice = $price
-            WHERE ChannelCode = $channelCode
-              AND (CskuCode = $csku OR (CskuCode = '' AND MskuCode = $csku))
-              AND ConfirmedAt IS NOT NULL
-              AND substr(ConfirmedAt, 1, 10) >= $fromDate
+            {CskuMatchWhere}
             """;
         command.Parameters.AddWithValue("$price", newSupplyPrice);
+        BindCskuMatchParameters(command, channelCode, cskuCode, fromDateInclusive);
+        return command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// <see cref="CorrectSupplyPriceForCskuFromDate"/>가 실제로 고칠 건수를 미리 센다(마감보드의
+    /// 단가 변경 범위 선택창에서 "전체 CSKU 수정 = 몇 건"인지 보여주기 위함).
+    /// </summary>
+    public int CountForCskuFromDate(string channelCode, string cskuCode, DateTime fromDateInclusive)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT COUNT(*) FROM OutboundDetailTable
+            {CskuMatchWhere}
+            """;
+        BindCskuMatchParameters(command, channelCode, cskuCode, fromDateInclusive);
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// "이 채널의 이 CSKU, 이 날짜 이후" 판정 조건. 두 가지 함정을 함께 피한다.
+    /// (1) CskuCode 열은 나중에 ALTER TABLE로 추가돼 구버전 행은 ''가 아니라 NULL이다 — 그대로
+    ///     비교하면 SQL에서 NULL은 어떤 값과도 같지 않아 한 건도 안 걸리고, 마감보드에서 일괄
+    ///     수정이 "아무 일도 안 일어난 것"처럼 보였다(사용자 신고, 2026-09-22). IFNULL로 ''로
+    ///     맞춘 뒤, 비어 있으면 MskuCode를 대신 본다(마감보드 BuildLine의 폴백과 같은 규칙).
+    /// (2) 날짜는 ConfirmedAt(출고확정) ?? CreatedAt(발주) 기준이어야 한다 — 마감보드가 라인
+    ///     일자를 그렇게 만들고, 아직 출고확정 전인 미출고 라인도 단가 정정 대상이기 때문이다.
+    /// </summary>
+    private const string CskuMatchWhere = """
+            WHERE ChannelCode = $channelCode
+              AND (
+                    IFNULL(CskuCode, '') = $csku
+                 OR (IFNULL(CskuCode, '') = '' AND MskuCode = $csku)
+                  )
+              AND substr(COALESCE(ConfirmedAt, CreatedAt), 1, 10) >= $fromDate
+            """;
+
+    private static void BindCskuMatchParameters(SqliteCommand command, string channelCode, string cskuCode, DateTime fromDateInclusive)
+    {
         command.Parameters.AddWithValue("$channelCode", channelCode);
         command.Parameters.AddWithValue("$csku", cskuCode);
         command.Parameters.AddWithValue("$fromDate", fromDateInclusive.ToString("yyyy-MM-dd"));
-        return command.ExecuteNonQuery();
     }
 
     /// <summary>

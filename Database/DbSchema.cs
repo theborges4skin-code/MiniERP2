@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace MiniERP2.Database;
 
@@ -951,6 +951,13 @@ public static class DbSchema
         // 기동 시마다 실행해도 안전한 정규화(이미 새 값이면 매치 없음 → no-op)이다.
         NormalizeLegacyOutboundStatus(connection);
 
+        // 옛 버전이 OutboundDetailTable.CskuCode를 nullable("TEXT")로 추가해둔 DB가 있다. 이후
+        // EnsureColumn 선언이 "TEXT NOT NULL DEFAULT ''"로 바뀌어도 이미 있는 열은 건드리지 않으므로
+        // 그 DB의 기존 행은 ''가 아니라 NULL로 남는다. SQL에서 NULL은 어떤 값과도 같지 않아
+        // "CskuCode = ''"식 조건에 전부 걸리지 않고, 마감보드의 CSKU 단가 일괄 정정이 0건만 고치고
+        // 아무 일도 없던 것처럼 끝났다(사용자 신고, 2026-09-22). 값은 그대로 두고 표현만 ''로 맞춘다.
+        NormalizeNullCskuCode(connection);
+
         // 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §4.3). 같은 CompanyName(상호명)을
         // 공유하는 여러 채널 중 납품단가 조회의 기준이 되는 대표 채널을 표시한다. DocPartyTable.
         // IsDefaultSupplier(테이블 전체 단일 대표 거래처 개념)와는 무관 — IsPriceMaster는
@@ -958,6 +965,13 @@ public static class DbSchema
         // 유일성을 지킨다.
         EnsureColumn(connection, "DocPartyTable", "IsPriceMaster", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "DocPartyTable", "ShippingFeePerShipment", "REAL NOT NULL DEFAULT 3000");
+    }
+
+    private static void NormalizeNullCskuCode(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE OutboundDetailTable SET CskuCode = '' WHERE CskuCode IS NULL";
+        command.ExecuteNonQuery();
     }
 
     private static void NormalizeLegacyOutboundStatus(SqliteConnection connection)
