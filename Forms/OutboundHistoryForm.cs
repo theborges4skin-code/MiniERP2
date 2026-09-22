@@ -39,6 +39,13 @@ public class OutboundHistoryForm : Form
     private DateTimePicker _toDatePicker = new();
     private ExcelLikeDataGridView _historyGrid = new();
     private Label _statusLabel = new();
+
+    /// <summary>
+    /// 채널코드 → 채널명. 그리드 "채널" 열과 송장번호 출력에 코드 대신 이름을 보여주기 위한 캐시다
+    /// (사용자 요청 — `CH066`만 봐서는 어느 채널인지 한눈에 알기 어렵다). 조회할 때마다 다시 만든다.
+    /// </summary>
+    private Dictionary<string, string> _channelNamesByCode = new(StringComparer.OrdinalIgnoreCase);
+
     private bool _suppressCellEndEdit;
 
     // 셀 직접 편집은 실수 방지를 위해 즉시 DB에 쓰지 않고, "변경사항 저장"을 눌러야 반영된다.
@@ -170,6 +177,7 @@ public class OutboundHistoryForm : Form
 
         var channels = new List<SalesChannel> { new() { ChannelCode = "", ChannelName = "(전체)" } };
         channels.AddRange(_salesChannelRepository.GetAll());
+        RefreshChannelNameCache();
         _channelComboBox = new ComboBox { Size = new Size(160, 25), DropDownStyle = ComboBoxStyle.DropDownList };
         _channelComboBox.DataSource = channels;
         _channelComboBox.DisplayMember = "ChannelName";
@@ -240,7 +248,9 @@ public class OutboundHistoryForm : Form
         };
 
         _historyGrid.Columns.AddRange(
-            new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelCode", DataPropertyName = "ChannelCode", Width = 90, ReadOnly = true },
+            // 값은 ChannelCode지만 화면에는 채널명으로 바꿔 보여준다(OnHistoryGridCellFormatting) —
+            // 코드만으로는 어느 채널인지 한눈에 알기 어렵다는 사용자 요청. 원래 코드는 셀 툴팁에 남긴다.
+            new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelCode", DataPropertyName = "ChannelCode", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "주문번호", Name = "OrderNo", DataPropertyName = "OrderNo", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "수령인", Name = "Recipient", DataPropertyName = "Recipient", Width = 90, ReadOnly = true },
             // 발주확정 시점 스냅샷(§OutboundDetail.Phone) — 이 열이 없으면 "선택 건 택배사 양식
@@ -268,7 +278,8 @@ public class OutboundHistoryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "출고확정 시점", Name = "ConfirmedAt", DataPropertyName = "ConfirmedAt", Width = 130, ReadOnly = true }
         );
         AddB2BMarginColumns();
-        _historyGrid.CellFormatting += OnRemarkFlagCellFormatting;
+        _historyGrid.CellFormatting += OnHistoryGridCellFormatting;
+        _historyGrid.CellToolTipTextNeeded += OnHistoryGridCellToolTipTextNeeded;
         SetupRemarkContextMenu();
         _historyGrid.CellEndEdit += OnHistoryGridCellEndEdit;
         // ExcelLikeDataGridView의 붙여넣기(Ctrl+V)는 셀 값을 코드로 직접 대입해서(cell.Value = ...)
@@ -369,15 +380,50 @@ public class OutboundHistoryForm : Form
     }
 
     /// <summary>"메모" 열에는 전체 내용 대신 유무만 표시한다(OfsForm의 RemarkFlag 열과 같은 패턴).</summary>
-    private void OnRemarkFlagCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    /// <summary>
+    /// 값 그대로 보여주면 안 되는 열들의 표시를 만든다 — "메모"는 유무만, "채널"은 코드 대신 채널명.
+    /// </summary>
+    private void OnHistoryGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         if (e.RowIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
-        if (_historyGrid.Columns[e.ColumnIndex].Name != "RemarkFlag") return;
+        var columnName = _historyGrid.Columns[e.ColumnIndex].Name;
+        if (columnName is not ("RemarkFlag" or "ChannelCode")) return;
         if (_historyGrid.Rows[e.RowIndex].DataBoundItem is not OutboundDetail detail) return;
 
-        e.Value = string.IsNullOrWhiteSpace(detail.Remark) ? string.Empty : "메모있음";
+        e.Value = columnName == "RemarkFlag"
+            ? string.IsNullOrWhiteSpace(detail.Remark) ? string.Empty : "메모있음"
+            : ResolveChannelName(detail.ChannelCode);
         e.FormattingApplied = true;
     }
+
+    /// <summary>"채널" 열은 코드 대신 이름을 보여주므로, 원래 채널코드는 셀 툴팁으로 확인할 수 있게 한다.</summary>
+    private void OnHistoryGridCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= _historyGrid.Rows.Count) return;
+        if (_historyGrid.Columns[e.ColumnIndex].Name != "ChannelCode") return;
+        if (_historyGrid.Rows[e.RowIndex].DataBoundItem is not OutboundDetail detail) return;
+
+        e.ToolTipText = string.IsNullOrWhiteSpace(detail.ChannelCode) ? string.Empty : $"채널코드: {detail.ChannelCode}";
+    }
+
+    /// <summary>
+    /// 채널코드 → 채널명. 채널 목록에 없는 코드(삭제됐거나 특수 코드)는 코드를 그대로 돌려줘서
+    /// 빈 칸으로 사라지지 않게 한다.
+    /// </summary>
+    private string ResolveChannelName(string? channelCode)
+    {
+        if (string.IsNullOrWhiteSpace(channelCode)) return string.Empty;
+
+        var code = channelCode.Trim();
+        return _channelNamesByCode.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name) ? name : code;
+    }
+
+    /// <summary>채널을 새로 만들거나 이름을 바꾼 뒤에도 최신 이름이 보이도록 조회할 때마다 다시 읽는다.</summary>
+    private void RefreshChannelNameCache() =>
+        _channelNamesByCode = _salesChannelRepository.GetAll()
+            .Where(c => !string.IsNullOrWhiteSpace(c.ChannelCode))
+            .GroupBy(c => c.ChannelCode.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().ChannelName ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>선택 행의 비고(내부관리용 메모) 전체 내용을 보여준다.</summary>
     private void SetupRemarkContextMenu()
@@ -483,6 +529,7 @@ public class OutboundHistoryForm : Form
         var to = _toDatePicker.Value.Date.AddDays(1).AddTicks(-1);
         var (_, lineKindScope, lineKind) = LineKindFilterDefs[Math.Max(_lineKindFilterComboBox.SelectedIndex, 0)];
 
+        RefreshChannelNameCache();
         var details = _outboundRepository.GetHistory(string.IsNullOrEmpty(channelCode) ? null : channelCode, from, to, lineKindScope, lineKind);
         EnsureStatusItemsInclude(details.Select(d => d.Status));
         _dirtyDetails.Clear();
@@ -1523,7 +1570,7 @@ public class OutboundHistoryForm : Form
 
         try
         {
-            ExportTrackingToExcel(selected, fieldKeys, filePath);
+            ExportTrackingToExcel(selected, fieldKeys, filePath, ResolveChannelName);
             _statusLabel.Text = $"송장번호 {selected.Count}건을 출력했습니다.";
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
@@ -1533,7 +1580,7 @@ public class OutboundHistoryForm : Form
         }
     }
 
-    private static void ExportTrackingToExcel(List<OutboundDetail> rows, HashSet<string> fieldKeys, string filePath)
+    private static void ExportTrackingToExcel(List<OutboundDetail> rows, HashSet<string> fieldKeys, string filePath, Func<string?, string> channelName)
     {
         ExcelLicense.Ensure();
         using var package = new ExcelPackage();
@@ -1555,7 +1602,7 @@ public class OutboundHistoryForm : Form
         {
             var d = rows[r];
             for (int c = 0; c < fields.Count; c++)
-                ws.Cells[r + 2, c + 1].Value = GetTrackingFieldValue(d, fields[c].Key);
+                ws.Cells[r + 2, c + 1].Value = GetTrackingFieldValue(d, fields[c].Key, channelName);
         }
 
         if (ws.Dimension != null)
@@ -1564,9 +1611,10 @@ public class OutboundHistoryForm : Form
         ExportHelper.SaveExcel(package, filePath);
     }
 
-    private static object? GetTrackingFieldValue(OutboundDetail d, string key) => key switch
+    private static object? GetTrackingFieldValue(OutboundDetail d, string key, Func<string?, string> channelName) => key switch
     {
-        "ChannelCode"  => d.ChannelCode,
+        // 화면과 같은 기준으로 코드가 아니라 채널명을 내보낸다(거래처에 보내는 파일이라 더 중요).
+        "ChannelCode"  => channelName(d.ChannelCode),
         "OrderNo"      => d.OrderNo,
         "Recipient"    => d.Recipient,
         "Address"      => d.Address,
