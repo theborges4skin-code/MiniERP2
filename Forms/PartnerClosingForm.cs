@@ -213,6 +213,9 @@ public class PartnerClosingForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "TotalQty", DataPropertyName = "TotalQty", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "공급가합", Name = "TotalSupply", DataPropertyName = "TotalSupply", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "TotalProfit", DataPropertyName = "TotalProfit", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            // 마진율은 이익/공급가라 VAT 별도·포함 어느 기준으로 봐도 같은 값이다(분자·분모가 같은
+            // 비율로 환산되므로) — 그래서 VAT 체크박스와 무관하게 문자열 한 벌로 표시한다.
+            new DataGridViewTextBoxColumn { HeaderText = "마진율", Name = "MarginRateText", DataPropertyName = "MarginRateText", Width = 65, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "상태", Name = "Status", DataPropertyName = "Status", Width = 70 },
             new DataGridViewTextBoxColumn { HeaderText = "미출고건", Name = "UnshippedCount", DataPropertyName = "UnshippedCount", Width = 60, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "경고", Name = "Warning", DataPropertyName = "Warning", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { ForeColor = Color.DarkOrange } },
@@ -282,7 +285,8 @@ public class PartnerClosingForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Qty", DataPropertyName = "Qty", Width = 55, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "단가", Name = "UnitPrice", DataPropertyName = "UnitPrice", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "Profit", DataPropertyName = "Profit", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
+            new DataGridViewTextBoxColumn { HeaderText = "이익", Name = "Profit", DataPropertyName = "Profit", Width = 80, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "마진율", Name = "MarginRateText", DataPropertyName = "MarginRateText", Width = 65, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         grid.CellEndEdit += OnLineGridCellEndEdit;
         grid.CellFormatting += OnLineGridCellFormatting;
@@ -1532,6 +1536,9 @@ public class PartnerClosingForm : Form
         public string ReconcileNote { get; } = source.ReconcileNote;
         public string Warning { get; } = BuildWarning(source);
 
+        /// <summary>거래처 전체 마진율 = 이익합 / 공급가합. 이익합에는 배부된 운임이 이미 빠져 있다.</summary>
+        public string MarginRateText { get; } = FormatMarginRate(source.TotalProfit, source.TotalSupply);
+
         private static string BuildWarning(PartnerClosingSummary s)
         {
             var parts = new List<string>();
@@ -1557,5 +1564,15 @@ public class PartnerClosingForm : Form
         public decimal UnitPrice { get; set; } = VatCalculator.ToDisplay(source.UnitPrice, vatExcluded);
         public decimal CostPrice { get; } = VatCalculator.ToDisplay(source.CostPrice, vatExcluded);
         public decimal Profit { get; } = VatCalculator.ToDisplay(source.Profit, vatExcluded);
+
+        /// <summary>라인 마진율 = 이익 / (수량 x 단가).</summary>
+        public string MarginRateText { get; } = FormatMarginRate(source.Profit, source.Qty * source.UnitPrice);
     }
+
+    /// <summary>
+    /// 마진율 표시 공통 규칙 — 공급가가 0이면(매출 없이 비용만 잡힌 건, 수량·단가 미입력 건 등)
+    /// 비율이 의미가 없으므로 "-"로 둔다. 소수점 한 자리까지 보여준다.
+    /// </summary>
+    private static string FormatMarginRate(decimal profit, decimal supply) =>
+        supply == 0 ? "-" : $"{profit / supply * 100:0.0}%";
 }
