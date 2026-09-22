@@ -90,6 +90,16 @@ public static class TrackingBackfillCheckFlow
             var existing = outboundRepository.GetExistingTrackingNos(allRows.Select(r => r.TrackingNo));
             foreach (var row in allRows) row.IsRegistered = existing.Contains(row.TrackingNo);
 
+            // 지난번에 사용자가 손으로 고쳐둔 라벨을 자동 판정 위에 덮어씌운다 — 같은 운송장 건은
+            // 파일을 몇 번을 다시 읽어도 정정된 분류를 유지한다.
+            var overrides = new TrackingLabelOverrideRepository().GetForTrackingNos(allRows.Select(r => r.TrackingNo));
+            foreach (var row in allRows)
+            {
+                if (!overrides.TryGetValue(row.TrackingNo, out var manualLabel)) continue;
+                row.Label = manualLabel;
+                row.IsManualLabel = true;
+            }
+
             var missingCount = allRows.Count(r => !r.IsRegistered);
             var fileWord = ofd.FileNames.Length > 1 ? $"파일 {ofd.FileNames.Length}개 " : "";
             onStatus?.Invoke($"운송장 {fileWord}{allRows.Count}건 중 미등록(누락 후보) {missingCount}건 — 뷰어 창에서 확인하세요.");

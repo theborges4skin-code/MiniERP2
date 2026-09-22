@@ -24,7 +24,14 @@ public class ChannelCskuForm : Form
     private readonly SettingsService _settingsService = new();
 
     private ComboBox _channelCombo = new();
+    private TextBox _searchBox = new();
     private ExcelLikeDataGridView _cskuGrid = new();
+
+    /// <summary>선택한 거래처의 CSKU 전체(검색 필터와 무관한 원본). 저장/내보내기/일괄수정은
+    /// 검색어가 걸려 있어도 항상 이 전체 목록을 기준으로 동작한다.</summary>
+    private List<ChannelSkuModel> _allCskus = new();
+
+    /// <summary>그리드에 실제로 바인딩된 목록(=검색 필터가 적용된 결과).</summary>
     private BindingList<ChannelSkuModel> _cskus = new();
     private Label _statusLabel = new();
 
@@ -58,13 +65,28 @@ public class ChannelCskuForm : Form
         {
             Dock = DockStyle.Fill,
             RowCount = 2,
-            RowStyles = { new RowStyle(SizeType.Absolute, 40), new RowStyle(SizeType.Percent, 100) },
+            RowStyles = { new RowStyle(SizeType.Absolute, 76), new RowStyle(SizeType.Percent, 100) },
         };
 
-        var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+        // 버튼이 한 줄에 다 들어가지 않아 오른쪽 끝이 잘려 보였다(사용자 신고) — 거래처/검색 줄과
+        // 기능버튼 줄로 나눠 2열로 배치한다.
+        var toolArea = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            RowStyles = { new RowStyle(SizeType.Absolute, 36), new RowStyle(SizeType.Absolute, 36) },
+        };
+        var filterRow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 3, 5, 0), Margin = Padding.Empty, WrapContents = false };
+        var buttonRow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 3), Margin = Padding.Empty, WrapContents = false };
 
         _channelCombo = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(SalesChannel.ChannelName) };
         _channelCombo.SelectedIndexChanged += (s, e) => LoadData();
+
+        _searchBox = new TextBox { Width = 220, PlaceholderText = "CSKU/마스터SKU/송장표시명/비고 검색" };
+        _searchBox.TextChanged += (s, e) => ApplyCskuFilter();
+        var btnClearSearch = new Button { Text = "지우기", Size = new Size(60, 26) };
+        btnClearSearch.Click += (s, e) => { _searchBox.Clear(); _searchBox.Focus(); };
 
         var btnAddCsku = new Button { Text = "CSKU 추가", Size = new Size(90, 30) };
         btnAddCsku.Click += OnAddCskuClick;
@@ -74,18 +96,28 @@ public class ChannelCskuForm : Form
         btnSave.Click += OnSaveClick;
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
         btnExport.Click += OnExportClick;
+        var btnBulkUpdate = new Button { Text = "엑셀로 일괄수정", Size = new Size(120, 30) };
+        btnBulkUpdate.Click += OnBulkUpdateClick;
         var btnFindOrphans = new Button { Text = "마스터SKU 미등록 CSKU 찾기", AutoSize = true };
         btnFindOrphans.Click += OnFindOrphanCskuClick;
 
-        toolStrip.Controls.Add(new Label { Text = "거래처:", AutoSize = true, Padding = new Padding(0, 7, 2, 0) });
-        toolStrip.Controls.Add(_channelCombo);
-        toolStrip.Controls.Add(btnAddCsku);
-        toolStrip.Controls.Add(btnDeleteCsku);
-        toolStrip.Controls.Add(btnSave);
-        toolStrip.Controls.Add(btnExport);
-        toolStrip.Controls.Add(btnFindOrphans);
-        _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 7, 0, 0), ForeColor = Color.DarkGreen };
-        toolStrip.Controls.Add(_statusLabel);
+        filterRow.Controls.Add(new Label { Text = "거래처:", AutoSize = true, Padding = new Padding(0, 6, 2, 0) });
+        filterRow.Controls.Add(_channelCombo);
+        filterRow.Controls.Add(new Label { Text = "🔍 검색:", AutoSize = true, Padding = new Padding(12, 6, 2, 0) });
+        filterRow.Controls.Add(_searchBox);
+        filterRow.Controls.Add(btnClearSearch);
+        _statusLabel = new Label { AutoSize = true, Padding = new Padding(15, 6, 0, 0), ForeColor = Color.DarkGreen };
+        filterRow.Controls.Add(_statusLabel);
+
+        buttonRow.Controls.Add(btnAddCsku);
+        buttonRow.Controls.Add(btnDeleteCsku);
+        buttonRow.Controls.Add(btnSave);
+        buttonRow.Controls.Add(btnExport);
+        buttonRow.Controls.Add(btnBulkUpdate);
+        buttonRow.Controls.Add(btnFindOrphans);
+
+        toolArea.Controls.Add(filterRow, 0, 0);
+        toolArea.Controls.Add(buttonRow, 0, 1);
 
         _cskuGrid = new ExcelLikeDataGridView
         {
@@ -124,7 +156,7 @@ public class ChannelCskuForm : Form
         SetupContextMenu();
         _cskuGrid.UserDeletingRow += OnUserDeletingRow;
 
-        mainLayout.Controls.Add(toolStrip, 0, 0);
+        mainLayout.Controls.Add(toolArea, 0, 0);
         mainLayout.Controls.Add(_cskuGrid, 0, 1);
         Controls.Add(mainLayout);
 
@@ -315,22 +347,56 @@ public class ChannelCskuForm : Form
         var channel = SelectedChannel;
         if (channel == null)
         {
+            _allCskus = new List<ChannelSkuModel>();
             _cskus = new BindingList<ChannelSkuModel>();
             _cskuGrid.DataSource = _cskus;
             return;
         }
 
-        _cskus = new BindingList<ChannelSkuModel>(_cskuRepository.GetAllByChannel(channel.ChannelCode));
-        _cskuGrid.DataSource = _cskus;
+        _allCskus = _cskuRepository.GetAllByChannel(channel.ChannelCode).ToList();
         _dirtyCostMskus.Clear();
-        _costPriceByMsku = _cskus
+        _costPriceByMsku = _allCskus
             .Select(c => c.Msku)
             .Where(m => !string.IsNullOrWhiteSpace(m))
             .Distinct()
             .ToDictionary(m => m, m => _itemRepository.GetBySku(m)?.CostPrice ?? 0m);
-        _statusLabel.Text = $"{channel.ChannelName} — CSKU {_cskus.Count}건";
-        _statusLabel.ForeColor = Color.DarkGreen;
+        ApplyCskuFilter();
     }
+
+    /// <summary>검색어에 맞는 CSKU만 그리드에 바인딩한다. 검색은 화면 표시만 걸러낼 뿐이라
+    /// 저장/내보내기/일괄수정은 계속 거래처 전체(<see cref="_allCskus"/>)를 대상으로 한다.</summary>
+    private void ApplyCskuFilter()
+    {
+        // 편집 중인 셀을 남긴 채 DataSource를 갈아끼우면 WinForms가 편집 값을 커밋/취소하지 못해
+        // InvalidOperationException으로 죽는다 — 먼저 편집을 끝낸다.
+        if (_cskuGrid.IsCurrentCellInEditMode) _cskuGrid.EndEdit();
+
+        var keyword = _searchBox.Text.Trim();
+        var matched = string.IsNullOrEmpty(keyword)
+            ? _allCskus.ToList()
+            : _allCskus.Where(c => MatchesKeyword(c, keyword)).ToList();
+
+        _cskus = new BindingList<ChannelSkuModel>(matched);
+        _cskuGrid.DataSource = _cskus;
+
+        var channelName = SelectedChannel?.ChannelName ?? "";
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = string.IsNullOrEmpty(keyword)
+            ? $"{channelName} — CSKU {_allCskus.Count}건"
+            : $"{channelName} — 검색 '{keyword}' {matched.Count}건 / 전체 {_allCskus.Count}건";
+    }
+
+    private static bool MatchesKeyword(ChannelSkuModel csku, string keyword)
+    {
+        return Contains(csku.CskuCode) || Contains(csku.Msku) || Contains(csku.InvoiceDisplayName)
+            || Contains(csku.Unit) || Contains(csku.Packing) || Contains(csku.Note);
+
+        bool Contains(string? value) => !string.IsNullOrEmpty(value) && value.Contains(keyword, StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    /// <summary>저장 대상 — 거래처 전체 목록에, 검색 중인 그리드에서 새로 추가된 행까지 합친 것.
+    /// 검색어가 걸려 있어도 화면 밖 행의 편집 내용이 누락되지 않게 한다.</summary>
+    private IEnumerable<ChannelSkuModel> EnumerateAllEditedCskus() => _allCskus.Concat(_cskus).Distinct();
 
     private void OnCskuGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
@@ -477,7 +543,7 @@ public class ChannelCskuForm : Form
             // "원가 정보 없음"으로 남는 유령 CSKU가 생긴다(2026-08-03 실사례: TEMP005 → 존재하지 않는
             // "mbc200x5"로 잘못 수정되어 저장됨). 다른 두 경로와 동일하게 여기서도 저장 전에 막는다.
             var unregisteredCskus = new List<string>();
-            foreach (var csku in _cskus)
+            foreach (var csku in EnumerateAllEditedCskus())
             {
                 if (string.IsNullOrWhiteSpace(csku.Msku)) continue; // 마스터SKU 없이는 저장 대상이 아님(신규 빈 행 등)
 
@@ -601,20 +667,26 @@ public class ChannelCskuForm : Form
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("ChannelSKU");
 
-            string[] headers = { "CSKU 코드", "마스터SKU", "송장표시명", "납품가", "단위", "포장단위", "비고" };
+            // "CSKU 코드(변경 전)"은 [엑셀로 일괄수정]이 행을 식별하는 전용 열이다 — 이 열은 그대로
+            // 두고 "CSKU 코드" 열만 고치면 재가져오기 시 이름변경으로 인식된다(둘 다 지우면 매칭 불가).
+            string[] headers = { "CSKU 코드(변경 전)", "CSKU 코드", "마스터SKU", "송장표시명", "납품가", "단위", "포장단위", "비고" };
             for (var i = 0; i < headers.Length; i++) worksheet.Cells[1, i + 1].Value = headers[i];
 
-            for (var i = 0; i < _cskus.Count; i++)
+            // 검색어와 무관하게 거래처 전체를 내보낸다([엑셀로 일괄수정]의 왕복 대상이 되는 파일이라
+            // 화면에 걸린 필터 때문에 일부만 빠져나가면 안 된다).
+            var exportTargets = _allCskus;
+            for (var i = 0; i < exportTargets.Count; i++)
             {
-                var csku = _cskus[i];
+                var csku = exportTargets[i];
                 var row = i + 2;
                 worksheet.Cells[row, 1].Value = csku.CskuCode;
-                worksheet.Cells[row, 2].Value = csku.Msku;
-                worksheet.Cells[row, 3].Value = csku.InvoiceDisplayName;
-                worksheet.Cells[row, 4].Value = (double)csku.SupplyPrice;
-                worksheet.Cells[row, 5].Value = csku.Unit;
-                worksheet.Cells[row, 6].Value = csku.Packing;
-                worksheet.Cells[row, 7].Value = csku.Note;
+                worksheet.Cells[row, 2].Value = csku.CskuCode;
+                worksheet.Cells[row, 3].Value = csku.Msku;
+                worksheet.Cells[row, 4].Value = csku.InvoiceDisplayName;
+                worksheet.Cells[row, 5].Value = (double)csku.SupplyPrice;
+                worksheet.Cells[row, 6].Value = csku.Unit;
+                worksheet.Cells[row, 7].Value = csku.Packing;
+                worksheet.Cells[row, 8].Value = csku.Note;
             }
             if (worksheet.Dimension != null) worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
 
@@ -624,6 +696,151 @@ public class ChannelCskuForm : Form
         catch (Exception ex)
         {
             MessageBox.Show($"엑셀 내보내기 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// [엑셀로 내보내기]로 뽑은 파일을 값만 고쳐서(CSKU 코드/마스터SKU 변경 포함) 다시 불러와
+    /// 대량수정한다. 행 식별은 편집 대상인 "CSKU 코드"가 아니라 별도의 "CSKU 코드(변경 전)" 열로
+    /// 하므로 코드 자체를 바꿔도 매칭된다. 새 CSKU 등록은 이 흐름의 대상이 아니며([CSKU 추가] 전용),
+    /// 원가/개별관리는 마스터 원가 변경의 파급 효과가 커서(§4.5) 여기서 다루지 않고 그리드에서 직접
+    /// 편집하게 남겨둔다. MasterSkuForm의 [제조원가 업데이트](읽기→계획→검토창→반영) 흐름과 같은
+    /// 관례를 따른다.
+    /// </summary>
+    private void OnBulkUpdateClick(object? sender, EventArgs e)
+    {
+        var channel = SelectedChannel;
+        if (channel == null)
+        {
+            MessageBox.Show("거래처를 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            Title = "일괄수정할 CSKU 엑셀 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("ChannelCskuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            using var package = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+            if (package == null) return;
+
+            var worksheet = package.Workbook.Worksheets[0];
+            if (worksheet.Dimension == null)
+            {
+                MessageBox.Show("가져올 유효한 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[1, col].Value?.ToString();
+                if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
+                    headerToIndexMap[header] = col;
+            }
+
+            if (!headerToIndexMap.TryGetValue("CSKU 코드", out var cskuCodeCol) || !headerToIndexMap.TryGetValue("마스터SKU", out var mskuCol))
+            {
+                MessageBox.Show("'CSKU 코드', '마스터SKU' 열이 있는 [엑셀로 내보내기] 형식의 파일이어야 합니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            // "CSKU 코드(변경 전)"이 행 식별용 원본 열이다 — 이 열로 매칭해야 "CSKU 코드" 자체를 고친
+            // (이름변경) 행도 찾을 수 있다. 이 열이 없는 옛날 형식 파일은 "CSKU 코드"를 그대로 식별자로
+            // 쓴다(이 경우 코드 자체를 바꾸는 이름변경은 지원되지 않고 다른 필드만 반영된다).
+            var originalCskuCodeCol = headerToIndexMap.GetValueOrDefault("CSKU 코드(변경 전)");
+            var invoiceNameCol = headerToIndexMap.GetValueOrDefault("송장표시명");
+            var supplyPriceCol = headerToIndexMap.GetValueOrDefault("납품가");
+            var unitCol = headerToIndexMap.GetValueOrDefault("단위");
+            var packingCol = headerToIndexMap.GetValueOrDefault("포장단위");
+            var noteCol = headerToIndexMap.GetValueOrDefault("비고");
+
+            var imported = new List<ChannelCskuImportRow>();
+            for (var row = 2; row <= worksheet.Dimension.End.Row; row++)
+            {
+                var newCskuCode = worksheet.Cells[row, cskuCodeCol].Value?.ToString();
+                var originalCskuCode = originalCskuCodeCol > 0 ? worksheet.Cells[row, originalCskuCodeCol].Value?.ToString() : newCskuCode;
+                if (string.IsNullOrWhiteSpace(originalCskuCode) && string.IsNullOrWhiteSpace(newCskuCode)) continue;
+
+                decimal.TryParse(supplyPriceCol > 0 ? worksheet.Cells[row, supplyPriceCol].Value?.ToString() : null, out var supplyPrice);
+
+                imported.Add(new ChannelCskuImportRow(
+                    string.IsNullOrWhiteSpace(originalCskuCode) ? newCskuCode ?? string.Empty : originalCskuCode,
+                    newCskuCode ?? string.Empty,
+                    worksheet.Cells[row, mskuCol].Value?.ToString() ?? string.Empty,
+                    invoiceNameCol > 0 ? worksheet.Cells[row, invoiceNameCol].Value?.ToString() : null,
+                    supplyPrice,
+                    (unitCol > 0 ? worksheet.Cells[row, unitCol].Value?.ToString() : null) ?? "kg",
+                    packingCol > 0 ? worksheet.Cells[row, packingCol].Value?.ToString() : null,
+                    noteCol > 0 ? worksheet.Cells[row, noteCol].Value?.ToString() : null));
+            }
+
+            if (imported.Count == 0)
+            {
+                MessageBox.Show("가져올 유효한 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var existingByCskuCode = _allCskus.ToDictionary(c => c.CskuCode, StringComparer.OrdinalIgnoreCase);
+            var masterBySku = _itemRepository.GetAll().ToDictionary(i => i.Sku, StringComparer.OrdinalIgnoreCase);
+            var plan = ChannelCskuBulkUpdatePlanner.Build(imported, existingByCskuCode, masterBySku);
+
+            if (plan.Changed.Count == 0)
+            {
+                MessageBox.Show(
+                    $"현재 값과 다른 항목이 없습니다.\n(동일 {plan.UnchangedCount}건, 현재 거래처에 없는 CSKU {plan.NotFoundCount}건, " +
+                    $"마스터SKU 미기재/미등록 {plan.InvalidMskuCount}건, CSKU 코드 충돌 {plan.CodeConflictCount}건)",
+                    "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var reviewDialog = new ChannelCskuBulkUpdateReviewDialog(
+                plan.Changed, plan.UnchangedCount, plan.NotFoundCount, plan.InvalidMskuCount, plan.DuplicateCskuCount, plan.CodeConflictCount);
+            if (FormManager.ShowDialogSafe(reviewDialog, this) != DialogResult.OK) return;
+
+            // 코드가 바뀌는 행은 기본키 변경이라 일반 Upsert로 처리할 수 없다 — [마스터SKU 지정/변경]과
+            // 같이 RenameCsku로 반영하고, 그 옛 코드를 가리키던 매핑 규칙도 함께 옮긴다.
+            var failures = new List<string>();
+            foreach (var row in reviewDialog.SelectedRows)
+            {
+                try
+                {
+                    if (row.CodeChanged)
+                    {
+                        _cskuRepository.RenameCsku(channel.ChannelCode, row.Existing.CskuCode, row.ToUpdatedModel());
+                        _mappingRepository.RetargetRules(channel.ChannelCode, row.Existing.CskuCode, row.NewCskuCode);
+                    }
+                    else
+                    {
+                        _cskuRepository.Upsert(row.ToUpdatedModel(), "엑셀 일괄수정");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{row.Existing.CskuCode}: {ex.Message}");
+                }
+            }
+
+            LoadData();
+            var appliedCount = reviewDialog.SelectedRows.Count - failures.Count;
+            if (failures.Count == 0)
+            {
+                _statusLabel.ForeColor = Color.DarkGreen;
+                _statusLabel.Text = $"엑셀에서 {appliedCount}건을 반영했습니다. ({DateTime.Now:HH:mm:ss})";
+            }
+            else
+            {
+                _statusLabel.ForeColor = Color.Red;
+                _statusLabel.Text = $"{appliedCount}건 반영, {failures.Count}건 실패: {string.Join("; ", failures)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"엑셀 파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

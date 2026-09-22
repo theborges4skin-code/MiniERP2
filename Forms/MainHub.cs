@@ -15,6 +15,8 @@ public class MainHub : Form
     private readonly SettlementRepository _settlementRepository = new();
     private readonly AutoOrderInboxRepository _autoOrderInboxRepository = new();
     private readonly AutoOrderSettingsService _autoOrderSettingsService = new();
+    private readonly MenuUsageLogService _menuUsageLogService = new();
+    private readonly DbBackupService _dbBackupService = new();
 
     private Label _summaryLabel = new();
     private System.Windows.Forms.Timer _autoOrderPollTimer = new();
@@ -22,6 +24,12 @@ public class MainHub : Form
     private TextBox _searchBox = new();
     private ListBox _searchResultsBox = new();
     private List<FeatureIndexEntry> _searchMatches = new();
+
+    private readonly CostSearchRepository _costSearchRepository = new();
+    private TextBox _costSearchBox = new();
+    private ListView _costSearchResults = new();
+    // 타이핑 한 글자마다 DB를 때리지 않도록, 입력이 잠깐 멈춘 뒤에 한 번만 조회한다.
+    private readonly System.Windows.Forms.Timer _costSearchDebounce = new() { Interval = 220 };
 
     public MainHub()
     {
@@ -37,7 +45,11 @@ public class MainHub : Form
         Size = new Size(1200, 800);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var groups = BuildMenuGroups();
+        var groups = BuildMenuGroups()
+            .Select(g => (g.GroupTitle, Actions: g.Actions
+                .Select(a => (a.Text, Handler: WrapWithUsageTracking(a.Text, a.Handler), a.Shortcut))
+                .ToList()))
+            .ToList();
         var contentPanel = CreateContentPanel(groups);
         var menuStrip = BuildMenuStrip(groups);
 
@@ -50,12 +62,53 @@ public class MainHub : Form
         // 검색 결과 목록은 레이아웃 공간을 고정으로 차지하지 않도록 Form에 직접 얹은 뒤(절대좌표),
         // 입력이 있을 때만 검색창 바로 아래에 위치를 계산해 띄운다(자동완성 드롭다운 흉내).
         Controls.Add(_searchResultsBox);
+        Controls.Add(_costSearchResults);
 
         KeyPreview = true;
         KeyDown += OnMainHubKeyDown;
 
         Activated += (s, e) => RefreshSummary();
-        FormClosing += (s, e) => _autoOrderPollTimer.Stop();
+        FormClosing += (s, e) =>
+        {
+            _autoOrderPollTimer.Stop();
+            _costSearchDebounce.Stop();
+            TryBackupOnExit();
+        };
+    }
+
+    /// <summary>
+    /// 종료 시점 DB 스냅샷을 하루 1개(날짜 바뀌면 새 파일, 같은 날엔 덮어씀, 2개월 보관)로
+    /// 자동 백업한다. 실패해도(디스크 꽉참 등) 프로그램 종료 자체를 막으면 안 되므로 조용히
+    /// 무시한다 — 이 백업은 어디까지나 보너스이지, 종료를 블로킹할 만큼 중요하지 않다.
+    /// 매월 1일 종료 시에는 추가로 "이번 달 전체백업"을 물어보고, 예를 선택하면 일일백업과는
+    /// 별도 파일(ERP_MonthlyBackup_YYYYMM.sqlite)로 한 번 더 백업해둔다.
+    /// </summary>
+    private void TryBackupOnExit()
+    {
+        try
+        {
+            _dbBackupService.CreateOrUpdateDailyBackup();
+        }
+        catch
+        {
+            // 백업 실패는 조용히 무시 — 종료를 막지 않는다.
+        }
+
+        if (DateTime.Now.Day != 1 || !_dbBackupService.NeedsMonthlyBackup()) return;
+
+        var result = MessageBox.Show(
+            "매월 1일 전체백업 — 이번 달 전체 백업을 하시겠습니까?\n(일일 자동백업과는 별도 파일로 보관됩니다.)",
+            "월간 전체백업", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (result != DialogResult.Yes) return;
+
+        try
+        {
+            _dbBackupService.CreateMonthlyBackup();
+        }
+        catch
+        {
+            // 백업 실패는 조용히 무시 — 종료를 막지 않는다.
+        }
     }
 
     /// <summary>
@@ -65,6 +118,13 @@ public class MainHub : Form
     /// ToolStripMenuItem.ShortcutKeys에 등록하는 것만으로 전역 단축키로 동작한다(별도 키 후킹 불필요).
     /// "레거시 데이터 가져오기"는 사용 빈도가 낮아 단축키를 배정하지 않았다(null).
     /// </summary>
+    /// <summary>메뉴 클릭 시 원래 동작을 실행하기 전에 사용 횟수를 먼저 기록한다(<see cref="MenuUsageLogService"/>).</summary>
+    private EventHandler WrapWithUsageTracking(string label, EventHandler handler) => (s, e) =>
+    {
+        _menuUsageLogService.RecordUse(label);
+        handler(s, e);
+    };
+
     private List<(string GroupTitle, List<(string Text, EventHandler Handler, Keys? Shortcut)> Actions)> BuildMenuGroups() => new()
     {
         ("발주/배송", new()
@@ -113,6 +173,7 @@ public class MainHub : Form
         {
             ("데이터 관리", (s, e) => FormManager.Show<DataManagementForm>(), Keys.Control | Keys.D8),
             ("레거시 데이터 가져오기", OnLegacyImportClick, null),
+            ("메뉴 사용 통계", (s, e) => FormManager.Show<MenuUsageStatsForm>(), null),
         }),
     };
 
@@ -143,7 +204,7 @@ public class MainHub : Form
             ColumnCount = 1,
             Padding = new Padding(20),
         };
-        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));  // 기능 검색 + 빠른 원가검색 2줄
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));
         outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -180,6 +241,10 @@ public class MainHub : Form
     /// </summary>
     private Control BuildSearchPanel()
     {
+        var stack = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
 
         panel.Controls.Add(new Label { Text = "기능 검색(Ctrl+K):", AutoSize = true, Padding = new Padding(0, 9, 4, 0) });
@@ -200,6 +265,67 @@ public class MainHub : Form
         _searchResultsBox = new ListBox { Width = 460, Height = 240, Visible = false, IntegralHeight = false };
         _searchResultsBox.Click += (_, _) => ActivateSelectedSearchResult();
         _searchResultsBox.KeyDown += OnSearchResultsKeyDown;
+
+        stack.Controls.Add(panel, 0, 0);
+        stack.Controls.Add(BuildCostSearchRow(), 0, 1);
+        return stack;
+    }
+
+    /// <summary>
+    /// 빠른 원가검색. 마스터SKU(MSKU)와 채널별 CSKU를 코드·품목명으로 한 번에 찾아 적용 원가와
+    /// 그 원가의 최종 수정일을 바로 보여준다. 원가를 확인하려고 마스터DB/CSKU 창을 따로 열지
+    /// 않아도 되게 하는 조회 전용 기능이라, 결과를 눌러도 값이 바뀌지는 않는다.
+    /// </summary>
+    private Control BuildCostSearchRow()
+    {
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+
+        panel.Controls.Add(new Label { Text = "빠른 원가검색(Ctrl+Shift+K):", AutoSize = true, Padding = new Padding(0, 9, 4, 0) });
+
+        _costSearchBox = new TextBox { Width = 420, Margin = new Padding(0, 5, 0, 0) };
+        _costSearchBox.TextChanged += OnCostSearchTextChanged;
+        _costSearchBox.KeyDown += OnCostSearchBoxKeyDown;
+        panel.Controls.Add(_costSearchBox);
+
+        panel.Controls.Add(new Label
+        {
+            Text = $"MSKU·CSKU 코드나 품목명으로 검색 — 원가({CostVatBasisLabel})와 최종 수정일을 보여줍니다. Esc로 닫기.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Padding = new Padding(10, 11, 0, 0),
+        });
+
+        _costSearchDebounce.Tick += (_, _) =>
+        {
+            _costSearchDebounce.Stop();
+            RunCostSearch();
+        };
+
+        _costSearchResults = new ListView
+        {
+            Width = 1000,
+            Height = 260,
+            Visible = false,
+            View = View.Details,
+            FullRowSelect = true,
+            GridLines = true,
+            MultiSelect = false,
+            HideSelection = false,
+            ShowItemToolTips = true,
+        };
+        _costSearchResults.Columns.Add("구분", 54);
+        _costSearchResults.Columns.Add("코드", 150);
+        _costSearchResults.Columns.Add("품목명", 200);
+        _costSearchResults.Columns.Add("채널", 100);
+        // 마스터DB 원가는 VAT포함 기준이다(docs/PLAN.md §온라인 정산 — 아마존 계산에서 ÷1.1로
+        // 공급가 환산). 보는 사람이 기준을 헷갈리지 않도록 헤더에 기준을 박고, 자주 쓰는
+        // VAT별도 환산값(÷1.1)도 같이 보여준다.
+        _costSearchResults.Columns.Add($"원가({CostVatBasisLabel})", 110, HorizontalAlignment.Right);
+        _costSearchResults.Columns.Add("VAT별도 환산(÷1.1)", 120, HorizontalAlignment.Right);
+        _costSearchResults.Columns.Add("단위", 44);
+        _costSearchResults.Columns.Add("원가 출처", 96);
+        _costSearchResults.Columns.Add("최종 수정일", 140);
+        _costSearchResults.KeyDown += OnCostSearchResultsKeyDown;
 
         return panel;
     }
@@ -231,6 +357,8 @@ public class MainHub : Form
             _searchResultsBox.SelectedIndex = 0;
         }
 
+        // 원가검색 결과와 자리가 겹치므로 둘 중 하나만 떠 있게 한다.
+        HideCostSearchResults();
         _searchResultsBox.Location = PointToClient(_searchBox.PointToScreen(new Point(0, _searchBox.Height + 2)));
         _searchResultsBox.Visible = true;
         _searchResultsBox.BringToFront();
@@ -278,14 +406,175 @@ public class MainHub : Form
         var entry = _searchMatches[index];
         HideSearchResults();
         _searchBox.Clear();
+        // 하위 버튼(Path != null)은 화면 안내에 그치고 자동 클릭하지 않으므로, 최상위 화면 진입만 기록한다.
+        if (entry.Path is null) _menuUsageLogService.RecordUse(entry.TopLabel);
         entry.Open();
     }
 
     private void HideSearchResults() => _searchResultsBox.Visible = false;
 
+    /// <summary>마스터DB 원가(ItemTable.CostPrice)와 CSKU 개별원가가 모두 따르는 VAT 기준.</summary>
+    private const string CostVatBasisLabel = "VAT포함";
+
+    /// <summary>기능 검색이나 Ctrl+Shift+K로 "빠른 원가검색"을 고르면 그 입력칸으로 보내준다(별도 창이 없는 기능).</summary>
+    public void FocusCostSearch()
+    {
+        _costSearchBox.Focus();
+        _costSearchBox.SelectAll();
+    }
+
+    private void OnCostSearchTextChanged(object? sender, EventArgs e)
+    {
+        _costSearchDebounce.Stop();
+        if (_costSearchBox.Text.Trim().Length == 0)
+        {
+            HideCostSearchResults();
+            return;
+        }
+        _costSearchDebounce.Start();
+    }
+
+    private void RunCostSearch()
+    {
+        var query = _costSearchBox.Text.Trim();
+        if (query.Length == 0)
+        {
+            HideCostSearchResults();
+            return;
+        }
+
+        List<CostSearchResult> matches;
+        try
+        {
+            matches = _costSearchRepository.Search(query);
+        }
+        catch (Exception ex)
+        {
+            // 조회 실패로 메인 화면이 죽으면 안 되므로 결과 자리에 사유만 적고 넘어간다.
+            ShowCostSearchMessage($"원가 조회 실패: {ex.Message}");
+            return;
+        }
+
+        _costSearchResults.BeginUpdate();
+        _costSearchResults.Items.Clear();
+        if (matches.Count == 0)
+        {
+            _costSearchResults.Items.Add(new ListViewItem(new[] { "", "검색 결과가 없습니다.", "", "", "", "", "", "", "" }));
+        }
+        else
+        {
+            foreach (var match in matches) _costSearchResults.Items.Add(BuildCostSearchItem(match));
+        }
+        _costSearchResults.EndUpdate();
+
+        ShowCostSearchResults();
+    }
+
+    private ListViewItem BuildCostSearchItem(CostSearchResult match)
+    {
+        var cost = match.CostPrice.HasValue ? match.CostPrice.Value.ToString("N0") : "-";
+        // VAT별도 환산은 참고용 계산값이라 원 단위로 반올림해 보여준다(마감/정산 계산식과 같은 ÷1.1).
+        var costExclVat = match.CostPrice.HasValue
+            ? Math.Round(match.CostPrice.Value / 1.1m, 0, MidpointRounding.AwayFromZero).ToString("N0")
+            : "-";
+        var source = match.IsCsku
+            ? (match.IsCostOverride ? "CSKU 개별원가" : "마스터 연동")
+            : "마스터DB";
+        var changedAt = match.CostChangedAt.HasValue
+            ? match.CostChangedAt.Value.ToString("yyyy-MM-dd HH:mm")
+            : "변경 이력 없음";
+
+        var item = new ListViewItem(new[]
+        {
+            match.IsCsku ? "CSKU" : "MSKU",
+            match.Code,
+            match.Name,
+            match.ChannelName ?? "",
+            cost,
+            costExclVat,
+            match.Unit,
+            source,
+            changedAt,
+        });
+
+        if (!match.CostPrice.HasValue)
+        {
+            // CSKU가 마스터SKU에 매칭되지 않아 원가를 알 수 없는 줄 — 0원으로 오해하지 않도록 표시를 달리한다.
+            item.ForeColor = Color.Firebrick;
+            item.SubItems[7].Text = match.IsCsku ? "마스터SKU 없음" : "원가 없음";
+        }
+        else if (match.IsCsku && !match.IsCostOverride)
+        {
+            item.SubItems[7].ForeColor = SystemColors.GrayText;
+        }
+
+        item.ToolTipText = match.IsCsku
+            ? $"CSKU {match.Code} → 마스터SKU {match.Msku}"
+            : $"마스터SKU {match.Code}";
+        return item;
+    }
+
+    private void ShowCostSearchMessage(string message)
+    {
+        _costSearchResults.BeginUpdate();
+        _costSearchResults.Items.Clear();
+        _costSearchResults.Items.Add(new ListViewItem(new[] { "", message, "", "", "", "", "", "", "" }));
+        _costSearchResults.EndUpdate();
+        ShowCostSearchResults();
+    }
+
+    private void ShowCostSearchResults()
+    {
+        // 기능 검색 결과와 자리가 겹치므로 둘 중 하나만 떠 있게 한다.
+        HideSearchResults();
+        _costSearchResults.Location = PointToClient(_costSearchBox.PointToScreen(new Point(0, _costSearchBox.Height + 2)));
+        _costSearchResults.Visible = true;
+        _costSearchResults.BringToFront();
+    }
+
+    private void HideCostSearchResults()
+    {
+        _costSearchDebounce.Stop();
+        _costSearchResults.Visible = false;
+    }
+
+    private void OnCostSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
+        {
+            HideCostSearchResults();
+        }
+        else if (e.KeyCode == Keys.Enter)
+        {
+            // 디바운스를 기다리지 않고 지금 바로 조회한다.
+            _costSearchDebounce.Stop();
+            RunCostSearch();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Down && _costSearchResults.Visible && _costSearchResults.Items.Count > 0)
+        {
+            _costSearchResults.Focus();
+            _costSearchResults.Items[0].Selected = true;
+            e.Handled = true;
+        }
+    }
+
+    private void OnCostSearchResultsKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.Escape) return;
+        HideCostSearchResults();
+        _costSearchBox.Focus();
+    }
+
     private void OnMainHubKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Control && e.KeyCode == Keys.K)
+        if (e.Control && e.Shift && e.KeyCode == Keys.K)
+        {
+            FocusCostSearch();
+            e.Handled = true;
+        }
+        else if (e.Control && e.KeyCode == Keys.K)
         {
             _searchBox.Focus();
             _searchBox.SelectAll();

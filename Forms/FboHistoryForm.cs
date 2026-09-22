@@ -30,6 +30,8 @@ public class FboHistoryForm : Form
     private TextBox _searchBox = new();
     private DataGridView _grid = new();
     private Label _statusLabel = new();
+    private ContextMenuStrip _gridContextMenu = new();
+    private ToolStripMenuItem _bulkTrackingMenuItem = new();
     private List<FboChannelConfigModel> _channels = [];
     private List<FboHistoryRow> _rows = [];
 
@@ -154,6 +156,16 @@ public class FboHistoryForm : Form
         // 상세보기에서만 "이송장번호" 셀을 직접 입력할 수 있게 한다(Render()에서 그리드/열별
         // ReadOnly를 뷰에 맞게 재조정함). 파일로 불러오는 대신 소량 건을 바로 고치는 용도.
         _grid.CellEndEdit += OnTrackingNoCellEndEdit;
+        // 용차 발송처럼 여러 박스에 같은 운송장번호(문구 포함)를 넣어야 할 때, 셀을 한 줄씩
+        // 편집하지 않고 선택한 행 전체에 한 번에 적용한다(사용자 요청, 2026-09-11).
+        _bulkTrackingMenuItem = new ToolStripMenuItem("선택 영역 운송장번호 일괄 등록");
+        _bulkTrackingMenuItem.Click += OnBulkTrackingClick;
+        _gridContextMenu = new ContextMenuStrip();
+        _gridContextMenu.Items.Add(_bulkTrackingMenuItem);
+        _gridContextMenu.Opening += (s, e) =>
+            _bulkTrackingMenuItem.Enabled = _viewModeCombo.SelectedIndex == ViewModeDetail && _grid.SelectedRows.Count > 0;
+        _grid.ContextMenuStrip = _gridContextMenu;
+        _grid.CellMouseDown += OnGridCellMouseDown;
 
         _statusLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
 
@@ -522,6 +534,84 @@ public class FboHistoryForm : Form
                 ? $"'{fboNo}' 박스{boxSeq}의 이송장번호를 지웠습니다."
                 : $"'{fboNo}' 박스{boxSeq}의 이송장번호를 '{newValue}'(으)로 입력했습니다.";
         });
+    }
+
+    /// <summary>오른클릭한 행이 선택 밖이면 그 행 하나만 선택해 컨텍스트 메뉴가 "지금 가리킨 행"에
+    /// 대해 동작하게 한다. 이미 여러 행을 골라둔 상태의 오른클릭은 그 선택을 그대로 보존한다.</summary>
+    private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
+
+        var row = _grid.Rows[e.RowIndex];
+        if (row.Selected) return;
+
+        _grid.ClearSelection();
+        row.Selected = true;
+        // ItemSeq처럼 숨긴 열을 CurrentCell로 지정하면 예외가 나므로 보이는 열로 맞춘다.
+        var column = e.ColumnIndex >= 0 && _grid.Columns[e.ColumnIndex].Visible
+            ? _grid.Columns[e.ColumnIndex]
+            : _grid.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
+        if (column != null) _grid.CurrentCell = row.Cells[column.Index];
+    }
+
+    /// <summary>선택한 라인들이 속한 박스 전부에 같은 운송장번호를 한 번에 등록한다(용차 발송처럼
+    /// 박스 수십 건에 동일한 값을 넣어야 하는 경우). 운송장번호는 박스 단위 필드라 같은 박스의
+    /// CSKU 라인을 여러 줄 골라도 박스 1건으로 묶어 처리한다.</summary>
+    private void OnBulkTrackingClick(object? sender, EventArgs e)
+    {
+        if (_viewModeCombo.SelectedIndex != ViewModeDetail)
+        {
+            MessageBox.Show("운송장번호 일괄 등록은 '상세보기'에서만 가능합니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var boxes = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => (FboNo: r.Cells["FboNo"].Value?.ToString(), BoxSeq: r.Cells["BoxSeq"].Value?.ToString()))
+            .Where(x => !string.IsNullOrWhiteSpace(x.FboNo) && int.TryParse(x.BoxSeq, out _))
+            .Select(x => (FboNo: x.FboNo!, BoxSeq: int.Parse(x.BoxSeq!)))
+            .Distinct()
+            .ToList();
+        if (boxes.Count == 0)
+        {
+            MessageBox.Show("대상 라인을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new SimpleTextPromptDialog("운송장번호 일괄 등록", $"선택한 박스 {boxes.Count}건에 등록할 운송장번호:");
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var value = dialog.Value;
+        if (string.IsNullOrEmpty(value))
+        {
+            // 빈 값은 셀 직접편집과 같은 의미(등록 취소 → '대기')로 두되, 일괄이라 되돌리기 부담이
+            // 크므로 한 번 더 확인한다.
+            var confirmClear = MessageBox.Show(
+                $"선택한 박스 {boxes.Count}건의 운송장번호를 모두 지우고 '대기' 상태로 되돌립니다.\n계속하시겠습니까?",
+                "운송장번호 지우기", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (confirmClear != DialogResult.Yes) return;
+        }
+        else
+        {
+            var alreadyRegistered = boxes.Count(b => !string.IsNullOrEmpty(
+                _rows.FirstOrDefault(r => r.FboNo == b.FboNo && r.BoxSeq == b.BoxSeq)?.TrackingNo));
+            if (alreadyRegistered > 0)
+            {
+                var confirmOverwrite = MessageBox.Show(
+                    $"선택한 박스 {boxes.Count}건 중 {alreadyRegistered}건은 이미 운송장번호가 등록되어 있습니다.\n'{value}'(으)로 덮어쓸까요?",
+                    "덮어쓰기 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (confirmOverwrite != DialogResult.Yes) return;
+            }
+        }
+
+        foreach (var (fboNo, boxSeq) in boxes)
+        {
+            _orderRepository.SetTrackingNo(fboNo, boxSeq, value);
+        }
+
+        RunQuery();
+        _statusLabel.Text = string.IsNullOrEmpty(value)
+            ? $"박스 {boxes.Count}건의 운송장번호를 지웠습니다."
+            : $"박스 {boxes.Count}건에 운송장번호 '{value}'을(를) 일괄 등록했습니다.";
     }
 
     private void RunQuery()

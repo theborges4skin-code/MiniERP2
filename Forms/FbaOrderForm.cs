@@ -883,15 +883,12 @@ public class FbaOrderForm : Form
             var result = new FbaTrackingImporter(_orderRepository).Import(ofd.FileName);
             if (!result.Success)
             {
-                var msg = "미매칭/불일치가 있어 아무것도 반영되지 않았습니다.\n\n";
-                if (result.UnmatchedRows.Count > 0) msg += $"[미매칭]\n{string.Join("\n", result.UnmatchedRows)}\n\n";
-                if (result.InconsistentBoxes.Count > 0) msg += $"[운송장번호 불일치]\n{string.Join("\n", result.InconsistentBoxes)}";
-                MessageBox.Show(msg, "운송장 불러오기 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(result.BuildFailureMessage(), "운송장 불러오기 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             RefreshTrackingFromDb();
-            _summaryLabel.Text = $"운송장번호 {result.AppliedCount}건을 적용했습니다.";
+            _summaryLabel.Text = result.BuildSuccessSummary();
         }
         catch (Exception ex)
         {

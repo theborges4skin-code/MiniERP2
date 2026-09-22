@@ -36,6 +36,12 @@ public class OfsForm : Form
     private string? _lastChannelCode;
 
     /// <summary>
+    /// "중복" 열 판정에 쓰는 기존 발주/출고 이력 인덱스(파일 로드 때 채워짐). 그리드에서 SKU를
+    /// 고쳤을 때 DB를 다시 읽지 않고 그 줄만 다시 판정하는 데 쓴다.
+    /// </summary>
+    private OrderDuplicateChecker.HistoryIndex? _duplicateHistoryIndex;
+
+    /// <summary>
     /// 지금까지 불러온 발주 파일의 원본 행(엑셀) 개수 누적치. _orders.Clear() 시 함께 초기화되며,
     /// 저장(발주확정) 시 실제 발주확정된 건수와 비교해 보여주는 용도로만 쓴다(품절 등으로 일부
     /// 품목이 발주확정되지 않는 경우가 있어 완전히 같을 필요는 없음 — 사용자가 한 번 더 확인하도록
@@ -70,8 +76,11 @@ public class OfsForm : Form
     private readonly List<List<OfsOrderItem>> _previewUndoStack = new();
     private const int MaxPreviewUndoSteps = 5;
 
-    // 툴바 채널 콤보 — 수동 주문 추가의 기준 채널. 파일 로드 시에도 자동 동기화된다.
-    private ComboBox _channelCombo = new();
+    // 툴바 채널 선택 버튼 — 수동 주문 추가의 기준 채널. 파일 로드 시에도 자동 동기화된다.
+    // 채널이 많아 드롭다운으로는 구분이 어렵다는 지적에 따라, 그룹·즐겨찾기·검색이 있는
+    // 채널 선택 팝업(SelectChannelDialog)을 띄우는 버튼으로 바꿨다(파일 로드와 같은 창).
+    private Button _channelButton = new();
+    private Models.SalesChannel? _selectedChannel;
     private ManualOrderDialog? _manualOrderDialog;
 
     public OfsForm()
@@ -105,24 +114,22 @@ public class OfsForm : Form
         toolStripContainer.Controls.Add(toolStrip, 0, 0);
         toolStripContainer.Controls.Add(toolStripRow2, 0, 1);
 
-        // 채널 콤보 — 수동 주문 추가의 기준 채널. 파일 로드 시 자동 동기화.
+        // 채널 선택 버튼 — 수동 주문 추가의 기준 채널. 파일 로드 시 자동 동기화.
         var lblChannel = new Label
         {
             Text = "채널:",
             AutoSize = true,
             Margin = new Padding(2, 9, 2, 0)
         };
-        _channelCombo = new ComboBox
+        _channelButton = new Button
         {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 160,
-            Margin = new Padding(0, 6, 12, 0)
+            Size = new Size(190, 30),
+            Margin = new Padding(0, 5, 12, 0),
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true
         };
-        var channels = new Database.SalesChannelRepository().GetAll();
-        _channelCombo.DisplayMember = "ChannelName";
-        _channelCombo.DataSource = channels;
-        _channelCombo.SelectedIndex = -1;
-        _channelCombo.SelectedIndexChanged += OnChannelComboChanged;
+        _channelButton.Click += OnSelectChannelClick;
+        UpdateChannelButtonText();
 
         var btnLoadOrders = new Button { Text = "발주 파일 로드", Size = new Size(120, 30) };
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(120, 30) };
@@ -134,8 +141,10 @@ public class OfsForm : Form
         var btnExportSelected = new Button { Text = "선택건 택배양식 내보내기", Size = new Size(180, 30) };
         var btnExportAll = new Button { Text = "전체 택배양식 내보내기", Size = new Size(180, 30) };
         var btnOutboundHistory = new Button { Text = "발주/출고 이력", Size = new Size(120, 30) };
+        var btnResetWindow = new Button { Text = "창 초기화", Size = new Size(90, 30) };
 
         btnLoadOrders.Click += OnLoadOrdersClick;
+        btnResetWindow.Click += OnResetWindowClick;
         btnExportSelected.Click += OnExportSelectedClick;
         btnExportAll.Click += OnExportAllClick;
         btnSave.Click += OnSaveClick;
@@ -148,7 +157,7 @@ public class OfsForm : Form
 
         // 1줄: 채널 선택 + 주문 목록 관리(불러오기/추가/삭제).
         toolStrip.Controls.Add(lblChannel);
-        toolStrip.Controls.Add(_channelCombo);
+        toolStrip.Controls.Add(_channelButton);
         toolStrip.Controls.Add(btnLoadOrders);
         toolStrip.Controls.Add(btnAddManualOrder);
         toolStrip.Controls.Add(btnLoadAddressBook);
@@ -161,6 +170,7 @@ public class OfsForm : Form
         toolStripRow2.Controls.Add(btnOutboundHistory);
         toolStripRow2.Controls.Add(btnExportSelected);
         toolStripRow2.Controls.Add(btnExportAll);
+        toolStripRow2.Controls.Add(btnResetWindow);
 
         // 2. Data Grid
         _ordersGrid = new ExcelLikeDataGridView
@@ -173,6 +183,21 @@ public class OfsForm : Form
 
         // Add columns based on standard order processing fields
         _ordersGrid.Columns.AddRange(
+            // 기존 발주/출고 이력과 같은 주문번호가 있는 줄을 한눈에 보라고 맨 앞에 둔 표시 전용 열
+            // (사용자 요청 — 처리를 막지 않고 눈으로 판단만 할 수 있게 한다). 값/툴팁은
+            // OnOrdersGridCellFormatting과 CellToolTipTextNeeded에서 OfsOrderItem.DuplicateNote로 채운다.
+            new DataGridViewTextBoxColumn
+            {
+                HeaderText = "중복",
+                Name = "DuplicateFlag",
+                Width = 110,
+                ReadOnly = true,
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    Font = new Font(Font, FontStyle.Bold),
+                    Alignment = DataGridViewContentAlignment.MiddleCenter
+                }
+            },
             // Raw/Standardized Data
             new DataGridViewTextBoxColumn { HeaderText = "주문번호", Name = "OrderNo", DataPropertyName = "OrderNo", Width = 150 },
             new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 250 },
@@ -220,6 +245,9 @@ public class OfsForm : Form
         _ordersGrid.CellFormatting += OnOrdersGridCellFormatting;
         SetupShipmentGroupingContextMenu();
 
+        // "중복" 열에 마우스를 올리면 어떤 이력과 겹치는지(언제/무슨 상태/어떤 SKU/몇 개) 보여준다.
+        _ordersGrid.CellToolTipTextNeeded += OnOrdersGridCellToolTipTextNeeded;
+
         // 2.5. 위(상세 줄)/아래(택배사 출력 미리보기) 분할
         // 기본값은 상세 목록과 미리보기가 비슷한 비중으로 보이게 250으로 둔다(처음 실행 시에만
         // 적용되고, 한 번 조절하면 PersistentSplitContainer가 그 값을 기억해 다음에도 유지한다).
@@ -251,6 +279,19 @@ public class OfsForm : Form
         FormClosing += (s, e) => { _ordersGrid.SaveLayout(); _previewGrid.SaveLayout(); };
     }
 
+    /// <summary>
+    /// 창을 껐다 다시 킨 것처럼 완전히 새로 초기화한다. 파일이 이미 로드된 상태에서 "발주 파일
+    /// 로드"를 다시 누르면 "기존 목록을 지울지" 묻는 확인창이 뜨는데, 그 확인 절차 자체가
+    /// 생산성을 떨어뜨린다는 지적(사용자 신고)에 따라 새 창을 띄우고 이 창은 닫아 즉시 빈
+    /// 상태로 만든다 — 이후 "발주 파일 로드"를 누르면 확인창 없이 바로 불러와진다.
+    /// </summary>
+    private void OnResetWindowClick(object? sender, EventArgs e)
+    {
+        var newForm = new OfsForm();
+        newForm.Show();
+        Close();
+    }
+
     private async void OnLoadOrdersClick(object? sender, EventArgs e)
     {
         using var ofd = new OpenFileDialog
@@ -280,7 +321,7 @@ public class OfsForm : Form
         }
 
         _lastChannelCode = channelConfig.ChannelCode;
-        SyncChannelCombo(channelConfig.ChannelCode);
+        SyncSelectedChannel(channelConfig.ChannelCode);
 
         // UI를 대기 상태로 변경
         Cursor = Cursors.WaitCursor;
@@ -378,7 +419,14 @@ public class OfsForm : Form
             _statusLabel.Text = $"총 {_orders.Count}개의 주문이 로드되었습니다.";
             RefreshExportPreview();
 
-            WarnIfOrdersAlreadyHaveHistory(allLoadedItems);
+            // 기존 발주/출고 이력과 같은 주문번호가 있는 줄은 그리드 맨 앞 "중복" 열에 표시만 한다
+            // (처리를 막지 않음 — 같은 곳으로 두 번 출고하는 정상 거래도 있으므로 눈으로 판단).
+            var loadedOrderNos = CurrentOrderNos();
+            var duplicateCount = RefreshDuplicateFlags(await Task.Run(() => LoadOutboundHistory(loadedOrderNos)));
+            if (duplicateCount > 0)
+            {
+                _statusLabel.Text = $"총 {_orders.Count}개 로드 — 이 중 {duplicateCount}건은 기존 발주/출고 이력과 주문번호가 같습니다(맨 앞 \"중복\" 열 확인).";
+            }
 
             var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
             if (unmappedCount > 0 && EnsureMasterDbNotEmpty())
@@ -404,36 +452,35 @@ public class OfsForm : Form
     }
 
     /// <summary>
-    /// 같은 발주서 파일을 실수로 다시 불러왔거나, 처리 이력이 꼬여 있을 가능성을 안내한다. 다만
-    /// 동일한 곳으로 두 번 출고하는 경우도 있을 수 있으므로 처리 자체를 막지는 않고(발주 프로세스는
-    /// 그대로 진행), 이미 발주확정/출고확정 이력이 있는 주문번호가 있으면 안내창만 띄운다. "동일
-    /// 주문"의 판단 기준은 OutboundDetailTable의 충돌 판단 키와 같은 OrderNo다(채널 무관).
+    /// 지금 그리드에 올라와 있는 주문번호 목록. DB 조회를 백그라운드로 돌리기 전에 UI 스레드에서
+    /// 먼저 떠두는 스냅샷이다(BindingList를 다른 스레드에서 훑지 않기 위함).
     /// </summary>
-    private void WarnIfOrdersAlreadyHaveHistory(List<OfsOrderItem> loadedItems)
+    private List<string> CurrentOrderNos() =>
+        _orders.Select(o => o.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList()!;
+
+    /// <summary>
+    /// 주문번호들의 기존 발주/출고 이력을 한 번의 조회로 읽어온다. "동일 주문"의 판단 기준은
+    /// OutboundDetailTable의 충돌 판단 키와 같은 OrderNo다(채널 무관).
+    /// </summary>
+    private List<OutboundDetail> LoadOutboundHistory(List<string> orderNos) =>
+        orderNos.Count == 0 ? new List<OutboundDetail>() : _outboundRepository.FindByOrderNos(orderNos);
+
+    private List<OutboundDetail> LoadOutboundHistoryForCurrentOrders() => LoadOutboundHistory(CurrentOrderNos());
+
+    /// <summary>
+    /// 같은 발주서 파일을 실수로 다시 불러왔거나 처리 이력이 꼬여 있을 가능성을 그리드 "중복" 열에
+    /// 표시한다. 동일한 곳으로 두 번 출고하는 경우도 있을 수 있으므로 처리 자체는 막지 않고(발주
+    /// 프로세스는 그대로 진행) 사용자가 눈으로 보고 판단하도록 표시만 하는 것이 목적이다(사용자
+    /// 요청 — 예전에는 로드할 때마다 안내 팝업을 띄웠지만, 열로 항상 보이므로 팝업은 없앴다).
+    /// <paramref name="history"/>를 넘기지 않으면 이 자리에서 DB를 읽는다(줄 몇 개만 다시 볼 때용).
+    /// 중복으로 표시된 줄 수를 돌려준다.
+    /// </summary>
+    private int RefreshDuplicateFlags(IEnumerable<OutboundDetail>? history = null)
     {
-        var orderNos = loadedItems.Select(o => o.OrderNo).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
-        if (orderNos.Count == 0) return;
-
-        var existing = _outboundRepository.FindByOrderNos(orderNos!);
-        if (existing.Count == 0) return;
-
-        var distinctOrderCount = existing.Select(d => d.OrderNo).Distinct().Count();
-        var byStatus = existing
-            .GroupBy(d => d.Status)
-            .Select(g => $"{g.Key} {g.Count()}건")
-            .ToList();
-
-        var earliest = existing.Min(d => d.CreatedAt);
-        var latest = existing.Max(d => d.CreatedAt);
-        var whenText = earliest.Date == latest.Date
-            ? $"{earliest:M월 d일 H시}경"
-            : $"{earliest:M월 d일} ~ {latest:M월 d일}";
-
-        MessageBox.Show(
-            $"이번에 불러온 주문 중 {distinctOrderCount}건의 주문번호가 {whenText} 발주건과 동일한 발주확정/출고확정 이력이 이미 있습니다.\n" +
-            $"({string.Join(", ", byStatus)})\n\n" +
-            "동일한 곳으로 두 번 출고하는 경우일 수 있어 발주 처리는 그대로 진행됩니다. 중복 처리가 아닌지 한 번 확인해주세요.",
-            "동일 주문번호 이력 발견", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _duplicateHistoryIndex = OrderDuplicateChecker.HistoryIndex.Build(history ?? LoadOutboundHistoryForCurrentOrders());
+        var flagged = _duplicateHistoryIndex.Annotate(_orders);
+        _ordersGrid.Invalidate();
+        return flagged;
     }
 
     /// <summary>
@@ -578,6 +625,23 @@ public class OfsForm : Form
             return;
         }
 
+        // 내보내기 전에 발주확정 여부를 물어본다. "선택건 내보내기"면 방금 선택한(=ordersToExport)
+        // 건에만, "전체 내보내기"면 전체 대상에만 적용된다(ordersToExport가 이미 그 범위로 필터됨).
+        var scopeLabelForConfirm = isPartialSelection ? "선택한" : "전체";
+        var confirmResult = MessageBox.Show(
+            $"{scopeLabelForConfirm} {ordersToExport.Count}건을 내보내기 전에 발주확정 처리를 하시겠습니까?\n\n" +
+            "예: 발주확정 처리 후 파일 내보내기\n아니오: 발주확정 없이 파일만 내보내기",
+            "발주확정 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+        if (confirmResult == DialogResult.Yes)
+        {
+            var ordersToConfirm = GetSaveEligibleOrders(ordersToExport);
+            if (ordersToConfirm.Count > 0)
+            {
+                if (!await SaveOrdersInternalAsync(ordersToConfirm)) return;
+            }
+        }
+
         // 1. 사용자에게 택배사 선택 요청
         using var courierDialog = new SelectCourierDialog();
         if (FormManager.ShowDialogSafe(courierDialog, this) != DialogResult.OK || courierDialog.SelectedCourier == null)
@@ -633,13 +697,14 @@ public class OfsForm : Form
         }
     }
 
+    // 샘플(LineKinds.Sample) 라인은 판매용 CSKU가 애초에 없을 수밖에 없으므로, 매핑된 SKU가
+    // 없어도 저장 대상에 포함한다(그 외 구분/정상 거래는 기존대로 매핑 성공 건만 저장).
+    private static List<OfsOrderItem> GetSaveEligibleOrders(IEnumerable<OfsOrderItem> source) =>
+        source.Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample).ToList();
+
     private async void OnSaveClick(object? sender, EventArgs e)
     {
-        // 샘플(LineKinds.Sample) 라인은 판매용 CSKU가 애초에 없을 수밖에 없으므로, 매핑된 SKU가
-        // 없어도 저장 대상에 포함한다(그 외 구분/정상 거래는 기존대로 매핑 성공 건만 저장).
-        var ordersToSave = _orders
-            .Where(o => !string.IsNullOrWhiteSpace(o.MappedSku) || o.LineKind == LineKinds.Sample)
-            .ToList();
+        var ordersToSave = GetSaveEligibleOrders(_orders);
 
         if (ordersToSave.Count == 0)
         {
@@ -658,6 +723,16 @@ public class OfsForm : Form
         var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.){nonSaleNote}", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result != DialogResult.Yes) return;
 
+        await SaveOrdersInternalAsync(ordersToSave);
+    }
+
+    /// <summary>
+    /// 발주확정 저장의 실제 처리(확인 팝업 없이 곧바로 저장 실행). OnSaveClick(전체 저장 버튼)과
+    /// 송장파일 내보내기 시 "예: 발주확정 처리 후 내보내기"를 고른 경우(ExportOrdersAsync) 양쪽에서
+    /// 공유해 쓴다 — 후자는 이미 자체 확인 팝업을 띄운 뒤이므로 여기서 다시 묻지 않는다.
+    /// </summary>
+    private async Task<bool> SaveOrdersInternalAsync(List<OfsOrderItem> ordersToSave)
+    {
         Cursor = Cursors.WaitCursor;
         _statusLabel.Text = "주문 내역을 저장하는 중...";
 
@@ -725,11 +800,13 @@ public class OfsForm : Form
 
             // 저장 성공/실패에 따라 UI 업데이트
             UpdateOrderStatusAfterSave(outboundDetails, failedOrders);
+            return true;
         }
         catch (Exception ex)
         {
             MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "저장 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _statusLabel.Text = "저장 오류 발생";
+            return false;
         }
         finally
         {
@@ -851,10 +928,10 @@ public class OfsForm : Form
 
     private void OnAddManualOrderClick(object? sender, EventArgs e)
     {
-        if (_channelCombo.SelectedItem is not Models.SalesChannel selectedChannel)
+        if (_selectedChannel is not { } selectedChannel)
         {
             MessageBox.Show(
-                "먼저 채널을 선택하세요.\n(툴바의 채널 콤보에서 선택하거나, 발주 파일을 먼저 로드하세요.)",
+                "먼저 채널을 선택하세요.\n(툴바의 [채널 선택...] 버튼으로 고르거나, 발주 파일을 먼저 로드하세요.)",
                 "채널 미선택",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -884,12 +961,24 @@ public class OfsForm : Form
         _totalLoadedRowCount += items.Count;
 
         RefreshExportPreview();
-        _statusLabel.Text = $"자동발주처리에서 {items.Count}건을 불러왔습니다. (총 {_orders.Count}건)";
+
+        var duplicateCount = RefreshDuplicateFlags();
+        var duplicateNote = duplicateCount > 0 ? $" — 이 중 {duplicateCount}건은 기존 이력과 주문번호가 같습니다(\"중복\" 열 확인)" : string.Empty;
+        _statusLabel.Text = $"자동발주처리에서 {items.Count}건을 불러왔습니다. (총 {_orders.Count}건){duplicateNote}";
     }
 
     private void AddManualOrderItem(OfsOrderItem item)
     {
         _orders.Add(item);
+
+        // 파일 로드 때 만들어 둔 이력 인덱스에는 이 주문번호가 없을 수 있으므로(수동 추가 건),
+        // 이 줄 하나만 따로 이력을 확인해 "중복" 열을 채운다 — 한 번에 한 줄이라 조회도 1회다.
+        if (!string.IsNullOrWhiteSpace(item.OrderNo))
+        {
+            OrderDuplicateChecker.HistoryIndex
+                .Build(LoadOutboundHistory([item.OrderNo!.Trim()]))
+                .Annotate(item);
+        }
 
         // 새로 추가된 행으로 스크롤
         int lastIdx = _ordersGrid.Rows.Count - 1;
@@ -901,19 +990,36 @@ public class OfsForm : Form
         _statusLabel.Text = $"수동 주문 추가 — {item.MappedSku ?? "(빈 행)"}  (총 {_orders.Count}건)";
     }
 
-    private void OnChannelComboChanged(object? sender, EventArgs e)
+    /// <summary>툴바의 채널 버튼 — 파일 로드와 같은 채널 선택 팝업(그룹/즐겨찾기/검색)을 띄운다.</summary>
+    private void OnSelectChannelClick(object? sender, EventArgs e)
     {
-        if (_channelCombo.SelectedItem is not Models.SalesChannel ch) return;
-        _lastChannelCode = ch.ChannelCode;
-        _manualOrderDialog?.SetChannel(ch.ChannelCode, ch.ChannelName);
+        using var dialog = new SelectChannelDialog();
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || dialog.SelectedChannel == null) return;
+
+        ApplySelectedChannel(dialog.SelectedChannel);
     }
 
-    private void SyncChannelCombo(string channelCode)
+    private void ApplySelectedChannel(Models.SalesChannel channel)
     {
-        var items = _channelCombo.DataSource as List<Models.SalesChannel>;
-        var match = items?.FirstOrDefault(c => c.ChannelCode == channelCode);
-        if (match != null)
-            _channelCombo.SelectedItem = match;
+        _selectedChannel = channel;
+        _lastChannelCode = channel.ChannelCode;
+        UpdateChannelButtonText();
+        _manualOrderDialog?.SetChannel(channel.ChannelCode, channel.ChannelName);
+    }
+
+    private void UpdateChannelButtonText()
+    {
+        _channelButton.Text = _selectedChannel == null
+            ? "채널 선택..."
+            : $"{_selectedChannel.ChannelName} ▼";
+    }
+
+    /// <summary>발주 파일 로드 등 다른 경로로 채널이 정해졌을 때 툴바 표시를 맞춰준다.</summary>
+    private void SyncSelectedChannel(string channelCode)
+    {
+        var match = new Database.SalesChannelRepository().GetAll()
+            .FirstOrDefault(c => c.ChannelCode == channelCode);
+        if (match != null) ApplySelectedChannel(match);
     }
 
     private void OnOrdersGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
@@ -946,6 +1052,11 @@ public class OfsForm : Form
             {
                 item.Status = "매핑 실패";
             }
+
+            // SKU가 바뀌면 "중복" 판정 단계(주문번호만 같음 / SKU까지 같음)도 달라진다 — 로드 때
+            // 읽어둔 이력 인덱스로 이 줄만 다시 판정한다(DB 재조회 없음).
+            _duplicateHistoryIndex?.Annotate(item);
+
             _ordersGrid.InvalidateRow(e.RowIndex);
         }
         // '운송장번호' 열이 수정되면 같은 묶음(송장)의 다른 줄에도 같은 운송장번호를 복사한다
@@ -987,6 +1098,35 @@ public class OfsForm : Form
             e.Value = string.IsNullOrWhiteSpace(item.Remark) ? string.Empty : "메모있음";
             e.FormattingApplied = true;
         }
+        else if (columnName == "DuplicateFlag")
+        {
+            e.Value = item.DuplicateNote ?? string.Empty;
+            e.FormattingApplied = true;
+
+            // 행 배경색(OnOrdersGridRowPrePaint)이 매핑 상태를 이미 칠하고 있으므로, 중복 표시는
+            // 그 위에서도 튀어 보이도록 이 셀에만 따로 색을 준다. 주문번호만 같은 건(약한 신호)과
+            // SKU까지 같은 건(강한 신호)을 색으로 구분한다.
+            if (item.DuplicateNote == null) return;
+
+            e.CellStyle.BackColor = OrderDuplicateChecker.IsStrongDuplicate(item.DuplicateNote)
+                ? Color.Crimson
+                : Color.Orange;
+            e.CellStyle.ForeColor = Color.White;
+            e.CellStyle.SelectionBackColor = e.CellStyle.BackColor;
+            e.CellStyle.SelectionForeColor = Color.White;
+        }
+    }
+
+    /// <summary>
+    /// "중복" 열 셀의 툴팁으로 어떤 이력과 겹치는지 상세를 보여준다(OrderDuplicateChecker가 만든 문구).
+    /// </summary>
+    private void OnOrdersGridCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= _ordersGrid.Rows.Count) return;
+        if (_ordersGrid.Columns[e.ColumnIndex].Name != "DuplicateFlag") return;
+        if (_ordersGrid.Rows[e.RowIndex].DataBoundItem is not OfsOrderItem item) return;
+
+        e.ToolTipText = item.DuplicateDetail ?? string.Empty;
     }
 
     /// <summary>
@@ -1297,7 +1437,7 @@ public class OfsForm : Form
     private void EnsureManualOrderDialog()
     {
         if (_manualOrderDialog != null && !_manualOrderDialog.IsDisposed) return;
-        var ch = _channelCombo.SelectedItem as Models.SalesChannel;
+        var ch = _selectedChannel;
         _manualOrderDialog = new ManualOrderDialog(
             AddManualOrderItem,
             ch?.ChannelCode ?? _lastChannelCode ?? "",
@@ -1311,7 +1451,9 @@ public class OfsForm : Form
     private void ShowQuickMapPanel()
     {
         _mainLayout.RowStyles[1].SizeType = SizeType.Absolute;
-        _mainLayout.RowStyles[1].Height = 220;
+        // SKU 검색 결과 목록을 5줄 정도 고정으로 보여주도록 늘린 만큼(QuickMappingPanel 참고)
+        // CSKU 목록도 여유가 있게 패널 전체 높이를 함께 늘렸다.
+        _mainLayout.RowStyles[1].Height = 260;
         _quickMapPanel.Visible = true;
     }
 
@@ -1339,7 +1481,7 @@ public class OfsForm : Form
             {
                 _ordersGrid.ClearSelection();
                 _ordersGrid.Rows[i].Selected = true;
-                _ordersGrid.CurrentCell = _ordersGrid.Rows[i].Cells[0];
+                _ordersGrid.CurrentCell = _ordersGrid.Rows[i].Cells["OrderNo"];
                 return;
             }
         }
@@ -1378,6 +1520,9 @@ public class OfsForm : Form
             foreach (var order in orders)
                 mapper.ApplyMapping(order);
         });
+
+        // SKU가 바뀌면 "중복" 판정 단계도 달라지므로 로드 때 읽어둔 이력 인덱스로 다시 판정한다.
+        _duplicateHistoryIndex?.Annotate(_orders);
 
         _ordersGrid.Refresh();
         _statusLabel.Text = "매핑규칙 변경을 반영해 발주목록을 다시 매핑했습니다.";

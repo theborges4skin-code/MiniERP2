@@ -63,3 +63,6 @@ desktop.ini
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+# 임시 테스트 빌드 산출물(dotnet test -p:BaseIntermediateOutputPath 등)
+obj_test/

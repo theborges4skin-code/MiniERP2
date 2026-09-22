@@ -755,6 +755,15 @@ public static class DbSchema
                 PRIMARY KEY (AddressId, ChannelCode)
             );
 
+            -- 운송장 파일 누락건 점검의 라벨 수동 정정분(운송장번호 기준). 자동 분류기
+            -- (TrackingLabelClassifier)가 틀린 건을 사용자가 고치면 여기에 남아, 같은 파일을 다시
+            -- 읽어도 정정된 라벨이 그대로 복원된다. 자동 판정으로 되돌리면 행이 삭제된다.
+            CREATE TABLE IF NOT EXISTS TrackingLabelOverrideTable (
+                TrackingNo TEXT PRIMARY KEY,
+                Label      TEXT NOT NULL,
+                UpdatedAt  TEXT NOT NULL
+            );
+
             -- CSKU별 통계(CSKU별통계_개발기획서.md §5). 배치 단위 스냅샷 누적 — 같은 기간·채널을
             -- 다시 로드해도 기존 배치를 덮어쓰지 않는다.
             CREATE TABLE IF NOT EXISTS CskuStatBatchTable (

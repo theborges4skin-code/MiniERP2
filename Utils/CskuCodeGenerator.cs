@@ -19,4 +19,25 @@ public static class CskuCodeGenerator
 
         return string.IsNullOrEmpty(prefix) ? masterSku : $"{prefix}_{masterSku}";
     }
+
+    /// <summary>
+    /// BuildDefault가 만든 코드가 이미 같은 채널의 다른 CSKU에 쓰이고 있으면(같은 채널명 접두사를
+    /// 공유하는 다른 상품과 충돌) 번호를 붙여 피한다 — 기존 CSKU를 실수로 덮어쓰는 사고를 막는다.
+    /// 온라인 거래처 취합의 CSKU 자동배정(PartnerConsolidationFileLoader)과 단가 미배정 탭의 신규
+    /// CSKU 생성(PartnerConsolidationPriceEntryService)이 공유한다.
+    /// </summary>
+    public static string BuildUniqueDefault(string channelName, string masterSku, IEnumerable<string> existingCskuCodesInChannel)
+    {
+        var baseCode = BuildDefault(channelName, masterSku);
+        var existing = new HashSet<string>(existingCskuCodesInChannel, StringComparer.Ordinal);
+        if (!existing.Contains(baseCode))
+            return baseCode;
+
+        for (var suffix = 2; ; suffix++)
+        {
+            var candidate = $"{baseCode}_{suffix}";
+            if (!existing.Contains(candidate))
+                return candidate;
+        }
+    }
 }

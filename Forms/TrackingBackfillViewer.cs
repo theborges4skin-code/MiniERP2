@@ -19,6 +19,7 @@ public class TrackingBackfillViewer : Form
 {
     private readonly OutboundRepository _outboundRepository = new();
     private readonly SalesChannelRepository _salesChannelRepository = new();
+    private readonly TrackingLabelOverrideRepository _labelOverrideRepository = new();
 
     private List<TrackingBackfillRow> _allRows = [];
     private ExcelLikeDataGridView _grid = new();
@@ -29,6 +30,10 @@ public class TrackingBackfillViewer : Form
     private Label _summaryLabel = new();
     private Label _statsHintLabel = new();
 
+    /// <summary>라벨을 고친 직후 요약줄에 덧붙일 안내. 라벨 필터가 걸려 있으면 정정한 행이 목록에서
+    /// 곧바로 빠지기 때문에, 무슨 일이 있었는지 한 줄로 알려주지 않으면 사라진 것처럼 보인다.</summary>
+    private string _lastLabelActionMessage = string.Empty;
+
     public TrackingBackfillViewer()
     {
         InitializeComponent();
@@ -38,6 +43,7 @@ public class TrackingBackfillViewer : Form
     public void LoadRows(List<TrackingBackfillRow> rows)
     {
         _allRows = rows;
+        _lastLabelActionMessage = string.Empty;
         RebuildLabelFilterItems();
         ApplyFilter();
     }
@@ -109,11 +115,13 @@ public class TrackingBackfillViewer : Form
             new DataGridViewTextBoxColumn { HeaderText = "품목명(원문)", DataPropertyName = "ProductName", Width = 220 },
             new DataGridViewTextBoxColumn { HeaderText = "메모", DataPropertyName = "OrderNoMemo", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "운임", DataPropertyName = "FreightCost", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
-            new DataGridViewTextBoxColumn { HeaderText = "라벨", DataPropertyName = "Label", Width = 80 },
+            new DataGridViewTextBoxColumn { Name = "LabelColumn", HeaderText = "라벨", DataPropertyName = "Label", Width = 80 },
             new DataGridViewTextBoxColumn { HeaderText = "상태", DataPropertyName = "StatusText", Width = 100 }
         );
         _grid.CellDoubleClick += OnGridCellDoubleClick;
         _grid.SelectionChanged += (_, _) => RefreshStats();
+        _grid.CellFormatting += OnGridCellFormatting;
+        BuildLabelContextMenu();
 
         // ── 요약 라벨 ──────────────────────────────────────────────────────
         _summaryLabel = new Label { Dock = DockStyle.Fill, AutoSize = false, Padding = new Padding(5, 2, 0, 0) };
@@ -168,13 +176,127 @@ public class TrackingBackfillViewer : Form
         }
     }
 
-    private void RebuildLabelFilterItems()
+    /// <param name="keepSelection">라벨 수동 정정 후처럼 목록만 갱신하고 사용자가 고른 필터는
+    /// 그대로 두어야 할 때 true. 파일을 새로 읽을 때(LoadRows)는 false로 "전체"부터 시작한다.</param>
+    private void RebuildLabelFilterItems(bool keepSelection = false)
     {
+        var previous = keepSelection ? _labelFilterCombo.SelectedItem as string : null;
+
         var labels = _allRows.Select(r => r.Label).Distinct().OrderBy(l => l).ToList();
         _labelFilterCombo.Items.Clear();
         _labelFilterCombo.Items.Add("전체");
         foreach (var l in labels) _labelFilterCombo.Items.Add(l);
-        _labelFilterCombo.SelectedIndex = 0;
+
+        // 그 라벨의 마지막 행을 다른 라벨로 옮기면 항목 자체가 사라진다 — 그때는 "전체"로 되돌린다.
+        var index = previous == null ? 0 : _labelFilterCombo.Items.IndexOf(previous);
+        _labelFilterCombo.SelectedIndex = index < 0 ? 0 : index;
+    }
+
+    /// <summary>우클릭 메뉴에 라벨 수동 정정 항목을 붙인다. 자동 분류기가 틀린 건을 사용자가
+    /// 직접 고치는 통로이며, 고친 값은 운송장번호 기준으로 저장돼 다음 로드 때 복원된다.</summary>
+    private void BuildLabelContextMenu()
+    {
+        var labelMenu = new ToolStripMenuItem("선택 행 라벨 변경");
+        foreach (var label in TrackingLabelClassifier.AllLabels)
+        {
+            var captured = label;
+            labelMenu.DropDownItems.Add(captured, null, (_, _) => ApplyLabelToSelection(captured));
+        }
+        labelMenu.DropDownItems.Add(new ToolStripSeparator());
+        labelMenu.DropDownItems.Add("자동 판정으로 되돌리기", null, (_, _) => RevertLabelForSelection());
+
+        // AddPermanentContextMenuItems를 써야 한다 — ContextMenuStrip.Items에 직접 넣으면
+        // ExcelLikeDataGridView가 메뉴를 열 때마다 복사/붙여넣기 이후 항목을 지우고 다시 채운다.
+        _grid.AddPermanentContextMenuItems(new ToolStripSeparator(), labelMenu);
+    }
+
+    /// <summary>선택한 행이 없으면 안내만 하고 빈 목록을 돌려준다(메뉴는 항상 눌리므로).</summary>
+    private List<TrackingBackfillRow> GetSelectedRowsForLabeling()
+    {
+        var rows = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as TrackingBackfillRow)
+            .Where(r => r != null)
+            .Cast<TrackingBackfillRow>()
+            .ToList();
+
+        if (rows.Count == 0)
+        {
+            MessageBox.Show("라벨을 바꿀 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        return rows;
+    }
+
+    private void ApplyLabelToSelection(string label)
+    {
+        var rows = GetSelectedRowsForLabeling();
+        if (rows.Count == 0) return;
+
+        try
+        {
+            _labelOverrideRepository.SaveMany(rows.Select(r => r.TrackingNo), label);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"라벨 정정 내용을 저장하지 못했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        // 같은 운송장번호가 파일에 여러 줄로 들어있을 수 있어(합포장 등), 저장 키 기준으로 화면
+        // 전체를 맞춰준다 — 선택한 행만 고치면 같은 번호의 다른 줄이 옛 라벨로 남는다.
+        var changedTrackingNos = rows.Select(r => r.TrackingNo).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _allRows.Where(r => changedTrackingNos.Contains(r.TrackingNo)))
+        {
+            row.Label = label;
+            row.IsManualLabel = true;
+        }
+
+        _lastLabelActionMessage = $"라벨 {changedTrackingNos.Count}건을 '{label}'(으)로 정정했습니다.";
+        RebuildLabelFilterItems(keepSelection: true);
+        ApplyFilter();
+    }
+
+    private void RevertLabelForSelection()
+    {
+        var rows = GetSelectedRowsForLabeling();
+        if (rows.Count == 0) return;
+
+        var manualRows = rows.Where(r => r.IsManualLabel).ToList();
+        if (manualRows.Count == 0)
+        {
+            MessageBox.Show("선택한 행에는 수동 정정된 라벨이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            _labelOverrideRepository.DeleteMany(manualRows.Select(r => r.TrackingNo));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"라벨 정정 내용을 지우지 못했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        var revertedTrackingNos = manualRows.Select(r => r.TrackingNo).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _allRows.Where(r => revertedTrackingNos.Contains(r.TrackingNo)))
+        {
+            row.Label = row.AutoLabel;
+            row.IsManualLabel = false;
+        }
+
+        _lastLabelActionMessage = $"{revertedTrackingNos.Count}건을 자동 판정 라벨로 되돌렸습니다.";
+        RebuildLabelFilterItems(keepSelection: true);
+        ApplyFilter();
+    }
+
+    /// <summary>수동 정정한 행의 라벨 칸만 굵게+파랑으로 칠해 자동 판정과 눈으로 구분되게 한다.</summary>
+    private void OnGridCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || _grid.Columns[e.ColumnIndex].Name != "LabelColumn") return;
+        if (_grid.Rows[e.RowIndex].DataBoundItem is not TrackingBackfillRow row || !row.IsManualLabel) return;
+
+        e.CellStyle.Font = new Font(_grid.DefaultCellStyle.Font ?? Font, FontStyle.Bold);
+        e.CellStyle.ForeColor = Color.RoyalBlue;
     }
 
     /// <summary>라벨 필터 + 온라인주문 제외만 반영한다(미등록만 보기는 뺀다 — 운임 통계는 등록
@@ -200,7 +322,14 @@ public class TrackingBackfillViewer : Form
 
         var registeredCount = _allRows.Count(r => r.IsRegistered);
         var missingCount = _allRows.Count(r => !r.IsRegistered);
-        _summaryLabel.Text = $"전체 {_allRows.Count}건 (미등록 {missingCount}건 / 등록됨 {registeredCount}건) — 현재 목록 {list.Count}건";
+        var manualCount = _allRows.Count(r => r.IsManualLabel);
+        var manualText = manualCount > 0 ? $" / 라벨 수동정정 {manualCount}건" : "";
+        // 우클릭 메뉴는 눈에 띄지 않아 안내 없이는 찾기 어렵다 — 정정을 한 번이라도 하면 그 결과
+        // 문구로 바뀌므로, 안내는 아직 안 써본 사용자에게만 보인다.
+        var actionText = _lastLabelActionMessage.Length > 0
+            ? $"   ▶ {_lastLabelActionMessage}"
+            : "   ▶ 라벨이 틀렸으면 행을 선택하고 우클릭 → '선택 행 라벨 변경'";
+        _summaryLabel.Text = $"전체 {_allRows.Count}건 (미등록 {missingCount}건 / 등록됨 {registeredCount}건{manualText}) — 현재 목록 {list.Count}건{actionText}";
 
         RefreshStats();
     }

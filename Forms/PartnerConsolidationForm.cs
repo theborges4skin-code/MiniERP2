@@ -48,7 +48,7 @@ public class PartnerConsolidationForm : Form
     public PartnerConsolidationForm()
     {
         _aggregator = new PartnerConsolidationAggregator(
-            new PartnerSupplyPriceResolver(_channelSkuRepository, _docPartyRepository), _itemRepository);
+            new PartnerSupplyPriceResolver(_channelSkuRepository, _docPartyRepository), _itemRepository, _channelSkuRepository);
         _priceEntryService = new PartnerConsolidationPriceEntryService(_channelSkuRepository, _docPartyRepository);
         InitializeComponent();
         FormManager.ApplyBoundsTracking(this);
@@ -138,7 +138,11 @@ public class PartnerConsolidationForm : Form
         _cskuDetailGrid = BuildDetailGrid("PartnerConsolidationForm.CskuDetailGrid");
         _cskuDetailGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130 },
-            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 160 },
+            // 거래처에는 이 열(ChannelSkuTable.InvoiceDisplayName)이 실제로 전달돼야 한다 — 마스터DB
+            // 상품명(ProductName)은 명세표 표기와 다를 수 있어 내부 참고용일 뿐이므로 이 화면에는
+            // 아예 올리지 않는다(§ Models/PartnerConsolidationModels.PartnerConsolidationCskuDetail
+            // .InvoiceDisplayName 주석 참고). 미등록이면 공란으로 표시된다.
+            new DataGridViewTextBoxColumn { HeaderText = "송장표시명", Name = "InvoiceDisplayName", DataPropertyName = "InvoiceDisplayName", Width = 160 },
             new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120 },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "납품단가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
@@ -149,8 +153,12 @@ public class PartnerConsolidationForm : Form
         );
         _cskuDetailGrid.DataSource = _cskuDetails;
 
-        // 단가 미배정 탭은 "입력할 납품단가" 한 열만 편집 가능해야 하므로 BuildDetailGrid(전체
-        // ReadOnly)를 쓰지 않고 그리드는 편집 가능하게 두되 나머지 열만 개별로 ReadOnly 처리한다.
+        // 이 탭은 애초에 "단가가 없는 행"만 보여줬으나, 이미 자체/상속 단가가 있는 CSKU도 나중에
+        // 납품명·납품단가를 고칠 진입점이 없다는 문제(마감/이익 매핑은 MSKU 단위라 CSKU별 세부값을
+        // 여기서 채워야 함)가 있어 전체 CSKU로 확장했다. "입력할..." 두 열만 편집 가능해야 하므로
+        // BuildDetailGrid(전체 ReadOnly)를 쓰지 않고 그리드는 편집 가능하게 두되 나머지 열만
+        // 개별로 ReadOnly 처리한다. "입력할..." 열은 현재 값으로 미리 채워지며(RunAggregate 참고),
+        // 실제로 값을 바꾼 행만 저장된다(SaveEnteredPrices의 변경분 필터 참고).
         _unassignedGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -162,9 +170,12 @@ public class PartnerConsolidationForm : Form
         _unassignedGrid.Columns.AddRange(
             new DataGridViewTextBoxColumn { HeaderText = "상호명", Name = "CompanyName", DataPropertyName = "CompanyName", Width = 130, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCode", DataPropertyName = "CskuCode", Width = 130, ReadOnly = true },
-            new DataGridViewTextBoxColumn { HeaderText = "품목명", Name = "ProductName", DataPropertyName = "ProductName", Width = 180, ReadOnly = true },
+            // 마스터DB 상품명(ProductName)은 명세표 표기와 다를 수 있어 여기서는 보여주지 않는다 —
+            // CSKU 바로 옆에는 실제로 거래처에 전달될 입력값(송장표시명)이 와야 한다.
+            new DataGridViewTextBoxColumn { HeaderText = "입력할 송장표시명", Name = "EnteredInvoiceDisplayName", DataPropertyName = "EnteredInvoiceDisplayName", Width = 180 },
             new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "현재 단가출처", Name = "PriceSourceDisplay", DataPropertyName = "PriceSourceDisplay", Width = 110, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "입력할 납품단가", Name = "EnteredPrice", DataPropertyName = "EnteredPrice", Width = 120, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } }
         );
         _unassignedGrid.DataSource = _unassignedPriceRows;
@@ -193,8 +204,9 @@ public class PartnerConsolidationForm : Form
 
         var cskuTab = new TabPage("CSKU 상세"); cskuTab.Controls.Add(_cskuDetailGrid);
 
-        // "단가 미배정" 탭 전용: 입력란에 값을 채운 뒤 이 버튼으로 대표단가 채널에 저장한다(§8-S8).
-        var unassignedTab = new TabPage("단가 미배정");
+        // "납품단가/명 입력" 탭 전용: 전체 CSKU가 대상이며(단가 미배정 여부와 무관), 입력란에
+        // 값을 채운 뒤 이 버튼으로 대표단가 채널에 저장한다(§8-S8, 확장 배경은 위 그리드 주석 참고).
+        var unassignedTab = new TabPage("납품단가/명 입력");
         var unassignedLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         unassignedLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         unassignedLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -358,19 +370,27 @@ public class PartnerConsolidationForm : Form
         }
 
         _cskuDetails.Clear();
-        foreach (var d in result.CskuDetails.OrderBy(d => d.CompanyName, StringComparer.Ordinal).ThenBy(d => d.CskuCode, StringComparer.Ordinal))
-            _cskuDetails.Add(d);
-
         _unassignedPriceRows.Clear();
-        foreach (var d in result.CskuDetails.Where(d => d.IsPriceUnassigned))
+        var unassignedCount = 0;
+        foreach (var d in result.CskuDetails.OrderBy(d => d.CompanyName, StringComparer.Ordinal).ThenBy(d => d.CskuCode, StringComparer.Ordinal))
+        {
+            // "납품단가/명 입력" 탭 입력란을 현재 값으로 미리 채운다. 단가는 미배정(0)일 때만 비워
+            // 둬서 사용자가 실제 값을 입력하게 하고, 그 외에는 현재 값을 보여줘 그대로 두거나 고칠
+            // 수 있게 한다(둘 다 사용자가 값을 바꾸지 않으면 SaveEnteredPrices가 저장 대상에서 뺀다).
+            d.EnteredPrice = d.IsPriceUnassigned ? null : d.SupplyPrice;
+            d.EnteredInvoiceDisplayName = string.IsNullOrWhiteSpace(d.InvoiceDisplayName) ? null : d.InvoiceDisplayName;
+            if (d.IsPriceUnassigned) unassignedCount++;
+
+            _cskuDetails.Add(d);
             _unassignedPriceRows.Add(d);
+        }
 
         _unmappedExcludedRows.Clear();
         foreach (var row in allRows.Where(r => r.Kind != PartnerConsolidationRowKind.Mapped))
             _unmappedExcludedRows.Add(row);
 
         _statusLabel.Text = $"집계 완료 — 거래처 {_companySummaries.Count}곳, CSKU {_cskuDetails.Count}건 " +
-            $"(단가 미배정 {_unassignedPriceRows.Count}건, 미매핑·제외 {_unmappedExcludedRows.Count}건).";
+            $"(단가 미배정 {unassignedCount}건, 미매핑·제외 {_unmappedExcludedRows.Count}건).";
 
         if (zeroShippingChannels.Count > 0)
         {
@@ -426,20 +446,27 @@ public class PartnerConsolidationForm : Form
         return (byCompany, zeroShippingChannels);
     }
 
-    // ── 단가 미배정 탭 인라인 저장(§6.5, §8-S8) ─────────────────────────────
+    // ── 납품단가/명 입력 탭 인라인 저장(§6.5, §8-S8) ─────────────────────────
 
     /// <summary>
-    /// "입력할 납품단가" 열에 값이 채워진 모든 행을 대표단가 채널의 SupplyPrice에 저장한다.
-    /// 대표단가 채널이 없는 거래처는 저장을 막고 채널설정에서 먼저 지정하도록 안내한다(§6.5).
-    /// 저장 후에는 전체를 다시 집계한다(가격 변경이 같은 대표채널을 공유하는 다른 CSKU/거래처
-    /// 표시에도 영향을 줄 수 있으므로 — §6.5 "저장 후 재계산").
+    /// "입력할 납품단가"/"입력할 송장표시명" 중 현재 값과 실제로 달라진 행만 대표단가 채널의
+    /// CSKU(SupplyPrice/InvoiceDisplayName)에 저장한다. 이 탭은 전체 CSKU를 보여주며 두 입력란이
+    /// 현재 값으로 미리 채워져 있으므로(RunAggregate 참고), 단순히 "값이 있으면 저장"으로는 손대지
+    /// 않은 행까지 매번 재저장하게 된다 — 그래서 원본과 같은 값은 여기서 걸러낸다. 두 열 중
+    /// 건드리지 않은 쪽은 기존 값을 그대로 둔다(예: 송장표시명만 고치고 싶을 때 납품단가를 다시
+    /// 입력할 필요 없음). 대표단가 채널이 없는 거래처는 저장을 막고 채널설정에서 먼저 지정하도록
+    /// 안내한다(§6.5). 저장 후에는 전체를 다시 집계한다(변경이 같은 대표채널을 공유하는 다른
+    /// CSKU/거래처 표시에도 영향을 줄 수 있으므로 — §6.5 "저장 후 재계산").
     /// </summary>
     private void SaveEnteredPrices()
     {
-        var toSave = _unassignedPriceRows.Where(r => r.EnteredPrice.HasValue).ToList();
+        var toSave = _unassignedPriceRows
+            .Where(r => (r.EnteredPrice.HasValue && r.EnteredPrice.Value != r.SupplyPrice)
+                     || (!string.IsNullOrWhiteSpace(r.EnteredInvoiceDisplayName) && !string.Equals(r.EnteredInvoiceDisplayName.Trim(), r.InvoiceDisplayName, StringComparison.Ordinal)))
+            .ToList();
         if (toSave.Count == 0)
         {
-            _unassignedStatusLabel.Text = "입력된 단가가 없습니다.";
+            _unassignedStatusLabel.Text = "변경된 납품단가/송장표시명이 없습니다.";
             return;
         }
 
@@ -449,7 +476,7 @@ public class PartnerConsolidationForm : Form
 
         foreach (var row in toSave)
         {
-            var outcome = _priceEntryService.SavePrice(row.CompanyName, row.Msku, row.EnteredPrice!.Value, reason: "온라인 거래처 취합 화면에서 입력");
+            var outcome = _priceEntryService.SavePrice(row.CompanyName, row.Msku, row.EnteredPrice, row.EnteredInvoiceDisplayName, reason: "온라인 거래처 취합 화면에서 입력");
             switch (outcome.Result)
             {
                 case PartnerConsolidationPriceEntryResult.Saved:

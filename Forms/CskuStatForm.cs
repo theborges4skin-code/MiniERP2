@@ -20,6 +20,7 @@ public class CskuStatForm : Form
 {
     private readonly CskuStatRepository _repo = new();
     private readonly ChannelConfigService _channelConfigService = new();
+    private readonly ChannelSkuRepository _channelSkuRepo = new();
     private readonly SettingsService _settingsService = new();
     private List<ChannelConfig> _channelConfigs = [];
 
@@ -73,9 +74,10 @@ public class CskuStatForm : Form
         Size = new Size(1200, 760);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 7 };
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 75));
@@ -194,10 +196,10 @@ public class CskuStatForm : Form
         mainLayout.Controls.Add(paramPanel, 0, 0);
         mainLayout.Controls.Add(_fileGrid, 0, 1);
         mainLayout.Controls.Add(fileToolPanel, 0, 2);
-        mainLayout.Controls.Add(actionPanel, 0, 2);
-        mainLayout.Controls.Add(_totalsLabel, 0, 3);
-        mainLayout.Controls.Add(_lineGrid, 0, 4);
-        mainLayout.Controls.Add(_statusLabel, 0, 5);
+        mainLayout.Controls.Add(actionPanel, 0, 3);
+        mainLayout.Controls.Add(_totalsLabel, 0, 4);
+        mainLayout.Controls.Add(_lineGrid, 0, 5);
+        mainLayout.Controls.Add(_statusLabel, 0, 6);
 
         Controls.Add(mainLayout);
     }
@@ -312,6 +314,7 @@ public class CskuStatForm : Form
 
         var allRows = validFiles.SelectMany(f => f.Rows).ToList();
         var lines = CskuStatAggregator.Aggregate(allRows, ResolveChannelName);
+        foreach (var l in lines) FillChannelSkuInfo(l);
 
         _aggregatedLines.Clear();
         foreach (var l in lines) _aggregatedLines.Add(l);
@@ -330,6 +333,14 @@ public class CskuStatForm : Form
     {
         var cfg = _channelConfigs.FirstOrDefault(c => c.ChannelCode == channelCode);
         return !string.IsNullOrWhiteSpace(cfg?.ChannelName) ? cfg.ChannelName : channelCode;
+    }
+
+    /// <summary>ChannelSkuTable에서 MSKU/송장출력용 상품명을 조회해 채운다. 미등록이면 빈 값.</summary>
+    private void FillChannelSkuInfo(CskuStatLine line)
+    {
+        var csku = _channelSkuRepo.GetByChannelAndCskuCode(line.ChannelCode, line.CskuCode);
+        line.Msku = csku?.Msku ?? string.Empty;
+        line.InvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty;
     }
 
     /// <summary>총계 3종은 그리드 필터·정렬과 무관하게 전체 기준(§6). 아마존이 섞이면 환산 원화 합계.</summary>
@@ -375,7 +386,11 @@ public class CskuStatForm : Form
         if (batch == null) return;
 
         _aggregatedLines.Clear();
-        foreach (var l in _repo.GetLines(batchId)) _aggregatedLines.Add(l);
+        foreach (var l in _repo.GetLines(batchId))
+        {
+            FillChannelSkuInfo(l);
+            _aggregatedLines.Add(l);
+        }
 
         _loadedFiles.Clear();
         foreach (var f in _repo.GetFiles(batchId))

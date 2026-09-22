@@ -11,7 +11,7 @@ namespace MiniERP2.Exporters;
 public static class CskuStatExporter
 {
     private static readonly string[] AggregateHeaders =
-        ["기간", "구분", "채널코드", "채널명", "CSKU", "상품그룹", "상품명", "건수", "수량", "매출액", "정산액", "배송비", "입출고비", "이익액", "마진율"];
+        ["기간", "구분", "채널코드", "채널명", "CSKU", "MSKU", "상품그룹", "송장출력용상품명", "상품명", "건수", "수량", "매출액", "정산액", "배송비", "입출고비", "이익액", "마진율"];
 
     private static readonly string[] AmazonExtraHeaders = ["매출액(원)", "정산액(원)", "이익액(원)", "적용환율"];
 
@@ -77,7 +77,9 @@ public static class CskuStatExporter
             sheet.Cells[row, col++].Value = line.ChannelCode;
             sheet.Cells[row, col++].Value = line.ChannelName;
             sheet.Cells[row, col++].Value = line.CskuCode;
+            sheet.Cells[row, col++].Value = line.Msku;
             sheet.Cells[row, col++].Value = line.ProductGroup;
+            sheet.Cells[row, col++].Value = line.InvoiceDisplayName;
             sheet.Cells[row, col++].Value = line.ProductName;
             sheet.Cells[row, col++].Value = line.RowCount;
             sheet.Cells[row, col++].Value = line.Qty;

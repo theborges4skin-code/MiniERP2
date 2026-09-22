@@ -42,11 +42,12 @@ public class AddressBookForm : Form
     private void InitializeComponent()
     {
         Text = "배송지 주소록 관리";
-        Size = new Size(820, 620);
+        Size = new Size(900, 640);
+        MinimumSize = new Size(760, 560);
         StartPosition = FormStartPosition.CenterScreen;
 
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         // 좌측: 주소 목록
@@ -57,12 +58,16 @@ public class AddressBookForm : Form
         _addressListBox = new ListBox { Dock = DockStyle.Fill, DisplayMember = "Label" };
         _addressListBox.SelectedIndexChanged += OnAddressSelected;
 
-        var leftButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
-        var btnAdd = new Button { Text = "추가", Width = 70 };
-        var btnDelete = new Button { Text = "삭제", Width = 70 };
+        // 버튼 3개(추가/복사등록/삭제)가 한 줄에 들어가야 한다 — 좌측 열 250px 기준으로 폭·여백을 맞췄다.
+        var leftButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 5, 0, 0) };
+        var btnAdd = new Button { Text = "추가", Width = 72, Margin = new Padding(0, 3, 4, 3) };
+        var btnCopy = new Button { Text = "복사등록", Width = 72, Margin = new Padding(0, 3, 4, 3) };
+        var btnDelete = new Button { Text = "삭제", Width = 72, Margin = new Padding(0, 3, 4, 3) };
         btnAdd.Click += (s, e) => ResetDetailForNew();
+        btnCopy.Click += OnCopyClick;
         btnDelete.Click += OnDeleteClick;
         leftButtonPanel.Controls.Add(btnAdd);
+        leftButtonPanel.Controls.Add(btnCopy);
         leftButtonPanel.Controls.Add(btnDelete);
 
         leftPanel.Controls.Add(_addressListBox, 0, 0);
@@ -80,7 +85,7 @@ public class AddressBookForm : Form
 
         var labelPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         labelPanel.Controls.Add(new Label { Text = "라벨(표시명):", AutoSize = true, Padding = new Padding(0, 6, 5, 0) });
-        _txtLabel = new TextBox { Width = 250 };
+        _txtLabel = new TextBox { Width = 300 };
         labelPanel.Controls.Add(_txtLabel);
 
         var receiverPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -91,15 +96,21 @@ public class AddressBookForm : Form
         _txtPhone = new TextBox { Width = 150 };
         receiverPanel.Controls.Add(_txtPhone);
 
-        var addressPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        addressPanel.Controls.Add(new Label { Text = "주소:", AutoSize = true, Padding = new Padding(0, 6, 5, 0) });
-        _txtAddress = new TextBox { Width = 550 };
-        addressPanel.Controls.Add(_txtAddress);
+        // 주소/메모는 내용이 길어 FlowLayoutPanel의 고정 폭으로는 오른쪽이 잘린다 — 라벨만 AutoSize로 두고
+        // 입력칸이 남는 폭을 모두 채우도록 TableLayoutPanel로 깔아 창 크기에 따라 같이 늘어나게 한다.
+        var addressPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        addressPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        addressPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        addressPanel.Controls.Add(new Label { Text = "주소:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 5, 0) }, 0, 0);
+        _txtAddress = new TextBox { Dock = DockStyle.Fill, Margin = new Padding(0, 3, 5, 3) };
+        addressPanel.Controls.Add(_txtAddress, 1, 0);
 
-        var memoPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        memoPanel.Controls.Add(new Label { Text = "메모:", AutoSize = true, Padding = new Padding(0, 6, 5, 0) });
-        _txtMemo = new TextBox { Width = 550, Height = 55, Multiline = true };
-        memoPanel.Controls.Add(_txtMemo);
+        var memoPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        memoPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        memoPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        memoPanel.Controls.Add(new Label { Text = "메모:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 5, 0) }, 0, 0);
+        _txtMemo = new TextBox { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical, Margin = new Padding(0, 3, 5, 3) };
+        memoPanel.Controls.Add(_txtMemo, 1, 0);
 
         var flagsPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         _chkIsActive = new CheckBox { Text = "활성", AutoSize = true, Checked = true, Padding = new Padding(0, 6, 0, 0) };
@@ -214,6 +225,51 @@ public class AddressBookForm : Form
 
         _statusLabel.ForeColor = Color.DarkGreen;
         _statusLabel.Text = $"저장되었습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 기존 배송지의 모든 필드(채널 태그 포함)를 그대로 복제해 새 라벨로 저장한다.
+    /// ChannelConfigForm의 "새 채널 추가 시 기존 채널 설정 복사"와 같은 형식의 다이얼로그.
+    /// </summary>
+    private void OnCopyClick(object? sender, EventArgs e)
+    {
+        if (_entries.Count == 0)
+        {
+            MessageBox.Show("복사할 배송지가 없습니다. 먼저 배송지를 추가하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var currentSelection = _addressListBox.SelectedItem as AddressBookEntry;
+        using var dialog = new AddressBookCopyDialog(_entries, currentSelection);
+        if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+        var source = dialog.SourceEntry;
+        if (source == null) return;
+
+        var copy = new AddressBookEntry
+        {
+            AddressId = 0,
+            Label = dialog.NewLabel.Trim(),
+            ReceiverName = source.ReceiverName,
+            Phone = source.Phone,
+            Address = source.Address,
+            Memo = source.Memo,
+            IsActive = source.IsActive,
+            DisplayOrder = source.DisplayOrder,
+            ChannelTags = new List<string>(source.ChannelTags),
+        };
+
+        var inserted = _addressBookRepository.Upsert(copy);
+        LoadEntries();
+
+        var saved = _entries.FirstOrDefault(a => a.AddressId == inserted.AddressId);
+        if (saved != null)
+        {
+            _addressListBox.SelectedItem = saved;
+        }
+
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"복사되었습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
     private void OnDeleteClick(object? sender, EventArgs e)

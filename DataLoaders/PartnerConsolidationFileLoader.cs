@@ -10,7 +10,8 @@ namespace MiniERP2.DataLoaders;
 /// 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §6.1 ①~④) — 이익분석 내보내기 결과
 /// xlsx 1개를 읽어 _META 파싱, 미매핑/예외 분리, CSKU 축 정규화까지 수행한다. 집계(§6.2 이후)는
 /// 하지 않는다. 마감/이익분석 화면의 계산 로직(SettlementLoader/ProfitCalculator)은 건드리지 않고
-/// 그 결과 파일만 다시 읽는다(§1).
+/// 그 결과 파일만 다시 읽는다(§1). 예외적으로 ChannelSkuTable에는 쓴다 — CSKU 자동배정
+/// (ResolveCsku)이 채널에 아직 없는 CSKU를 새로 만나면 그 자리에서 바로 저장한다(2026-09).
 /// </summary>
 public static class PartnerConsolidationFileLoader
 {
@@ -19,13 +20,16 @@ public static class PartnerConsolidationFileLoader
 
     /// <param name="channelConfigService">§6.3 송장번호 추출용. null이면 배송건수 산정에 필요한
     /// TrackingNumbers를 채우지 않는다(파일 목록만 볼 때는 불필요).</param>
-    public static PartnerConsolidationFile Load(string filePath, ChannelSkuRepository channelSkuRepository, ChannelConfigService? channelConfigService = null)
+    /// <param name="salesChannelRepository">CSKU 자동배정 시 코드 접두사로 쓸 채널명 조회용.
+    /// null이면 직접 만들어 쓴다(가벼운 조회 전용 리포지토리라 CskuDetailDialog 등과 같은 관례).</param>
+    public static PartnerConsolidationFile Load(string filePath, ChannelSkuRepository channelSkuRepository,
+        ChannelConfigService? channelConfigService = null, SalesChannelRepository? salesChannelRepository = null)
     {
         try
         {
             ExcelLicense.Ensure();
             using var package = ExcelFileOpener.Open(filePath);
-            return LoadFromPackage(package, filePath, channelSkuRepository, channelConfigService);
+            return LoadFromPackage(package, filePath, channelSkuRepository, channelConfigService, salesChannelRepository);
         }
         catch (Exception ex)
         {
@@ -38,8 +42,13 @@ public static class PartnerConsolidationFileLoader
     }
 
     public static PartnerConsolidationFile LoadFromPackage(ExcelPackage package, string filePath,
-        ChannelSkuRepository channelSkuRepository, ChannelConfigService? channelConfigService = null)
+        ChannelSkuRepository channelSkuRepository, ChannelConfigService? channelConfigService = null,
+        SalesChannelRepository? salesChannelRepository = null)
     {
+        salesChannelRepository ??= new SalesChannelRepository();
+        var channelNameByCode = salesChannelRepository.GetAll()
+            .ToDictionary(c => c.ChannelCode, c => c.ChannelName, StringComparer.Ordinal);
+
         var meta = MetaSheetHelper.TryReadFromPackage(package);
 
         var file = new PartnerConsolidationFile
@@ -107,7 +116,7 @@ public static class PartnerConsolidationFileLoader
             };
 
             if (kind == PartnerConsolidationRowKind.Mapped)
-                ResolveCsku(row, mappedSku, effectiveChannelCode, channelSkuRepository, cskuByChannel);
+                ResolveCsku(row, mappedSku, effectiveChannelCode, channelSkuRepository, cskuByChannel, channelNameByCode);
 
             rows.Add(row);
         }
@@ -153,10 +162,20 @@ public static class PartnerConsolidationFileLoader
     /// <summary>
     /// §6.1 ④: 매핑SKU를 (채널코드, 코드)로 ChannelSkuTable 조회해 CSKU로 확정한다. 없으면
     /// 마스터SKU로 간주해 그 채널에서 같은 Msku를 가진 CSKU를 찾는다 — 정확히 1개면 승격,
-    /// 0개/2개 이상이면 "CSKU 미확정"(CskuUnresolved)으로 분리한다.
+    /// 2개 이상이면(어느 CSKU가 맞는지 알 수 없음) "CSKU 미확정"(CskuUnresolved)으로 분리한다.
+    /// 0개(그 채널에 이 CSKU 자체가 아직 등록되지 않음)면 자동으로 새 CSKU를 만들어 즉시
+    /// ChannelSkuTable에 저장한다(마감/이익분석 매핑은 마스터SKU 단위라 이 시점까지 이 채널
+    /// 전용 CSKU가 없는 게 정상 — 2026-09 사용자 피드백: 예전에는 화면 표시용으로 매핑SKU
+    /// 텍스트를 가짜 CSKU 코드처럼 보여주기만 하고 저장하지 않아서, 사용자가 매번 CSKU 편집
+    /// 화면에서 이 상품들을 하나하나 찾아 새로 등록해야 했다). 코드는 CskuCodeGenerator 기본
+    /// 규칙으로 자동 생성하며 — 어차피 임시값이라 이름 자체는 중요하지 않다. 사용자가 이후
+    /// [CSKU 편집]의 엑셀 일괄수정(코드 이름변경 포함)으로 정리하는 것을 전제로 한다. 같은 파일
+    /// 안에서 같은 채널·같은 마스터SKU가 여러 행에 반복되면 캐시(cache)에 담아둔 리스트에 바로
+    /// 추가해 두 번째 행부터는 새로 만들지 않고 방금 만든 CSKU를 재사용한다.
     /// </summary>
     private static void ResolveCsku(PartnerConsolidationRow row, string mappedSku, string channelCode,
-        ChannelSkuRepository channelSkuRepository, Dictionary<string, List<ChannelSkuModel>> cache)
+        ChannelSkuRepository channelSkuRepository, Dictionary<string, List<ChannelSkuModel>> cache,
+        IReadOnlyDictionary<string, string> channelNameByCode)
     {
         if (!cache.TryGetValue(channelCode, out var cskus))
         {
@@ -177,6 +196,19 @@ public static class PartnerConsolidationFileLoader
         {
             row.ResolvedCskuCode = byMsku[0].CskuCode;
             row.ResolvedMsku = byMsku[0].Msku;
+            return;
+        }
+
+        if (byMsku.Count == 0)
+        {
+            var channelName = channelNameByCode.GetValueOrDefault(channelCode, channelCode);
+            var newCode = CskuCodeGenerator.BuildUniqueDefault(channelName, mappedSku, cskus.Select(c => c.CskuCode));
+            var newCsku = new ChannelSkuModel { ChannelCode = channelCode, CskuCode = newCode, Msku = mappedSku };
+            channelSkuRepository.Upsert(newCsku, "온라인 거래처 취합 — CSKU 자동배정");
+            cskus.Add(newCsku);
+
+            row.ResolvedCskuCode = newCsku.CskuCode;
+            row.ResolvedMsku = newCsku.Msku;
             return;
         }
 

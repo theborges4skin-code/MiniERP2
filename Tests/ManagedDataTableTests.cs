@@ -97,6 +97,70 @@ public class ManagedDataTableTests
     }
 
     [TestMethod]
+    public void AddressBook_ApplyAddedRow_InsertsNewEntryWithChannelTags()
+    {
+        var adapter = new AddressBookManagedTable();
+        var table = adapter.LoadCurrent();
+
+        table.Rows.Add(0, "본사창고", "홍길동", "010-1111-2222", "서울시 강남구", "메모", true, 1, "CH-A,CH-B");
+
+        var result = ManagedTableChangeApplier.Apply(adapter, table);
+
+        Assert.AreEqual(1, result.Inserted);
+        var saved = new AddressBookRepository().GetAll().Single(e => e.Label == "본사창고");
+        Assert.AreEqual("홍길동", saved.ReceiverName);
+        Assert.HasCount(2, saved.ChannelTags);
+        Assert.Contains("CH-A", saved.ChannelTags);
+        Assert.Contains("CH-B", saved.ChannelTags);
+    }
+
+    [TestMethod]
+    public void AddressBook_ApplyModifiedRow_UpdatesExistingEntry()
+    {
+        var entry = new AddressBookRepository().Upsert(new AddressBookEntry { Label = "기존주소", ReceiverName = "김철수", Address = "부산시" });
+        var adapter = new AddressBookManagedTable();
+        var table = adapter.LoadCurrent();
+
+        table.Rows.Find(entry.AddressId)!["Address"] = "부산시 해운대구";
+
+        var result = ManagedTableChangeApplier.Apply(adapter, table);
+
+        Assert.AreEqual(1, result.Updated);
+        Assert.AreEqual("부산시 해운대구", new AddressBookRepository().GetAll().Single(e => e.AddressId == entry.AddressId).Address);
+    }
+
+    [TestMethod]
+    public void AddressBook_ApplyDeletedRow_RemovesEntry()
+    {
+        var entry = new AddressBookRepository().Upsert(new AddressBookEntry { Label = "삭제대상", ReceiverName = "이영희", Address = "대전시" });
+        var adapter = new AddressBookManagedTable();
+        var table = adapter.LoadCurrent();
+
+        table.Rows.Find(entry.AddressId)!.Delete();
+
+        var result = ManagedTableChangeApplier.Apply(adapter, table);
+
+        Assert.AreEqual(1, result.Deleted);
+        Assert.IsFalse(new AddressBookRepository().GetAll().Any(e => e.AddressId == entry.AddressId));
+    }
+
+    [TestMethod]
+    public void AddressBook_CreateSampleRow_IsRecognizedByIsSampleRowButRealRowsAreNot()
+    {
+        var adapter = new AddressBookManagedTable();
+        var table = adapter.LoadCurrent();
+
+        var sample = adapter.CreateSampleRow(table);
+        var sampleAsDictionary = table.Columns.Cast<System.Data.DataColumn>()
+            .ToDictionary(c => c.ColumnName, c => sample[c.ColumnName]?.ToString());
+
+        Assert.IsTrue(adapter.IsSampleRow(sampleAsDictionary!));
+
+        var realRow = new Dictionary<string, string?> { ["Label"] = "실제거래처" };
+        Assert.IsFalse(adapter.IsSampleRow(realRow));
+    }
+
+    [TestMethod]
     public void Csku_ApplyAddedRow_InsertsNewCsku()
     {
         var adapter = new CskuManagedTable();
@@ -116,7 +180,8 @@ public class ManagedDataTableTests
     {
         var adapter = new SimpleMappingManagedTable(MappingRuleType.Exact, "1:1 매핑");
         var table = adapter.LoadCurrent();
-        table.Rows.Add("CH-A", "상품A옵션1", "SKU-1");
+        // 새 줄의 Id는 저장 후 DB가 정하므로 그리드에서 추가할 때처럼 0으로 둔다(주소록 테스트와 동일).
+        table.Rows.Add(0L, "CH-A", "상품A옵션1", "SKU-1");
 
         ManagedTableChangeApplier.Apply(adapter, table);
 
@@ -126,7 +191,8 @@ public class ManagedDataTableTests
 
         // 다시 불러와서 삭제
         var reloaded = adapter.LoadCurrent();
-        reloaded.Rows.Find(new object[] { "CH-A", "상품A옵션1" })!.Delete();
+        // 자연키가 (ChannelCode, Key)에서 Id로 바뀌었다 — 같은 채널에 같은 키가 여러 건 있을 수 있어서.
+        reloaded.Rows.Find(rules[0].Id)!.Delete();
         var deleteResult = ManagedTableChangeApplier.Apply(adapter, reloaded);
 
         Assert.AreEqual(1, deleteResult.Deleted);

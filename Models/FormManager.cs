@@ -54,7 +54,51 @@ public static class FormManager
             dialog.Activate();
             dialog.BringToFront();
         };
-        return owner != null ? dialog.ShowDialog(owner) : dialog.ShowDialog();
+
+        // WinForms는 모달을 띄울 때 같은 스레드의 다른 창을 모두 비활성화했다가 닫힐 때 되돌린다.
+        // 그 사이 창 핸들이 재생성되거나 모달 루프 안에서 예외가 나면(BeginInvoke로 들어온 갱신
+        // 콜백 등) 되돌리기가 원래 창에 닿지 못해, 그 창만 영구히 클릭이 안 되는 상태로 남는다
+        // (2026-09-07 신고: 마감/이익분석 창만 조작 불가, MainHub는 정상). 모달 진입 전에 켜져
+        // 있던 창을 기억해뒀다가 끝난 뒤 직접 되살린다.
+        var enabledBefore = Application.OpenForms.OfType<Form>()
+            .Where(f => f.Enabled && !ReferenceEquals(f, dialog))
+            .ToList();
+        try
+        {
+            return owner != null ? dialog.ShowDialog(owner) : dialog.ShowDialog();
+        }
+        finally
+        {
+            RestoreEnabled(enabledBefore);
+        }
+    }
+
+    /// <summary>모달이 끝난 뒤에도 비활성 상태로 남은 창을 되살린다.</summary>
+    private static void RestoreEnabled(IEnumerable<Form> forms)
+    {
+        foreach (var form in forms)
+        {
+            try
+            {
+                if (!form.IsDisposed && !form.Enabled) form.Enabled = true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // 모달이 떠 있는 동안 닫힌 창 — 되살릴 대상이 아니다.
+            }
+        }
+    }
+
+    /// <summary>
+    /// 모달이 아닌데도 비활성 상태로 남아 있는 창을 모두 되살린다(창이 클릭되지 않는 상태 복구용).
+    /// 모달 다이얼로그가 떠 있는 동안에는 비활성화가 정상 동작이므로 아무것도 하지 않는다.
+    /// </summary>
+    public static void RestoreFrozenForms()
+    {
+        var openForms = Application.OpenForms.OfType<Form>().ToList();
+        if (openForms.Any(f => f.Modal)) return;
+
+        RestoreEnabled(openForms);
     }
 
     /// <summary>

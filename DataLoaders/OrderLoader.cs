@@ -33,52 +33,11 @@ public class OrderLoader
         {
             using var package = ExcelFileOpener.Open(filePath, password);
 
-            // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.
-            // 여기서는 첫 번째 유효한 매핑 설정을 기준으로 합니다.
-            var firstValidMapping = channelConfig.OrderFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
-            if (firstValidMapping == null)
-            {
-                throw new InvalidOperationException($"채널 '{channelConfig.ChannelName}'에 유효한 필드 매핑 설정이 없습니다.");
-            }
-
-            var sheetName = firstValidMapping.SheetName;
-            var headerRow = firstValidMapping.HeaderRow;
-
-            var worksheet = !string.IsNullOrEmpty(sheetName)
-                ? package.Workbook.Worksheets[sheetName]
-                : package.Workbook.Worksheets.FirstOrDefault();
-
-            if (worksheet == null)
-            {
-                throw new FileNotFoundException($"엑셀 파일에서 '{sheetName ?? "첫 번째"}' 시트를 찾을 수 없습니다.");
-            }
-
-            // 헤더 이름을 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
-            var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
-            {
-                var header = worksheet.Cells[headerRow, col].Value?.ToString();
-                if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
-                {
-                    headerToIndexMap[header] = col;
-                }
-            }
-
-            // 표준 필드를 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
-            // 고정값이 설정된 필드는 엑셀에서 읽지 않고 항상 그 값을 사용합니다(예: 고정거래처의 수취인/주소).
-            var stdFieldToIndexMap = new Dictionary<StdField, int>();
-            var fixedValues = new Dictionary<StdField, string>();
-            foreach (var (stdField, mapping) in channelConfig.OrderFieldMappings)
-            {
-                if (!string.IsNullOrEmpty(mapping.FixedValue))
-                {
-                    fixedValues[stdField] = mapping.FixedValue;
-                }
-                else if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
-                {
-                    stdFieldToIndexMap[stdField] = index;
-                }
-            }
+            var layout = ResolveLayout(package, channelConfig);
+            var worksheet = layout.Worksheet;
+            var headerRow = layout.HeaderRow;
+            var stdFieldToIndexMap = layout.ColumnByField;
+            var fixedValues = layout.FixedValues;
 
             // 설정된 매핑이 하나도 헤더 행과 맞지 않으면(헤더 행이 비어있거나 셀이 병합된 경우 등)
             // 이후 모든 값이 공란으로 나오게 되므로, 호출 측이 경고할 수 있도록 표시해둔다.
@@ -125,7 +84,11 @@ public class OrderLoader
                     Revenue = revenue,
                     Recipient = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Recipient),
                     Phone = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Phone),
-                    Address = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
+                    // 주소가 "주소"+"주소상세" 두 열로 나뉘어 오는 발주서는 여기서 한 값으로 합친다
+                    // (주소상세 매핑이 없는 채널은 기존과 완전히 동일).
+                    Address = CombineAddress(
+                        GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.Address),
+                        GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.AddressDetail)),
                     TrackingNo = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.TrackingNo),
                     CourierName = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.CourierName),
                     DeliveryMessage = GetTextValue(worksheet, row, stdFieldToIndexMap, fixedValues, StdField.DeliveryMessage),
@@ -150,6 +113,63 @@ public class OrderLoader
     }
 
     /// <summary>
+    /// 채널설정의 발주서매핑으로 "이 파일의 어느 시트·어느 행이 헤더이고, 표준필드가 몇 번째 열인지"를
+    /// 결정한다. 읽기(LoadFromFileAsync)와 쓰기(CumulativeOrderTrackingWriter)가 반드시 같은 시트·같은
+    /// 열을 봐야 해서 공용으로 뽑아두었다 — 한쪽만 바뀌면 "읽을 땐 맞는데 쓸 땐 엉뚱한 열"이 된다.
+    /// </summary>
+    public static OrderSheetLayout ResolveLayout(ExcelPackage package, ChannelConfig channelConfig)
+    {
+        // 채널 설정에서 주로 사용할 시트와 헤더 행을 결정합니다.
+        // 여기서는 첫 번째 유효한 매핑 설정을 기준으로 합니다.
+        var firstValidMapping = channelConfig.OrderFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column));
+        if (firstValidMapping == null)
+        {
+            throw new InvalidOperationException($"채널 '{channelConfig.ChannelName}'에 유효한 필드 매핑 설정이 없습니다.");
+        }
+
+        var sheetName = firstValidMapping.SheetName;
+        var headerRow = firstValidMapping.HeaderRow;
+
+        var worksheet = !string.IsNullOrEmpty(sheetName)
+            ? package.Workbook.Worksheets[sheetName]
+            : package.Workbook.Worksheets.FirstOrDefault();
+
+        if (worksheet == null)
+        {
+            throw new FileNotFoundException($"엑셀 파일에서 '{sheetName ?? "첫 번째"}' 시트를 찾을 수 없습니다.");
+        }
+
+        // 헤더 이름을 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
+        var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int col = 1; col <= (worksheet.Dimension?.End.Column ?? 0); col++)
+        {
+            var header = worksheet.Cells[headerRow, col].Value?.ToString()?.Trim();
+            if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
+            {
+                headerToIndexMap[header] = col;
+            }
+        }
+
+        // 표준 필드를 키로, 열 인덱스를 값으로 하는 맵을 생성합니다.
+        // 고정값이 설정된 필드는 엑셀에서 읽지 않고 항상 그 값을 사용합니다(예: 고정거래처의 수취인/주소).
+        var stdFieldToIndexMap = new Dictionary<StdField, int>();
+        var fixedValues = new Dictionary<StdField, string>();
+        foreach (var (stdField, mapping) in channelConfig.OrderFieldMappings)
+        {
+            if (!string.IsNullOrEmpty(mapping.FixedValue))
+            {
+                fixedValues[stdField] = mapping.FixedValue;
+            }
+            else if (!string.IsNullOrEmpty(mapping.Column) && headerToIndexMap.TryGetValue(mapping.Column, out var index))
+            {
+                stdFieldToIndexMap[stdField] = index;
+            }
+        }
+
+        return new OrderSheetLayout(worksheet, headerRow, stdFieldToIndexMap, fixedValues, headerToIndexMap);
+    }
+
+    /// <summary>
     /// 매핑된 모든 필드 값이 공란인 행인지 판단한다(엑셀의 빈 줄, 서식만 있는 꼬리 행 등을
     /// 걸러내기 위함). 고정값(예: 고정거래처의 수취인)이 설정된 필드는 항상 채워져 있으므로,
     /// 그런 채널은 이 검사로 행이 걸러지지 않는다(의도된 동작 — 실제로 빈 행이 아님). 수량은
@@ -165,6 +185,24 @@ public class OrderLoader
         && string.IsNullOrWhiteSpace(item.DeliveryMessage)
         && string.IsNullOrWhiteSpace(item.Remark)
         && item.OrderDate is null;
+
+    /// <summary>
+    /// 두 열로 나뉘어 있는 주소("서울특별시 강서구 등촌동 644-24" + "3층")를 택배 송장에 그대로 실을
+    /// 수 있는 한 줄로 합친다. 한쪽이 비어 있으면 나머지만 쓰고, 이미 상세가 주소 끝에 그대로
+    /// 들어있는 파일(두 열에 같은 내용이 중복된 경우)은 붙이지 않는다 — 발주서마다 상세 열을 비워두는
+    /// 행과 채운 행이 섞여 있어 단순 연결만 하면 "…644-24 3층 3층" 같은 주소가 나온다.
+    /// </summary>
+    public static string? CombineAddress(string? address, string? addressDetail)
+    {
+        var head = address?.Trim();
+        var tail = addressDetail?.Trim();
+
+        if (string.IsNullOrEmpty(tail)) return address;
+        if (string.IsNullOrEmpty(head)) return tail;
+        if (head.EndsWith(tail, StringComparison.Ordinal)) return head;
+
+        return $"{head} {tail}";
+    }
 
     private string? GetValue(ExcelWorksheet worksheet, int row, Dictionary<StdField, int> map, Dictionary<StdField, string> fixedValues, StdField field)
     {
@@ -213,3 +251,15 @@ public class OrderLoader
         return DateTime.TryParse(cell.Value?.ToString(), out var parsed) ? parsed : null;
     }
 }
+
+/// <summary>
+/// 발주서 파일에서 "어느 시트의 몇 번째 행이 헤더이고, 표준필드가 몇 번째 열인지"를 담는다.
+/// HeadersInFile은 헤더 행에 실제로 존재한 열 이름 전체 — 매핑이 빗나갔을 때 "파일엔 이런 열이
+/// 있습니다"라고 안내하기 위한 진단용이다.
+/// </summary>
+public sealed record OrderSheetLayout(
+    ExcelWorksheet Worksheet,
+    int HeaderRow,
+    Dictionary<StdField, int> ColumnByField,
+    Dictionary<StdField, string> FixedValues,
+    Dictionary<string, int> HeadersInFile);

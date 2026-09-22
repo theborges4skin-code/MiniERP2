@@ -17,8 +17,16 @@ public static class TrackingLabelClassifier
     public const string Partner = "거래처";
     public const string Other = "기타";
 
+    /// <summary>수동 정정 메뉴에 띄울 라벨 목록. 자동 판정이 낼 수 있는 값과 정확히 같아야
+    /// 필터 콤보(라벨별 분류)가 어긋나지 않는다.</summary>
+    public static readonly string[] AllLabels =
+        [OnlineOrder, CoupangRocket, NaverFulfillment, AmazonFba, Partner, Other];
+
     private static readonly string[] RocketProductKeywords = ["로켓", "쿠팡풀필"];
-    private static readonly string[] RocketCenterNames = ["동탄", "인천", "창원", "대구", "경기광주", "전라광주"];
+    // 물류센터 목록은 실제 파일에서 확인되는 대로 늘려간다. 수령인이 "이천2 (로켓...)" 처럼 센터명
+    // 뒤에 숫자가 붙는 형태라 (센터명)\d 패턴으로 잡는다.
+    private static readonly string[] RocketCenterNames =
+        ["동탄", "인천", "창원", "대구", "경기광주", "전라광주", "이천", "안산", "고양"];
     private static readonly Regex RocketCenterPattern = new(
         $"(?:{string.Join("|", RocketCenterNames)})\\s*\\d", RegexOptions.Compiled);
 
@@ -36,7 +44,10 @@ public static class TrackingLabelClassifier
 
         if (memo.TrimStart().StartsWith('#')) return OnlineOrder;
 
-        if (RocketProductKeywords.Any(k => productName.Contains(k, StringComparison.OrdinalIgnoreCase))
+        // "로켓"/"쿠팡풀필"은 품목명뿐 아니라 수령인에도 자주 들어간다("이천2 (로켓배송)" 등).
+        // 예전에는 품목명만 봐서, 품목명이 비어 있는 로켓 건이 통째로 기타로 빠졌다.
+        if (RocketProductKeywords.Any(k => productName.Contains(k, StringComparison.OrdinalIgnoreCase)
+                                           || recipient.Contains(k, StringComparison.OrdinalIgnoreCase))
             || RocketCenterPattern.IsMatch(recipient))
         {
             return CoupangRocket;

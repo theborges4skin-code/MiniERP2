@@ -25,7 +25,7 @@ public class PartnerConsolidationAggregatorTests
         _docPartyRepository = new DocPartyRepository();
         _itemRepository = new ItemRepository();
         var resolver = new PartnerSupplyPriceResolver(_channelSkuRepository, _docPartyRepository);
-        _aggregator = new PartnerConsolidationAggregator(resolver, _itemRepository);
+        _aggregator = new PartnerConsolidationAggregator(resolver, _itemRepository, _channelSkuRepository);
     }
 
     [TestCleanup]
@@ -135,6 +135,27 @@ public class PartnerConsolidationAggregatorTests
         Assert.IsTrue(detail.IsCostMissing);
         // 매출액은 원가와 무관하게 계산된다.
         Assert.AreEqual(10000m, detail.SupplyRevenue);
+    }
+
+    [TestMethod]
+    public void Aggregate_NoCskuRegisteredOnOwnChannel_StillInheritsFromMasterByMsku()
+    {
+        // 온라인 취합 로더가 "채널에 CSKU 자체가 없는" 행을 Mapped로 남길 때(ResolvedCskuCode를
+        // 매핑SKU 그대로 채움)도, 그 CSKU 코드가 자체 채널 DB에 실재하지 않을 뿐 대표단가 채널에
+        // 같은 마스터SKU의 CSKU가 있으면 정상적으로 상속되어야 한다 — CSKU 미등록이 곧 "영구
+        // 미배정"이 되어서는 안 된다.
+        SavePartner("CH_MASTER", "펩투나", isPriceMaster: true);
+        SavePartner("CH_SUB", "펩투나");
+        SaveCsku("CH_MASTER", "M-SKU1", "MSKU1", 5000m);
+
+        var rows = new[] { MappedRow("펩투나", "CH_SUB", "MSKU1", "MSKU1", 4) };
+
+        var result = _aggregator.Aggregate(rows);
+
+        var detail = result.CskuDetails[0];
+        Assert.AreEqual(SupplyPriceSource.Inherited, detail.PriceSource);
+        Assert.AreEqual(5000m, detail.SupplyPrice);
+        Assert.AreEqual(20000m, detail.SupplyRevenue);
     }
 
     [TestMethod]

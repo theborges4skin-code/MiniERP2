@@ -21,6 +21,7 @@ public class SimpleMarginCalculatorForm : Form
     private readonly SalesChannelRepository _channelRepository = new();
     private readonly ChannelSkuRepository _cskuRepository = new();
     private readonly SimpleMarginCalculatorScenarioService _scenarioService = new();
+    private readonly SimpleMarginCalculatorLastStateService _lastStateService = new();
 
     private ExcelLikeDataGridView _mainGrid = new();
     private Label _totalLabel = new();
@@ -29,20 +30,25 @@ public class SimpleMarginCalculatorForm : Form
     {
         InitializeComponent();
         FormManager.ApplyBoundsTracking(this);
-        AddRow();
+        RestoreLastState();
         FormClosing += OnFormClosing;
     }
 
-    /// <summary>임시저장하지 않은 계산 내용이 있으면 닫기 전에 확인한다(간이 마진 계산기와 동일).</summary>
+    /// <summary>이름 붙인 임시저장 여부와 상관없이, 마지막으로 열려 있던 화면 그대로 복원한다.</summary>
+    private void RestoreLastState()
+    {
+        var rows = _lastStateService.Load();
+        if (rows.Count == 0) { AddRow(); return; }
+
+        foreach (var row in rows) _rows.Add(row);
+        RecalculateAll();
+    }
+
+    /// <summary>닫을 때마다 현재 화면을 자동으로 남겨, 다음에 열 때 그대로 이어서 볼 수 있게 한다
+    /// (이름 붙여 저장하는 "임시저장"과는 별개).</summary>
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_rows.Any(r => !IsBlankRow(r)))
-        {
-            var result = MessageBox.Show(
-                "저장하지 않은 계산 내용이 있습니다. 임시저장하지 않으면 사라집니다.\n닫으시겠습니까?",
-                "확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            if (result != DialogResult.Yes) e.Cancel = true;
-        }
+        _lastStateService.Save(_rows.Where(r => !IsBlankRow(r)).ToList());
     }
 
     private void InitializeComponent()

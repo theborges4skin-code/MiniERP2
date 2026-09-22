@@ -109,15 +109,46 @@ public class PartnerConsolidationFileLoaderTests
     }
 
     [TestMethod]
-    public void Load_MappedRow_NoMatchAtAll_MarksCskuUnresolved()
+    public void Load_MappedRow_NoMatchAtAll_AutoCreatesAndPersistsNewCsku_StaysMapped()
     {
+        // 채널에 이 CSKU 자체가 등록돼 있지 않은 경우(과거 방식 1:1 규칙 등) — CskuUnresolved로
+        // 빠지면 "미매핑·제외" 탭에 묻혀 납품단가 입력 대상이 되지 못하므로 Mapped를 유지해야
+        // 한다. 매핑SKU를 마스터SKU로 간주해 그 채널에 새 CSKU를 즉시 만들어 저장한다(2026-09
+        // 사용자 피드백: 화면 표시용 가짜 코드만 보여주고 저장하지 않으면 CSKU 편집 화면에서
+        // 일괄수정할 대상이 없어 매번 하나하나 새로 등록해야 했다) — SalesChannel이 등록되지
+        // 않은 채널이라 코드 접두사는 채널코드 자체로 대체된다.
         using var package = BuildPackage(
             [["CH1", "그룹1", "상품A", "옵션1", "UNKNOWN-SKU", 1, 1000, 900, 100, 0, 500, "매핑(1:1)"]],
             new FileMeta { ChannelCode = "CH1", CompanyName = "펩투나" });
 
         var file = PartnerConsolidationFileLoader.LoadFromPackage(package, "a.xlsx", _channelSkuRepository);
 
-        Assert.AreEqual(PartnerConsolidationRowKind.CskuUnresolved, file.Rows[0].Kind);
+        var row = file.Rows[0];
+        Assert.AreEqual(PartnerConsolidationRowKind.Mapped, row.Kind);
+        Assert.AreEqual("CH1_UNKNOWN-SKU", row.ResolvedCskuCode);
+        Assert.AreEqual("UNKNOWN-SKU", row.ResolvedMsku);
+
+        var persisted = _channelSkuRepository.GetByChannelAndCskuCode("CH1", "CH1_UNKNOWN-SKU");
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual("UNKNOWN-SKU", persisted!.Msku);
+    }
+
+    [TestMethod]
+    public void Load_MappedRow_NoMatchAtAll_CalledTwiceForSameMsku_ReusesSameAutoCreatedCsku()
+    {
+        // 같은 파일(또는 같은 채널) 안에서 같은 미등록 마스터SKU가 여러 행에 반복되면, 매번 새
+        // CSKU를 만드는 게 아니라 첫 행에서 만든 CSKU를 재사용해야 한다(캐시 갱신 확인).
+        using var package = BuildPackage(
+            [
+                ["CH1", "그룹1", "상품A", "옵션1", "UNKNOWN-SKU", 1, 1000, 900, 100, 0, 500, "매핑(1:1)"],
+                ["CH1", "그룹1", "상품A", "옵션2", "UNKNOWN-SKU", 2, 1000, 900, 100, 0, 500, "매핑(1:1)"],
+            ],
+            new FileMeta { ChannelCode = "CH1", CompanyName = "펩투나" });
+
+        var file = PartnerConsolidationFileLoader.LoadFromPackage(package, "a.xlsx", _channelSkuRepository);
+
+        Assert.AreEqual(file.Rows[0].ResolvedCskuCode, file.Rows[1].ResolvedCskuCode);
+        Assert.AreEqual(1, _channelSkuRepository.GetAllByChannel("CH1").Count(c => c.Msku == "UNKNOWN-SKU"));
     }
 
     [TestMethod]

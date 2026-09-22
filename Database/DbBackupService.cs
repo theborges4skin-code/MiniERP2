@@ -72,4 +72,80 @@ public class DbBackupService
             }
         }
     }
+
+    private const int DailyBackupRetentionMonths = 2;
+
+    /// <summary>
+    /// 프로그램 종료 시 호출하는 일일 자동 백업. 수동/가져오기 백업(<see cref="CreateBackup"/>,
+    /// 최신 3개만 보관)과는 파일명 프리픽스를 아예 다르게 써서 서로의 보관 개수 정리에 영향을
+    /// 주지 않는다. 하루 안에 여러 번 종료해도 같은 날짜 파일 하나만 계속 덮어쓰고(마지막 종료
+    /// 시점 스냅샷만 의미가 있으므로), 날짜가 바뀌면 새 파일을 만든다. 2개월(<see
+    /// cref="DailyBackupRetentionMonths"/>)보다 오래된 날짜 파일은 자동으로 정리한다.
+    /// </summary>
+    public string CreateOrUpdateDailyBackup()
+    {
+        Directory.CreateDirectory(BackupsFolder);
+
+        SqliteConnection.ClearAllPools();
+
+        var fileName = $"ERP_DailyBackup_{DateTime.Now:yyyyMMdd}.sqlite";
+        var backupPath = Path.Combine(BackupsFolder, fileName);
+        File.Copy(PathProvider.DatabaseFilePath, backupPath, overwrite: true);
+
+        PruneOldDailyBackups();
+        return backupPath;
+    }
+
+    /// <summary>보관된 일일 백업 목록을 최신순으로 가져온다.</summary>
+    public List<FileInfo> GetDailyBackups()
+    {
+        if (!Directory.Exists(BackupsFolder)) return [];
+
+        return new DirectoryInfo(BackupsFolder)
+            .GetFiles("ERP_DailyBackup_*.sqlite")
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .ToList();
+    }
+
+    private void PruneOldDailyBackups()
+    {
+        var cutoffUtc = DateTime.UtcNow.AddMonths(-DailyBackupRetentionMonths);
+        foreach (var old in GetDailyBackups().Where(f => f.LastWriteTimeUtc < cutoffUtc))
+        {
+            try
+            {
+                old.Delete();
+            }
+            catch (IOException)
+            {
+                // 다른 프로세스가 잠깐 잠그고 있어도 다음 종료 시점에 다시 정리되므로 무시한다.
+            }
+        }
+    }
+
+    /// <summary>
+    /// 이번 달(YYYY-MM) 월간 전체백업이 아직 없으면 true. 매월 1일 종료 시 "이번 달 전체백업"을
+    /// 물어볼지 판단하는 데 쓴다 — 같은 달에 여러 번 종료해도 한 번만 묻게 하는 용도.
+    /// </summary>
+    public bool NeedsMonthlyBackup() =>
+        !Directory.Exists(BackupsFolder) ||
+        !new DirectoryInfo(BackupsFolder).GetFiles($"ERP_MonthlyBackup_{DateTime.Now:yyyyMM}*.sqlite").Any();
+
+    /// <summary>
+    /// 월간 전체백업을 만든다. 일일/수동 백업과는 별도 파일명 체계를 써서 서로의 보관 개수 정리에
+    /// 영향을 주지 않으며, 자동 정리(prune) 대상이 아니라 계속 보관된다 — 매월 1건뿐이라 용량
+    /// 부담이 적고, 다른 백업들이 순환 삭제되는 사이에도 월 단위 스냅샷은 남겨두기 위함이다.
+    /// </summary>
+    public string CreateMonthlyBackup()
+    {
+        Directory.CreateDirectory(BackupsFolder);
+
+        SqliteConnection.ClearAllPools();
+
+        var fileName = $"ERP_MonthlyBackup_{DateTime.Now:yyyyMM}.sqlite";
+        var backupPath = Path.Combine(BackupsFolder, fileName);
+        File.Copy(PathProvider.DatabaseFilePath, backupPath, overwrite: true);
+
+        return backupPath;
+    }
 }

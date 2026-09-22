@@ -26,4 +26,17 @@ public interface IManagedDataTable
 
     /// <summary>기존 행을 키 컬럼 값으로 찾아 삭제합니다(row[col, DataRowVersion.Original] 기준).</summary>
     void Delete(DataRow row);
+
+    /// <summary>
+    /// 엑셀 내보내기 맨 첫 데이터행에 넣을 예시 행(선택 구현). 기본값 null이면 예시 행 없이
+    /// 기존과 동일하게 동작한다. 구현하면 DB에 저장된 실제 데이터 위에 이 예시 행이 항상 먼저
+    /// 나온다 — DB가 비어 있어도 양식 역할을 하고, 데이터가 있어도 그 위에 이어 붙는다.
+    /// </summary>
+    DataRow? CreateSampleRow(DataTable table) => null;
+
+    /// <summary>
+    /// 엑셀 불러오기 시 이 행을 예시 행으로 보고 자동 제외할지 판단한다(선택 구현). 사용자가
+    /// 예시 행을 지우지 않고 그대로 업로드해도 실제 데이터로 반영되지 않게 하기 위함이다.
+    /// </summary>
+    bool IsSampleRow(IReadOnlyDictionary<string, string?> rawRow) => false;
 }

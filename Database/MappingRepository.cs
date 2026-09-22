@@ -407,6 +407,23 @@ public class MappingRepository
     }
 
     /// <summary>
+    /// 단순 규칙(1:1/임시/예외) 1건을 Id로 갱신합니다. (ChannelCode, Key)에는 유니크 제약이 없어
+    /// 같은 키가 여러 건 있을 수 있으므로, 데이터 관리창의 수정은 자연키가 아니라 Id로 대상을 찍는다.
+    /// </summary>
+    public void UpdateRule(MappingRuleType ruleType, long id, string channelCode, string key, string targetSku)
+    {
+        var tableName = GetTableName(ruleType);
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE {tableName} SET ChannelCode = $channelCode, Key = $key, TargetSku = $targetSku WHERE Id = $id";
+        command.Parameters.AddWithValue("$channelCode", channelCode);
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$targetSku", targetSku);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// 조건부 매핑 규칙의 요약 정보(Key/TargetSku/TargetMsku)만 갱신합니다. 상세조건은 건드리지 않습니다.
     /// </summary>
     public void UpdateConditionRuleSummary(long ruleId, string key, string targetSku, string targetMsku = "")

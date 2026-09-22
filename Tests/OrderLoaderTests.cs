@@ -276,6 +276,54 @@ public class OrderLoaderTests
         Assert.IsNull(items[0].Revenue);
     }
 
+    /// <summary>
+    /// 발주서가 수취인 주소를 "주소" + "주소상세"(동/호수) 두 열로 주는 경우, 읽을 때 한 줄로
+    /// 합쳐야 한다 — 택배 송장에는 주소가 한 값으로 실리고, 이력 매칭도 합쳐진 주소 기준이다.
+    /// </summary>
+    [TestMethod]
+    public async Task LoadFromFileAsync_AddressSplitInTwoColumns_MergesIntoOneAddress()
+    {
+        ExcelLicense.Ensure();
+        using (var package = new ExcelPackage())
+        {
+            var sheet = package.Workbook.Worksheets.Add("Sheet1");
+            sheet.Cells[1, 1].Value = "주문번호";
+            sheet.Cells[1, 2].Value = "상품명";
+            sheet.Cells[1, 3].Value = "수취인 주소";
+            sheet.Cells[1, 4].Value = "수취인 주소상세";
+            sheet.Cells[2, 1].Value = "ORDER-1";
+            sheet.Cells[2, 2].Value = "상품A";
+            sheet.Cells[2, 3].Value = "서울특별시 강서구 등촌동 644-24";
+            sheet.Cells[2, 4].Value = "3층";
+            // 상세가 비어 있는 행도 섞여 있다(같은 파일 안에서 흔함) — 꼬리 공백이 붙으면 안 된다.
+            sheet.Cells[3, 1].Value = "ORDER-2";
+            sheet.Cells[3, 2].Value = "상품B";
+            sheet.Cells[3, 3].Value = "경기도 광명시 오리로1004번길 11 (광명동, 금정빌라)";
+            package.SaveAs(new FileInfo(_excelFilePath));
+        }
+
+        var channelConfig = BuildChannelConfig();
+        channelConfig.OrderFieldMappings[StdField.Address] = new FieldMapping { HeaderRow = 1, Column = "수취인 주소" };
+        channelConfig.OrderFieldMappings[StdField.AddressDetail] = new FieldMapping { HeaderRow = 1, Column = "수취인 주소상세" };
+
+        var skuMapper = new SkuMapper(new MappingRepository(), "CH-A");
+        var items = await new OrderLoader().LoadFromFileAsync(skuMapper, channelConfig, _excelFilePath);
+
+        Assert.HasCount(2, items);
+        Assert.AreEqual("서울특별시 강서구 등촌동 644-24 3층", items[0].Address);
+        Assert.AreEqual("경기도 광명시 오리로1004번길 11 (광명동, 금정빌라)", items[1].Address);
+    }
+
+    [TestMethod]
+    public void CombineAddress_EmptyOrDuplicatedDetail_DoesNotAppend()
+    {
+        Assert.AreEqual("서울시 강남구", OrderLoader.CombineAddress("서울시 강남구", null));
+        Assert.AreEqual("서울시 강남구", OrderLoader.CombineAddress("서울시 강남구", "   "));
+        Assert.AreEqual("3층", OrderLoader.CombineAddress(null, "3층"));
+        // 상세가 이미 주소 끝에 포함된 파일(두 열에 같은 내용이 중복) — "…3층 3층"이 되면 안 된다.
+        Assert.AreEqual("서울시 강남구 3층", OrderLoader.CombineAddress("서울시 강남구 3층", "3층"));
+    }
+
     [TestMethod]
     public void IsBlankRow_AllMappedFieldsBlank_ReturnsTrue()
     {

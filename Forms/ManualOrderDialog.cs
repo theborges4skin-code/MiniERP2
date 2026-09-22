@@ -1,4 +1,5 @@
 using MiniERP2.Config;
+using MiniERP2.DataLoaders;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.Utils;
@@ -79,6 +80,9 @@ public class ManualOrderDialog : Form
         if (_fixedValues.TryGetValue(StdField.Recipient, out var r)) item.Recipient = r;
         if (_fixedValues.TryGetValue(StdField.Phone, out var p)) item.Phone = p;
         if (_fixedValues.TryGetValue(StdField.Address, out var a)) item.Address = a;
+        // 주소를 두 열(주소 + 주소상세)로 고정해둔 채널도 발주서 로드와 같은 규칙으로 합쳐준다.
+        if (_fixedValues.TryGetValue(StdField.AddressDetail, out var ad))
+            item.Address = OrderLoader.CombineAddress(item.Address, ad);
         if (_fixedValues.TryGetValue(StdField.DeliveryMessage, out var d)) item.DeliveryMessage = d;
     }
 

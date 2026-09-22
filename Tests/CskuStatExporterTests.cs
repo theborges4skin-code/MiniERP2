@@ -70,7 +70,7 @@ public class CskuStatExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["로켓그로스"];
         Assert.IsNotNull(sheet);
-        Assert.AreEqual("그로스배송비", sheet.Cells[1, 12].Value);
+        Assert.AreEqual("그로스배송비", sheet.Cells[1, 14].Value);
     }
 
     [TestMethod]
@@ -87,9 +87,9 @@ public class CskuStatExporterTests
         using var package = new ExcelPackage(new FileInfo(_filePath));
         var sheet = package.Workbook.Worksheets["아마존"];
         Assert.IsNotNull(sheet);
-        Assert.AreEqual("매출액(원)", sheet.Cells[1, 16].Value);
-        Assert.AreEqual(950d, Convert.ToDouble(sheet.Cells[2, 16].Value));
-        Assert.AreEqual(9.5d, Convert.ToDouble(sheet.Cells[2, 19].Value));
+        Assert.AreEqual("매출액(원)", sheet.Cells[1, 18].Value);
+        Assert.AreEqual(950d, Convert.ToDouble(sheet.Cells[2, 18].Value));
+        Assert.AreEqual(9.5d, Convert.ToDouble(sheet.Cells[2, 21].Value));
     }
 
     [TestMethod]

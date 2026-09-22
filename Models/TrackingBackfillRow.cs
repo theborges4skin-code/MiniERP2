@@ -23,6 +23,14 @@ public class TrackingBackfillRow
     /// <summary>분류 라벨(쿠팡로켓/네이버풀필/아마존FBA/거래처/기타/온라인주문). 판정용이 아니라 필터·정렬용.</summary>
     public string Label { get; set; } = string.Empty;
 
+    /// <summary>자동 분류기(TrackingLabelClassifier)가 매긴 원래 라벨. 수동 정정을 "자동 판정으로
+    /// 되돌리기"할 때 파일을 다시 읽지 않고 이 값으로 복구한다.</summary>
+    public string AutoLabel { get; set; } = string.Empty;
+
+    /// <summary>사용자가 라벨을 직접 고친 행인지(TrackingLabelOverrideTable에 정정분이 있는 행).
+    /// 그리드에서 굵게 표시해 자동 판정과 구분한다.</summary>
+    public bool IsManualLabel { get; set; }
+
     /// <summary>DB(OutboundDetailTable)에 이미 이 운송장번호가 존재하는지 — GetExistingTrackingNos 조회 결과.</summary>
     public bool IsRegistered { get; set; }
 

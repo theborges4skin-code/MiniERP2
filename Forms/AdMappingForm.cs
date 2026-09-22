@@ -282,6 +282,10 @@ public class AdMappingForm : Form
         btnSaveReport.Click += OnSaveAdFactClick;
         toolStrip.Controls.Add(btnSaveReport);
 
+        var btnResetWindow = new Button { Text = "창 초기화", Size = new Size(90, 30) };
+        btnResetWindow.Click += OnResetWindowClick;
+        toolStrip.Controls.Add(btnResetWindow);
+
         _unmappedOnlyCheckBox = new CheckBox
         {
             Text = "미매핑만 보기",
@@ -512,6 +516,18 @@ public class AdMappingForm : Form
         ApplyUnmappedFilter();
         UpdateAdSummary();
         UpdateConditionPreview();
+    }
+
+    /// <summary>
+    /// 창을 껐다 다시 킨 것처럼 채널 선택/필터 등 창 전체 상태를 완전히 새로 초기화한다.
+    /// 위 "불러온 항목 초기화"는 불러온 데이터만 지우지만, 이건 채널 선택까지 포함해 처음
+    /// 연 상태로 되돌리고 싶을 때(예: 다른 채널로 전환하며 새로 시작) 확인창 없이 즉시 처리한다.
+    /// </summary>
+    private void OnResetWindowClick(object? sender, EventArgs e)
+    {
+        var newForm = new AdMappingForm();
+        newForm.Show();
+        Close();
     }
 
     private Models.AdFileLayout? PickLayout(IReadOnlyList<Models.AdFileLayout> layouts, string prompt)

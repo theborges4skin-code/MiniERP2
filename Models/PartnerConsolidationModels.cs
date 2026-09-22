@@ -14,7 +14,11 @@ public enum PartnerConsolidationRowKind
     /// <summary>예외처리 규칙으로 이미 제외된 행(SettlementRowStatus.IsExcludedByExceptionRule).</summary>
     Excluded,
 
-    /// <summary>매핑은 됐으나 CSKU/마스터SKU 재대조 모두 실패(0개 또는 2개 이상 일치) — "CSKU 미확정".</summary>
+    /// <summary>매핑은 됐으나 마스터SKU 재대조가 2개 이상과 일치해 어느 CSKU가 맞는지 알 수 없음
+    /// — "CSKU 미확정". 재대조가 0개 일치(채널에 CSKU 자체가 없음)인 경우는 Mapped로 남고, 그
+    /// 채널에 새 CSKU를 자동 생성·저장한 뒤 그 코드로 확정한다(PartnerConsolidationFileLoader
+    /// .ResolveCsku 참고) — 신규 CSKU는 대부분 단가 미배정 상태로 시작하므로 자연히 "납품단가/명
+    /// 입력" 탭에 나타난다.</summary>
     CskuUnresolved,
 }
 
@@ -123,6 +127,10 @@ public class PartnerConsolidationCskuDetail
 
     public required string Msku { get; set; }
     public string ProductName { get; set; } = "";
+
+    /// <summary>대표 CSKU(위 CskuCode)에 등록된 송장출력용 상품명(ChannelSkuTable.InvoiceDisplayName).
+    /// 미등록이면 빈 문자열 — 실제 명세표/송장에 찍힐 이름이 품목명과 다른지 확인하기 위한 열이다.</summary>
+    public string InvoiceDisplayName { get; set; } = "";
     public int Quantity { get; set; }
     public decimal SupplyPrice { get; set; }
     public SupplyPriceSource PriceSource { get; set; }
@@ -147,6 +155,10 @@ public class PartnerConsolidationCskuDetail
 
     /// <summary>§6.5 "단가 미배정" 탭의 입력란 버퍼 — 화면 편집용이며 집계 결과 자체와는 무관하다.</summary>
     public decimal? EnteredPrice { get; set; }
+
+    /// <summary>§6.5 "단가 미배정" 탭의 송장표시명 입력란 버퍼 — 위 EnteredPrice와 마찬가지로
+    /// 화면 편집용이며 집계 결과 자체와는 무관하다. 대표단가 채널의 CSKU에 함께 저장된다.</summary>
+    public string? EnteredInvoiceDisplayName { get; set; }
 }
 
 /// <summary>§6.2/§6.5 "거래처 요약" — 거래처(CompanyName) 1행.</summary>

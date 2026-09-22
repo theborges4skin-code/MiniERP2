@@ -46,6 +46,7 @@ public class MappingForm : Form
         public MappingRuleType RuleType { get; set; }
         public long RuleId { get; set; }
         public string ChannelCode { get; set; } = string.Empty;
+        public string ChannelName { get; set; } = string.Empty;
         public string Key { get; set; } = string.Empty;
         public string TargetSku { get; set; } = string.Empty;
         public string Detail { get; set; } = string.Empty;
@@ -982,12 +983,12 @@ public class MappingForm : Form
             AutoGenerateColumns = false,
             AllowUserToAddRows = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect = false,
+            MultiSelect = true,
         };
         _unifiedRulesGrid.Columns.AddRange(
             new DataGridViewCheckBoxColumn { Name = "Selected", HeaderText = "선택", DataPropertyName = "Selected", Width = 40 },
             new DataGridViewTextBoxColumn { Name = "TypeLabel", HeaderText = "타입", DataPropertyName = "TypeLabel", Width = 80, ReadOnly = true },
-            new DataGridViewTextBoxColumn { Name = "ChannelCode", HeaderText = "채널", DataPropertyName = "ChannelCode", Width = 90, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "ChannelName", HeaderText = "채널", DataPropertyName = "ChannelName", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키", DataPropertyName = "Key", Width = 200, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU(CSKU)", DataPropertyName = "TargetSku", Width = 130, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "CskuMsku", HeaderText = "매칭된 마스터SKU", DataPropertyName = "CskuMsku", Width = 120 },
@@ -999,10 +1000,20 @@ public class MappingForm : Form
         );
         _unifiedRulesGrid.CellEndEdit += OnUnifiedRulesGridCellEndEdit;
         _unifiedRulesGrid.DataError += (s, e) => { e.ThrowException = false; };
+        // "선택" 체크박스 열은 클릭 한 번으로 바로 체크되는 것처럼 보이지만, 포커스가 그 셀에
+        //머무른 채(다른 셀/버튼으로 이동하지 않고) 바로 "선택 삭제"를 누르면 그 값이 아직
+        // 커밋되지 않아 삭제 대상에서 빠지는 문제가 있었다(예: 마지막으로 체크한 한 줄만 여기
+        // 해당). 다른 체크박스/콤보 열(_conditionDetailGrid 등)과 같은 패턴으로 즉시 커밋시킨다.
+        _unifiedRulesGrid.CurrentCellDirtyStateChanged += (s, e) =>
+        {
+            if (_unifiedRulesGrid.IsCurrentCellDirty) _unifiedRulesGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("이 규칙 수정하기(해당 탭으로 이동)", null, (s, e) => OnEditSelectedUnifiedRuleClick());
         menu.Items.Add("CSKU 변경 이력 보기", null, (s, e) => OnViewSelectedCskuHistoryClick());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("다중선택(선택한 행 모두 체크)", null, (s, e) => OnCheckSelectedUnifiedRuleRowsClick());
         _unifiedRulesGrid.ContextMenuStrip = menu;
         // CSKU 정보 열(마스터SKU/송장표시명/납품가/비고)은 이제 직접 편집 가능해졌으므로, 그 열을
         // 더블클릭하면 편집만 시작하고 "규칙 수정 탭으로 이동"은 그 외 열(타입/채널/키/대상SKU/상세)
@@ -1039,6 +1050,8 @@ public class MappingForm : Form
     {
         var rows = new List<UnifiedRuleRow>();
         var cskuCache = new Dictionary<(string ChannelCode, string TargetSku), ChannelSkuModel?>();
+        var channelNames = _salesChannelRepository.GetAll().ToDictionary(c => c.ChannelCode, c => c.ChannelName);
+        string ResolveChannelName(string channelCode) => channelNames.TryGetValue(channelCode, out var name) ? name : channelCode;
 
         ChannelSkuModel? ResolveCsku(string channelCode, string targetSku)
         {
@@ -1064,6 +1077,7 @@ public class MappingForm : Form
                     RuleType = ruleType,
                     RuleId = rule.Id,
                     ChannelCode = rule.ChannelCode,
+                    ChannelName = ResolveChannelName(rule.ChannelCode),
                     Key = rule.Key,
                     TargetSku = rule.TargetSku,
                     Detail = "-",
@@ -1090,6 +1104,7 @@ public class MappingForm : Form
                 RuleType = MappingRuleType.Condition,
                 RuleId = rule.Id,
                 ChannelCode = rule.ChannelCode,
+                ChannelName = ResolveChannelName(rule.ChannelCode),
                 Key = rule.Key,
                 TargetSku = rule.TargetSku,
                 Detail = string.IsNullOrEmpty(detailText) ? "(조건 없음)" : detailText,
@@ -1104,7 +1119,7 @@ public class MappingForm : Form
         _allUnifiedRules = rows;
 
         var previousChannel = _unifiedFilterChannelCombo.SelectedItem as string;
-        var channels = rows.Select(r => r.ChannelCode).Where(c => !string.IsNullOrEmpty(c)).Distinct().OrderBy(c => c).ToList();
+        var channels = rows.Select(r => r.ChannelName).Where(c => !string.IsNullOrEmpty(c)).Distinct().OrderBy(c => c).ToList();
         _unifiedFilterChannelCombo.Items.Clear();
         _unifiedFilterChannelCombo.Items.Add("(전체)");
         foreach (var channel in channels) _unifiedFilterChannelCombo.Items.Add(channel);
@@ -1120,7 +1135,7 @@ public class MappingForm : Form
         var keyword = _unifiedSearchTextBox.Text.Trim();
 
         var filtered = _allUnifiedRules
-            .Where(r => string.IsNullOrEmpty(channelFilter) || channelFilter == "(전체)" || r.ChannelCode == channelFilter)
+            .Where(r => string.IsNullOrEmpty(channelFilter) || channelFilter == "(전체)" || r.ChannelName == channelFilter)
             .Where(r => MatchesUnifiedRuleKeyword(r, target, keyword))
             .ToList();
 
@@ -1135,11 +1150,11 @@ public class MappingForm : Form
         return target switch
         {
             "타입" => Has(row.TypeLabel),
-            "채널" => Has(row.ChannelCode),
+            "채널" => Has(row.ChannelName),
             "키" => Has(row.Key),
             "대상 SKU" => Has(row.TargetSku),
             "상세" => Has(row.Detail),
-            _ => Has(row.TypeLabel) || Has(row.ChannelCode) || Has(row.Key) || Has(row.TargetSku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
+            _ => Has(row.TypeLabel) || Has(row.ChannelName) || Has(row.Key) || Has(row.TargetSku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
         };
     }
 
@@ -1224,6 +1239,19 @@ public class MappingForm : Form
         using var historyForm = new ChannelSkuHistoryForm(row.ChannelCode, row.TargetSku);
         FormManager.ApplyBoundsTracking(historyForm);
         FormManager.ShowDialogSafe(historyForm, this);
+    }
+
+    /// <summary>
+    /// 마우스로 여러 행을 선택(Shift/Ctrl 클릭 또는 드래그)한 뒤 우클릭 → "다중선택" 메뉴를 누르면
+    /// 그 행들의 "선택" 체크박스를 한꺼번에 체크한다. 삭제 대상 행을 하나씩 클릭할 필요 없이
+    /// 여러 건을 빠르게 체크하기 위한 단축 동작.
+    /// </summary>
+    private void OnCheckSelectedUnifiedRuleRowsClick()
+    {
+        foreach (DataGridViewRow row in _unifiedRulesGrid.SelectedRows)
+        {
+            row.Cells["Selected"].Value = true;
+        }
     }
 
     /// <summary>

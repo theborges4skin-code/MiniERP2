@@ -8,7 +8,8 @@ namespace MiniERP2.Mapping;
 /// 단위로 수량을 합산하고 납품매출액/납품이익액을 산출한다. CSKU 코드는 채널마다 다르게 발급될 수
 /// 있어(§5) 실제 집계 축은 마스터SKU이며, 화면/엑셀에는 대표 CSKU 코드 1개를 함께 보여준다.
 /// </summary>
-public class PartnerConsolidationAggregator(PartnerSupplyPriceResolver priceResolver, ItemRepository itemRepository)
+public class PartnerConsolidationAggregator(
+    PartnerSupplyPriceResolver priceResolver, ItemRepository itemRepository, ChannelSkuRepository channelSkuRepository)
 {
     /// <param name="rows">여러 파일에서 모은 전체 행. Kind != Mapped인 행은 무시한다(호출자가 별도
     /// 목록으로 이미 분리했어야 한다 — §6.4).</param>
@@ -34,6 +35,7 @@ public class PartnerConsolidationAggregator(PartnerSupplyPriceResolver priceReso
 
                 var item = itemRepository.GetBySku(msku);
                 var costPrice = item?.CostPrice; // null이면 W7: 제조원가 미등록
+                var invoiceDisplayName = channelSkuRepository.GetByChannelAndCskuCode(representative.ChannelCode, representative.ResolvedCskuCode!)?.InvoiceDisplayName ?? "";
 
                 var supplyRevenue = totalQty * priceResolution.Price;
                 decimal? supplyProfit = costPrice.HasValue ? supplyRevenue - totalQty * costPrice.Value : null;
@@ -44,6 +46,7 @@ public class PartnerConsolidationAggregator(PartnerSupplyPriceResolver priceReso
                     CskuCode = representative.ResolvedCskuCode!,
                     Msku = msku,
                     ProductName = item?.ItemName ?? representative.ProductName,
+                    InvoiceDisplayName = invoiceDisplayName,
                     Quantity = totalQty,
                     SupplyPrice = priceResolution.Price,
                     PriceSource = priceResolution.Source,

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using MiniERP2.Models;
 using OfficeOpenXml;
 
@@ -33,17 +33,21 @@ public static class TrackingBackfillFileParser
         int? recipientCol = null, trackingCol = null, orderNoCol = null, addressCol = null,
             productNameCol = null, receivedDateCol = null, freightCol = null;
 
+        // 헤더는 앞 열부터 찾아 "먼저" 일치한 열로 고정한다(??=). 로젠택배 결과 파일처럼 헤더가
+        // 2줄(그룹행 "수하인"/"송하인" + 항목행 "이름"/"주소")로 나뉜 양식은 항목행만 보면 같은
+        // 이름의 열이 수하인·송하인 양쪽에 있는데, 뒤에 나오는 열이 덮어쓰면 송하인을 수령인으로
+        // 읽어버린다. 수하인이 항상 앞에 오므로 먼저 찾은 열이 맞다.
         for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
         {
             var header = worksheet.Cells[headerRow, col].Value?.ToString()?.Trim();
             if (header is null) continue;
-            if (recipientHeaderCandidates.Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase))) recipientCol = col;
-            if (string.Equals(header, courier.TrackingImportTrackingNoHeader, StringComparison.OrdinalIgnoreCase)) trackingCol = col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportOrderNoHeader) && string.Equals(header, courier.TrackingImportOrderNoHeader, StringComparison.OrdinalIgnoreCase)) orderNoCol = col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportAddressHeader) && string.Equals(header, courier.TrackingImportAddressHeader, StringComparison.OrdinalIgnoreCase)) addressCol = col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportProductNameHeader) && string.Equals(header, courier.TrackingImportProductNameHeader, StringComparison.OrdinalIgnoreCase)) productNameCol = col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportReceivedDateHeader) && string.Equals(header, courier.TrackingImportReceivedDateHeader, StringComparison.OrdinalIgnoreCase)) receivedDateCol = col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportFreightCostHeader) && string.Equals(header, courier.TrackingImportFreightCostHeader, StringComparison.OrdinalIgnoreCase)) freightCol = col;
+            if (recipientHeaderCandidates.Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase))) recipientCol ??= col;
+            if (string.Equals(header, courier.TrackingImportTrackingNoHeader, StringComparison.OrdinalIgnoreCase)) trackingCol ??= col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportOrderNoHeader) && string.Equals(header, courier.TrackingImportOrderNoHeader, StringComparison.OrdinalIgnoreCase)) orderNoCol ??= col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportAddressHeader) && string.Equals(header, courier.TrackingImportAddressHeader, StringComparison.OrdinalIgnoreCase)) addressCol ??= col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportProductNameHeader) && string.Equals(header, courier.TrackingImportProductNameHeader, StringComparison.OrdinalIgnoreCase)) productNameCol ??= col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportReceivedDateHeader) && string.Equals(header, courier.TrackingImportReceivedDateHeader, StringComparison.OrdinalIgnoreCase)) receivedDateCol ??= col;
+            if (!string.IsNullOrWhiteSpace(courier.TrackingImportFreightCostHeader) && string.Equals(header, courier.TrackingImportFreightCostHeader, StringComparison.OrdinalIgnoreCase)) freightCol ??= col;
         }
 
         if (recipientCol is null || trackingCol is null)
@@ -83,7 +87,9 @@ public static class TrackingBackfillFileParser
             });
         }
 
-        foreach (var r in rows) r.Label = TrackingLabelClassifier.Classify(r);
+        // 자동 판정 결과는 AutoLabel에도 남겨둔다 — 사용자가 수동 정정한 뒤 "자동 판정으로
+        // 되돌리기"를 할 때 파일을 다시 읽지 않고 이 값으로 복구하기 위함.
+        foreach (var r in rows) r.Label = r.AutoLabel = TrackingLabelClassifier.Classify(r);
 
         return new ParseResult { Rows = rows, SkippedNoTrackingNo = skipped };
     }

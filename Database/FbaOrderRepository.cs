@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 
@@ -236,17 +236,19 @@ public class FbaOrderRepository
     }
 
     /// <summary>
-    /// 운송장 결과 매칭(§7.2)에서 쓴다 — 아직 운송장번호가 없는(=매칭 대상) 박스를 전부 가져온다.
-    /// 결과 파일의 고객주문번호 표기가 DB의 MatchKey와 공백 등으로 미세하게 다를 수 있어, SQL로
-    /// 걸러내지 않고 호출 측(FbaTrackingImporter)이 정규화 후 메모리에서 매칭한다.
+    /// 운송장 결과 매칭(§7.2)에서 쓴다 — 미출고뿐 아니라 이미 운송장이 등록된 박스까지 전부
+    /// 가져온다. 택배사 결과 파일을 하루 단위로 통째로 받으면 이미 반영을 끝낸 과거 발주 건이
+    /// 같은 파일에 섞여 오는데, 미출고 박스만 보면 그 행들이 "미매칭"으로 잡혀 부분 반영 금지
+    /// 규칙 때문에 파일 전체가 반영되지 않는다. 등록 상태를 함께 보고 (같은 운송장번호면 이미
+    /// 반영됨으로 넘기고, 다른 운송장번호면 충돌로 보고) 판정하기 위함이다.
     /// </summary>
-    public List<FbaBox> GetPendingBoxes()
+    public List<FbaBox> GetAllBoxesForTrackingMatch()
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT FbaNo, BoxSeq, BoxSpecName, WidthMm, DepthMm, HeightMm, IsCustomSize, WeightG, MatchKey, TrackingNo, TrackingLoadedAt, Status
-            FROM FbaBox WHERE TrackingNo IS NULL OR TrackingNo = ''
+            FROM FbaBox
             """;
 
         var boxes = new List<FbaBox>();

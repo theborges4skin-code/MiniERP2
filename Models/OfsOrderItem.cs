@@ -99,6 +99,20 @@ public class OfsOrderItem
     public Dictionary<string, string>? ManualFieldValues { get; set; }
 
     /// <summary>
+    /// 기존 발주/출고 이력에 같은 주문번호가 이미 있을 때 채워지는 표시 문구(OFS 그리드의 "중복"
+    /// 열에 그대로 보여준다 — <see cref="Utils.OrderDuplicateChecker"/>가 채움). 중복이 아니면 null.
+    /// 판정은 어디까지나 눈으로 확인하라는 신호일 뿐이라 발주 처리를 막지 않는다(같은 곳으로 두 번
+    /// 출고하는 정상 거래도 있음). 저장되는 값이 아니라 화면 표시 전용이다.
+    /// </summary>
+    public string? DuplicateNote { get; set; }
+
+    /// <summary>
+    /// "중복" 열 셀에 마우스를 올렸을 때 보여줄 기존 이력 상세(언제/무슨 상태/어떤 SKU/몇 개).
+    /// <see cref="DuplicateNote"/>와 함께 채워지며 역시 화면 표시 전용이다.
+    /// </summary>
+    public string? DuplicateDetail { get; set; }
+
+    /// <summary>
     /// 비매출성 발송 구분(샘플발송이력관리_개발기획서.md §2 D1). 비어있으면 정상 거래, 그 외에는
     /// <see cref="Utils.LineKinds.All"/> 중 하나(샘플/CS/기타)이며 발주확정 시 <see cref="OutboundDetail.LineKind"/>로
     /// 그대로 스냅샷됩니다.

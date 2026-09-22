@@ -62,6 +62,7 @@ public class DataManagementForm : Form
         _tabControl = new TabControl { Dock = DockStyle.Fill };
 
         _tabControl.TabPages.Add(CreateTableTab(new MasterSkuManagedTable(), ConfigureMasterSkuTab));
+        _tabControl.TabPages.Add(CreateTableTab(new AddressBookManagedTable()));
         _tabControl.TabPages.Add(CreateCskuTabWithRules());
         _tabControl.TabPages.Add(CreatePurchaseSkuTabWithHistory());
         _tabControl.TabPages.Add(CreateTableTab(new SimpleMappingManagedTable(MappingRuleType.Exact, "1:1 매핑")));
@@ -257,23 +258,49 @@ public class DataManagementForm : Form
 
         try
         {
-            var rowCount = ManagedTableExcelIO.Export(context.Table, columnDialog.SelectedColumns, columnDialog.FilterColumn, columnDialog.FilterValue, filePath);
+            var exportTable = BuildExportTable(context, out var hasSample);
+            var rowCount = ManagedTableExcelIO.Export(exportTable, columnDialog.SelectedColumns, columnDialog.FilterColumn, columnDialog.FilterValue, filePath);
+            var actualDataRowCount = hasSample ? Math.Max(0, rowCount - 1) : rowCount;
 
             _exportLogRepository.Add(new ExportLogEntry
             {
                 TableName = context.Adapter.DisplayName,
                 FilePath = filePath,
-                RowCount = rowCount,
+                RowCount = actualDataRowCount,
                 Headers = string.Join(", ", columnDialog.SelectedColumns),
             });
 
-            _statusLabel.Text = $"'{context.Adapter.DisplayName}' {rowCount}건을 엑셀로 내보냈습니다.";
+            _statusLabel.Text = $"'{context.Adapter.DisplayName}' {actualDataRowCount}건을 엑셀로 내보냈습니다.";
             ExportHelper.ShowPostExportDialog(this, filePath);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    /// <summary>
+    /// 내보내기 전용 테이블을 만든다. 어댑터가 예시 행(<see cref="IManagedDataTable.CreateSampleRow"/>)을
+    /// 제공하면 맨 앞에 붙이고 그 아래로 실제 데이터가 이어지게 한다 — 실제 편집용 그리드(context.Table)는
+    /// 건드리지 않는다. 예시 행이 없는 어댑터는 기존과 동일하게 context.Table을 그대로 반환한다.
+    /// </summary>
+    private static DataTable BuildExportTable(TableTabContext context, out bool hasSample)
+    {
+        var exportTable = context.Table.Clone();
+        if (context.Adapter.CreateSampleRow(exportTable) is not { } sample)
+        {
+            hasSample = false;
+            return context.Table;
+        }
+        hasSample = true;
+
+        exportTable.Rows.Add(sample);
+        foreach (DataRow row in context.Table.Rows)
+        {
+            if (row.RowState == DataRowState.Deleted) continue;
+            exportTable.ImportRow(row);
+        }
+        return exportTable;
     }
 
     private void OnImportClick(TableTabContext context)
@@ -283,7 +310,8 @@ public class DataManagementForm : Form
 
         try
         {
-            var (_, importedRows) = ManagedTableExcelIO.Read(ofd.FileName);
+            var (_, allImportedRows) = ManagedTableExcelIO.Read(ofd.FileName);
+            var importedRows = allImportedRows.Where(r => !context.Adapter.IsSampleRow(r)).ToList();
             if (importedRows.Count == 0)
             {
                 MessageBox.Show("엑셀 파일에서 읽을 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);

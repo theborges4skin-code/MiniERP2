@@ -1,3 +1,5 @@
+using MiniERP2.Models;
+
 namespace MiniERP2.Forms;
 
 /// <summary>
@@ -28,9 +30,22 @@ public class PartnerManualLineDialog : Form
         InitializeComponent(partyName);
     }
 
-    private void InitializeComponent(string partyName)
+    /// <summary>기존 수동 라인을 수정할 때 쓰는 생성자 — 추가 때와 같은 입력창을 재사용하되
+    /// 현재 값으로 미리 채워서 연다(거래처 마감보드의 "수동 라인 수정").</summary>
+    public PartnerManualLineDialog(string partyName, PartnerClosingLine existing)
     {
-        Text = $"수동 주문 추가 — {partyName}";
+        InitializeComponent(partyName, isEdit: true);
+        _cskuBox.Text = existing.CskuCode;
+        _itemNameBox.Text = existing.ItemName;
+        _qtyBox.Text = existing.Qty.ToString("0.####");
+        _unitPriceBox.Text = existing.UnitPrice.ToString("0.####");
+        _costPriceBox.Text = existing.CostPrice.ToString("0.####");
+        if (existing.LineDate is { } lineDate) _datePicker.Value = lineDate;
+    }
+
+    private void InitializeComponent(string partyName, bool isEdit = false)
+    {
+        Text = isEdit ? $"수동 라인 수정 — {partyName}" : $"수동 주문 추가 — {partyName}";
         Size = new Size(420, 380);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;

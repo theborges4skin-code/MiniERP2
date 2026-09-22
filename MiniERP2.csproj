@@ -15,6 +15,9 @@
     <Compile Remove="Tests/**" />
     <EmbeddedResource Remove="Tests/**" />
     <None Remove="Tests/**" />
+    <Compile Remove="ScrollCapture/**" />
+    <EmbeddedResource Remove="ScrollCapture/**" />
+    <None Remove="ScrollCapture/**" />
   </ItemGroup>
 
   <ItemGroup>

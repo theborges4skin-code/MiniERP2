@@ -182,6 +182,49 @@ public class PartnerClosingRepository
     }
 
     /// <summary>
+    /// MANUAL 라인 1건을 직접 수정한다(AddManualLine과 대칭 — 채널 경유 거래처는 OutboundRepository의
+    /// UpdateCskuCode/UpdateProductName/UpdateQty/CorrectSupplyPrice를 대신 쓴다). 이익은 CostPrice가
+    /// 입력값 그대로인 관례(위 AddManualLine 참고)에 맞춰 여기서 다시 계산해 저장한다.
+    /// </summary>
+    public void UpdateManualLine(PartnerClosingLine line)
+    {
+        line.Profit = (line.UnitPrice - line.CostPrice) * line.Qty;
+
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE PartnerClosingLineTable
+            SET LineDate = $lineDate, CskuCode = $csku, MasterSku = $masterSku, ItemName = $itemName,
+                Qty = $qty, UnitPrice = $unitPrice, CostPrice = $costPrice, Profit = $profit
+            WHERE Id = $id
+            """;
+        cmd.Parameters.AddWithValue("$lineDate", line.LineDate?.ToString("yyyy-MM-dd HH:mm:ss") ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("$csku", line.CskuCode);
+        cmd.Parameters.AddWithValue("$masterSku", line.MasterSku);
+        cmd.Parameters.AddWithValue("$itemName", line.ItemName);
+        cmd.Parameters.AddWithValue("$qty", line.Qty);
+        cmd.Parameters.AddWithValue("$unitPrice", line.UnitPrice);
+        cmd.Parameters.AddWithValue("$costPrice", line.CostPrice);
+        cmd.Parameters.AddWithValue("$profit", line.Profit);
+        cmd.Parameters.AddWithValue("$id", line.Id);
+        cmd.ExecuteNonQuery();
+
+        RecalculateManualHeaderTotals(line.ClosingId);
+    }
+
+    /// <summary>MANUAL 라인 1건을 삭제한다(채널 경유 거래처의 OutboundRepository.DeleteByIds에 대응).</summary>
+    public void DeleteManualLine(long lineId, long closingId)
+    {
+        using var conn = SqliteConnectionFactory.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM PartnerClosingLineTable WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", lineId);
+        cmd.ExecuteNonQuery();
+
+        RecalculateManualHeaderTotals(closingId);
+    }
+
+    /// <summary>
     /// MANUAL 헤더의 합계 필드를 그 헤더에 쌓인 라인들의 합으로 다시 맞춘다(AddManualLine 전용).
     /// 원가는 CostResolver를 거치지 않고 라인에 입력된 CostPrice를 그대로 합산한다.
     /// </summary>

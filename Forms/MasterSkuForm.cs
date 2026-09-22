@@ -22,6 +22,7 @@ public class MasterSkuForm : Form
     private Label _statusLabel = new();
     private Dictionary<string, string> _cskuSummaryCache = new();
     private TextBox _searchBox = new();
+    private HashSet<string> _existingSkusAtLoad = new(StringComparer.OrdinalIgnoreCase);
 
     public MasterSkuForm()
     {
@@ -57,16 +58,20 @@ public class MasterSkuForm : Form
 
         var btnRefresh = new Button { Text = "새로고침", Size = new Size(100, 30) };
         var btnAddNew = new Button { Text = "새 마스터SKU 추가", Size = new Size(130, 30) };
+        var btnRenameSku = new Button { Text = "SKU 코드 변경", Size = new Size(100, 30) };
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
         var btnImport = new Button { Text = "엑셀 가져오기", Size = new Size(110, 30) };
+        var btnCostUpdate = new Button { Text = "제조원가 업데이트", Size = new Size(130, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
         var btnViewCsku = new Button { Text = "해당 CSKU 보기", Size = new Size(110, 30) };
         var btnOverview = new Button { Text = "매입·납품 통합 조회", Size = new Size(140, 30) };
 
         btnRefresh.Click += OnRefreshClick;
         btnAddNew.Click += OnAddNewMasterSkuClick;
+        btnRenameSku.Click += (s, e) => RenameSelectedSku();
         btnSave.Click += OnSaveClick;
         btnImport.Click += OnImportClick;
+        btnCostUpdate.Click += OnCostUpdateClick;
         btnExport.Click += OnExportClick;
         btnViewCsku.Click += (s, e) => OpenCskuFormForSelectedRow();
         btnOverview.Click += (s, e) => OpenOverviewFormForSelectedRow();
@@ -78,8 +83,10 @@ public class MasterSkuForm : Form
         toolStrip.Controls.Add(_searchBox);
         toolStrip.Controls.Add(btnRefresh);
         toolStrip.Controls.Add(btnAddNew);
+        toolStrip.Controls.Add(btnRenameSku);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnImport);
+        toolStrip.Controls.Add(btnCostUpdate);
         toolStrip.Controls.Add(btnExport);
         toolStrip.Controls.Add(btnViewCsku);
         toolStrip.Controls.Add(btnOverview);
@@ -118,6 +125,7 @@ public class MasterSkuForm : Form
         );
 
         _itemsGrid.CellFormatting += OnItemsGridCellFormatting;
+        _itemsGrid.CellBeginEdit += OnItemsGridCellBeginEdit;
 
         SetupContextMenu();
 
@@ -144,18 +152,79 @@ public class MasterSkuForm : Form
         var overviewMenuItem = new ToolStripMenuItem("매입·납품 통합 조회(&O)");
         overviewMenuItem.Click += (s, e) => OpenOverviewFormForSelectedRow();
 
+        var renameSkuMenuItem = new ToolStripMenuItem("SKU 코드 변경(&R)");
+        renameSkuMenuItem.Click += (s, e) => RenameSelectedSku();
+
         _itemsGrid.ContextMenuStrip!.Items.Add(new ToolStripSeparator());
         _itemsGrid.ContextMenuStrip.Items.Add(historyMenuItem);
         _itemsGrid.ContextMenuStrip.Items.Add(viewCskuMenuItem);
         _itemsGrid.ContextMenuStrip.Items.Add(overviewMenuItem);
+        _itemsGrid.ContextMenuStrip.Items.Add(renameSkuMenuItem);
 
-        // 메뉴가 열릴 때, 선택된 행이 1개일 때만 '이력 보기'/'CSKU 보기'/'통합 조회' 메뉴 활성화
+        // 메뉴가 열릴 때, 선택된 행이 1개일 때만 '이력 보기'/'CSKU 보기'/'통합 조회'/'SKU 코드 변경' 활성화
         _itemsGrid.ContextMenuStrip.Opening += (s, e) =>
         {
             historyMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
             viewCskuMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
             overviewMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
+            renameSkuMenuItem.Enabled = _itemsGrid.SelectedRows.Count == 1;
         };
+    }
+
+    /// <summary>
+    /// 그리드 "SKU" 셀에 직접 타이핑해 코드를 바꾸면 Upsert가 새 SKU로 된 별개 행을 하나 더
+    /// 만들 뿐 기존 행/이력/CSKU 매핑은 그대로 남아 데이터가 조용히 어긋난다(옛 코드를 참조하던
+    /// 다른 표들이 끊김). 이미 저장된 품목의 SKU 칸은 편집을 막고, RenameSelectedSku(아래
+    /// 버튼/우클릭 메뉴)의 트랜잭션 처리된 코드 변경만 쓰도록 유도한다. 아직 저장 전인
+    /// 새 행(맨 아래 빈 행에 막 입력한 행)은 Upsert가 INSERT이므로 계속 자유롭게 입력 가능.
+    /// </summary>
+    private void OnItemsGridCellBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
+    {
+        if (_itemsGrid.Columns[e.ColumnIndex].Name != "Sku") return;
+        if (_itemsGrid.Rows[e.RowIndex].DataBoundItem is not ItemModel item) return;
+        if (!_existingSkusAtLoad.Contains(item.Sku)) return;
+
+        e.Cancel = true;
+        _statusLabel.ForeColor = Color.DarkRed;
+        _statusLabel.Text = "이미 등록된 SKU 코드는 여기서 직접 수정할 수 없습니다. 'SKU 코드 변경' 버튼을 사용하세요.";
+    }
+
+    /// <summary>
+    /// 선택한 품목의 SKU 코드를 안전하게 바꾼다(ItemRepository.Rename). 그리드 셀 직접 수정과
+    /// 달리, 이 코드를 참조하는 거래처별 CSKU 매핑/매입단가/견적 라인/Settlement 매핑 규칙/
+    /// 미확정 거래처 마감 라인까지 한 트랜잭션으로 함께 갱신된다.
+    /// </summary>
+    private void RenameSelectedSku()
+    {
+        if (_itemsGrid.SelectedRows.Count != 1) return;
+        var row = _itemsGrid.SelectedRows[0];
+        if (row.IsNewRow) return;
+        if (row.DataBoundItem is not ItemModel item || string.IsNullOrWhiteSpace(item.Sku))
+        {
+            MessageBox.Show("SKU가 없는 품목은 코드를 변경할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var oldSku = item.Sku;
+        using var dlg = new SimpleTextPromptDialog(
+            "SKU 코드 변경",
+            $"'{oldSku}'의 새 SKU 코드를 입력하세요.",
+            oldSku,
+            value => string.IsNullOrWhiteSpace(value) ? "새 SKU 코드를 입력하세요." : null);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        var (success, message) = _itemRepository.Rename(oldSku, dlg.Value);
+        if (!success)
+        {
+            MessageBox.Show(message, "SKU 코드 변경 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _searchBox.Text = "";
+        LoadData();
+        SelectRowBySku(dlg.Value.Trim());
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = $"{message} ({DateTime.Now:HH:mm:ss})";
     }
 
     private void OnHistoryMenuItemClick(object? sender, EventArgs e)
@@ -239,6 +308,7 @@ public class MasterSkuForm : Form
         var allItems = _itemRepository.GetAll();
         _items = new BindingList<ItemModel>(allItems);
         _itemsGrid.DataSource = _items;
+        _existingSkusAtLoad = new HashSet<string>(allItems.Select(i => i.Sku), StringComparer.OrdinalIgnoreCase);
 
         _cskuSummaryCache = _channelSkuRepository.GetAll()
             .GroupBy(c => c.Msku, StringComparer.OrdinalIgnoreCase)
@@ -484,6 +554,106 @@ public class MasterSkuForm : Form
                 _statusLabel.ForeColor = Color.DarkGreen;
                 _statusLabel.Text = $"데이터를 성공적으로 반영했습니다. ({DateTime.Now:HH:mm:ss})";
             }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"엑셀 파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 엑셀장표에 있는 최신 제조원가와 마스터DB(ItemTable.CostPrice)를 비교해, 값이 다른 SKU만
+    /// 목록으로 보여주고 행별로 반영 여부를 선택하게 한다(동일한 값은 목록에 아예 올리지 않음).
+    /// </summary>
+    private void OnCostUpdateClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "최신 제조원가가 담긴 엑셀/CSV 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("MasterSkuCostUpdate") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        _settingsService.SetLastFolder("MasterSkuCostUpdate", Path.GetDirectoryName(ofd.FileName)!);
+        RunCostUpdateFromFile(ofd.FileName);
+    }
+
+    private void RunCostUpdateFromFile(string filePath)
+    {
+        try
+        {
+            using var package = Path.GetExtension(filePath).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                ? CsvWorkbookReader.LoadAsPackage(filePath)
+                : ExcelFileOpener.OpenWithPasswordPrompt(filePath, this);
+            if (package == null) return;
+
+            using var mappingDialog = new MasterSkuImportMappingDialog(package);
+            if (FormManager.ShowDialogSafe(mappingDialog, this) != DialogResult.OK) return;
+
+            var worksheet = package.Workbook.Worksheets[mappingDialog.SheetName];
+            var headerRow = mappingDialog.HeaderRow;
+
+            var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            {
+                var header = worksheet.Cells[headerRow, col].Value?.ToString();
+                if (!string.IsNullOrEmpty(header) && !headerToIndexMap.ContainsKey(header))
+                {
+                    headerToIndexMap[header] = col;
+                }
+            }
+
+            var skuCol = headerToIndexMap[mappingDialog.SkuColumn];
+            var itemNameCol = headerToIndexMap[mappingDialog.ItemNameColumn];
+            var costPriceCol = headerToIndexMap[mappingDialog.CostPriceColumn];
+
+            var imported = new List<MasterCostUpdateImportRow>();
+            for (int row = headerRow + 1; row <= worksheet.Dimension.End.Row; row++)
+            {
+                var sku = worksheet.Cells[row, skuCol].Value?.ToString();
+                if (string.IsNullOrWhiteSpace(sku)) continue;
+
+                if (!decimal.TryParse(worksheet.Cells[row, costPriceCol].Value?.ToString(), out var newCost)) continue;
+
+                var itemName = worksheet.Cells[row, itemNameCol].Value?.ToString() ?? string.Empty;
+                imported.Add(new MasterCostUpdateImportRow(sku, itemName, newCost));
+            }
+
+            if (imported.Count == 0)
+            {
+                MessageBox.Show("가져올 유효한 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var masterBySku = _itemRepository.GetAll().ToDictionary(i => i.Sku, StringComparer.OrdinalIgnoreCase);
+            var plan = MasterCostUpdatePlanner.Build(imported, masterBySku);
+
+            if (plan.Changed.Count == 0)
+            {
+                MessageBox.Show(
+                    $"마스터DB와 다른 제조원가가 없습니다.\n(동일 {plan.UnchangedCount}건, 마스터DB 미등록 {plan.NotFoundCount}건)",
+                    "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var reviewDialog = new MasterCostUpdateReviewDialog(plan.Changed, plan.UnchangedCount, plan.NotFoundCount, plan.DuplicateSkuCount);
+            if (FormManager.ShowDialogSafe(reviewDialog, this) != DialogResult.OK) return;
+
+            var appliedCount = 0;
+            foreach (var row in reviewDialog.SelectedRows)
+            {
+                var existing = _itemRepository.GetBySku(row.Sku);
+                if (existing == null) continue; // 검토 중 다른 창에서 삭제된 경우 등 방어적 처리
+
+                existing.CostPrice = row.NewCost;
+                _itemRepository.Upsert(existing);
+                appliedCount++;
+            }
+
+            LoadData();
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"제조원가 {appliedCount}건을 반영했습니다. ({DateTime.Now:HH:mm:ss})";
         }
         catch (Exception ex)
         {

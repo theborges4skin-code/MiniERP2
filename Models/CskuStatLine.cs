@@ -9,7 +9,15 @@ public class CskuStatLine
     public string ChannelCode { get; set; } = string.Empty;
     public string ChannelName { get; set; } = string.Empty;
     public string CskuCode { get; set; } = string.Empty;
+
+    /// <summary>ChannelSkuTable.Msku 조회 결과. DB에 저장하지 않고 내보내기/표시 시점에 채운다.</summary>
+    public string Msku { get; set; } = string.Empty;
+
     public string ProductGroup { get; set; } = string.Empty;
+
+    /// <summary>ChannelSkuTable.InvoiceDisplayName 조회 결과. DB에 저장하지 않고 내보내기/표시 시점에 채운다.</summary>
+    public string InvoiceDisplayName { get; set; } = string.Empty;
+
     public string ProductName { get; set; } = string.Empty;
     public int RowCount { get; set; }
     public int Qty { get; set; }

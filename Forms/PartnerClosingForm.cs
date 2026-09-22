@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
@@ -25,6 +26,7 @@ public class PartnerClosingForm : Form
     private readonly OutboundRepository _outboundRepo = new();
     private readonly ChannelSkuRepository _channelSkuRepo = new();
     private readonly PartnerClosingMemoRepository _memoRepo = new();
+    private readonly SettingsService _settingsService = new();
 
     private ComboBox _periodCombo = new();
     private CheckBox _includeAllCheck = new();
@@ -229,6 +231,10 @@ public class PartnerClosingForm : Form
         var partyMemoItem = new ToolStripMenuItem("메모 추가/관리(거래처 전체)");
         partyMemoItem.Click += OnPartyMemoClick;
         menu.Items.Add(partyMemoItem);
+        menu.Items.Add(new ToolStripSeparator());
+        var deactivateManualItem = new ToolStripMenuItem("수동 거래처 목록에서 제거(비활성화)");
+        deactivateManualItem.Click += OnDeactivateManualPartnerClick;
+        menu.Items.Add(deactivateManualItem);
         grid.ContextMenuStrip = menu;
 
         return grid;
@@ -282,6 +288,12 @@ public class PartnerClosingForm : Form
         grid.CellFormatting += OnLineGridCellFormatting;
 
         var menu = new ContextMenuStrip();
+        // 수동(미경유) 거래처 라인은 원본 발주/출고 라인이 없어(OutboundDetailId=null) 아래 4개
+        // 개별 수정 메뉴가 통하지 않는다("수정할 라인을 선택하세요" 안내만 뜸) — 추가할 때 썼던
+        // 입력창을 그대로 재사용해 한 번에 고치는 전용 메뉴를 따로 둔다.
+        var editManualItem = new ToolStripMenuItem("수동 라인 수정(품목/CSKU/수량/단가/원가)");
+        editManualItem.Click += OnEditManualLineClick;
+        menu.Items.Add(editManualItem);
         var editCskuItem = new ToolStripMenuItem("선택 라인 CSKU 수정");
         editCskuItem.Click += OnEditCskuClick;
         menu.Items.Add(editCskuItem);
@@ -744,9 +756,12 @@ public class PartnerClosingForm : Form
         string? folder = null;
         if (selected.Count > 1)
         {
+            var lastFolder = _settingsService.GetLastFolder("PartnerClosingPublish");
             using var fbd = new FolderBrowserDialog { Description = "발행 파일을 저장할 폴더를 선택하세요." };
+            if (!string.IsNullOrEmpty(lastFolder) && Directory.Exists(lastFolder)) fbd.SelectedPath = lastFolder;
             if (fbd.ShowDialog(this) != DialogResult.OK) return;
             folder = fbd.SelectedPath;
+            _settingsService.SetLastFolder("PartnerClosingPublish", folder);
         }
 
         var docLabel = isLedger ? "매출장" : "거래명세표";
@@ -756,14 +771,11 @@ public class PartnerClosingForm : Form
 
         foreach (var row in selected)
         {
+            // 채널에 공급받는자 프로필이 연결되어 있지 않아도 발행 자체는 막지 않는다(사용자 요청) —
+            // 미리보기(위 OnPreviewClick)와 같은 방식으로 거래처명만 채운 빈 프로필로 대체한다.
             var buyer = row.IsManual
                 ? new DocParty { CompanyName = row.PartyName }
-                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
-            if (buyer == null)
-            {
-                errors.Add($"{row.PartyName}: 공급받는자 프로필 미연결(거래처 관리에서 채널 연결 필요)");
-                continue;
-            }
+                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
 
             var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
             var fileName = PartnerClosingDocumentBuilder.DefaultFileName(summary, docLabel);
@@ -776,9 +788,10 @@ public class PartnerClosingForm : Form
             else
             {
                 var picked = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx", fileName,
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+                    _settingsService.GetLastFolder("PartnerClosingPublish") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
                 if (picked == null) continue;
                 filePath = picked;
+                _settingsService.SetLastFolder("PartnerClosingPublish", Path.GetDirectoryName(filePath)!);
             }
 
             try
@@ -853,8 +866,9 @@ public class PartnerClosingForm : Form
 
         var combinedFilePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
             $"매출장_통합_{CurrentPeriod}_{DateTime.Now:yyyyMMdd}.xlsx",
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            _settingsService.GetLastFolder("PartnerClosingPublish") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         if (combinedFilePath == null) return;
+        _settingsService.SetLastFolder("PartnerClosingPublish", Path.GetDirectoryName(combinedFilePath)!);
 
         var overviewRows = new List<SalesLedgerOverviewRow>();
         var ledgers = new List<(string PartyName, SalesLedgerDoc Doc)>();
@@ -878,14 +892,10 @@ public class PartnerClosingForm : Form
             });
             if (!isConfirmed) continue;
 
+            // 위 OnPublishClick과 동일하게, 프로필 미연결이 발행 자체를 막지 않게 빈 프로필로 대체한다.
             var buyer = row.IsManual
                 ? new DocParty { CompanyName = row.PartyName }
-                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
-            if (buyer == null)
-            {
-                errors.Add($"{row.PartyName}: 공급받는자 프로필 미연결");
-                continue;
-            }
+                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
 
             var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
             ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos)));
@@ -950,8 +960,9 @@ public class PartnerClosingForm : Form
         var period = CurrentPeriod;
         var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
             $"거래처마감현황_{period}_{DateTime.Now:yyyyMMdd}.xlsx",
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            _settingsService.GetLastFolder("PartnerClosingBoardExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         if (filePath == null) return;
+        _settingsService.SetLastFolder("PartnerClosingBoardExport", Path.GetDirectoryName(filePath)!);
 
         try
         {
@@ -1066,9 +1077,17 @@ public class PartnerClosingForm : Form
 
     /// <summary>
     /// 미출고 건을 라인 상세에서 바로 삭제한다(이미 출고확정/마감확정된 라인은 대상에서 제외).
+    /// 수동(미경유) 거래처는 "미출고" 개념이 없는 원본 라인이라 별도 경로(OnDeleteManualLinesClick)로 분기한다.
     /// </summary>
     private void OnDeleteLinesClick(object? sender, EventArgs e)
     {
+        var partyRow = _partyGrid.CurrentRow?.DataBoundItem as PartyRow;
+        if (partyRow != null && partyRow.IsManual)
+        {
+            OnDeleteManualLinesClick(partyRow);
+            return;
+        }
+
         var lines = SelectedUnshippedLineRows();
         if (lines.Count == 0)
         {
@@ -1083,6 +1102,36 @@ public class PartnerClosingForm : Form
         var partyKey = (_partyGrid.CurrentRow?.DataBoundItem as PartyRow)?.PartyKey;
         RefreshBoard();
         if (partyKey != null) SelectPartyByKey(partyKey);
+        _statusLabel.Text = $"{lines.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>수동(미경유) 거래처 라인 삭제 — OutboundDetailId가 없어 위 일반 경로를 못 쓴다.</summary>
+    private void OnDeleteManualLinesClick(PartyRow partyRow)
+    {
+        if (partyRow.Status is "확정" or "발행완료")
+        {
+            MessageBox.Show("이미 확정된 거래처입니다. 라인을 삭제하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var lines = _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as LineRow)
+            .Where(l => l != null)
+            .Cast<LineRow>()
+            .DistinctBy(l => l.Source.Id)
+            .ToList();
+        if (lines.Count == 0)
+        {
+            MessageBox.Show("삭제할 라인을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (MessageBox.Show($"선택한 {lines.Count}건을 삭제하시겠습니까? 되돌릴 수 없습니다.", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+
+        foreach (var line in lines) _closingRepo.DeleteManualLine(line.Source.Id, line.Source.ClosingId);
+
+        RefreshBoard();
+        SelectPartyByKey(partyRow.PartyKey);
         _statusLabel.Text = $"{lines.Count}건을 삭제했습니다. ({DateTime.Now:HH:mm:ss})";
     }
 
@@ -1175,6 +1224,74 @@ public class PartnerClosingForm : Form
         if (partyKey != null) SelectPartyByKey(partyKey);
     }
 
+    /// <summary>
+    /// 수동(미경유) 거래처 라인 1건을 "수동 주문 추가" 때와 같은 입력창으로 다시 열어 통째로
+    /// 수정한다. 그 라인은 원본 OutboundDetail이 없어 아래 개별 수정 메뉴(RequireSelectedSourceLine
+    /// 기반)가 통하지 않으므로 별도 경로가 필요하다.
+    /// </summary>
+    private void OnEditManualLineClick(object? sender, EventArgs e)
+    {
+        var partyRow = _partyGrid.CurrentRow?.DataBoundItem as PartyRow;
+        if (partyRow == null || !partyRow.IsManual)
+        {
+            MessageBox.Show("수동 거래처의 라인만 여기서 수정할 수 있습니다(채널 경유 거래처는 위 CSKU/품목/수량/단가 수정 메뉴를 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (partyRow.Status is "확정" or "발행완료")
+        {
+            MessageBox.Show("이미 확정된 거래처입니다. 라인을 수정하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var line = _lineGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as LineRow)
+            .FirstOrDefault(l => l != null);
+        if (line == null)
+        {
+            MessageBox.Show("수정할 라인을 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new PartnerManualLineDialog(partyRow.PartyName, line.Source);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        line.Source.CskuCode = dlg.CskuCode;
+        line.Source.MasterSku = dlg.CskuCode;
+        line.Source.ItemName = dlg.ItemName;
+        line.Source.Qty = dlg.Qty;
+        line.Source.UnitPrice = dlg.UnitPrice;
+        line.Source.CostPrice = dlg.CostPrice;
+        line.Source.LineDate = dlg.OrderDate;
+        _closingRepo.UpdateManualLine(line.Source);
+
+        RefreshBoard();
+        SelectPartyByKey(partyRow.PartyKey);
+        _statusLabel.Text = $"수동 라인을 수정했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
+    /// 수동 거래처를 좌측 목록에서 제거한다. 완전 삭제가 아니라 소프트 비활성화(§8)라 라인/이력은
+    /// 그대로 남고, "전체보기" 체크 시에는 계속 조회할 수 있다 — 더 이상 쓰지 않는 거래처가 매달
+    /// 자동으로 계속 노출되는 불편을 없애기 위함.
+    /// </summary>
+    private void OnDeactivateManualPartnerClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows().Where(r => r.IsManual).ToList();
+        if (selected.Count == 0)
+        {
+            MessageBox.Show("비활성화할 수동 거래처를 선택하세요(채널 경유 거래처는 대상이 아닙니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var names = string.Join(", ", selected.Select(r => r.PartyName));
+        if (MessageBox.Show(
+                $"'{names}'을(를) 거래처 목록에서 제거하시겠습니까?\n(이력은 삭제되지 않으며, '전체보기' 체크 시 계속 조회할 수 있습니다)",
+                "비활성화 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+        foreach (var row in selected) _masterRepo.SetActive(row.PartyKey, false);
+        RefreshBoard();
+        _statusLabel.Text = $"{selected.Count}개 수동 거래처를 목록에서 제거했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
     private void OnEditCskuClick(object? sender, EventArgs e)
     {
         if (RequireSelectedSourceLine() is not { } sel) return;
@@ -1241,8 +1358,15 @@ public class PartnerClosingForm : Form
         if (_lineGrid.Rows[e.RowIndex].DataBoundItem is not LineRow line) return;
         if (line.Source.OutboundDetailId is not { } detailId)
         {
-            MessageBox.Show("원본 발주/출고 라인이 없는 항목(확정 스냅샷 등)은 여기서 수정할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            RefreshBoard();
+            // 모달(MessageBox)과 그리드 데이터소스 교체(RefreshBoard)를 그리드 자신의 CellEndEdit
+            // 이벤트 처리 도중 바로 실행하면(재진입) "단가 변경 범위 선택" 확인창에서 [아니오]를
+            // 골라도 그 처리가 조용히 씹혀 [취소]와 똑같이 동작하는 버그가 있었다(사용자 신고,
+            // 2026-09-02) — 이벤트가 완전히 반환된 뒤(BeginInvoke) 실행해 재진입을 없앤다.
+            BeginInvoke(() =>
+            {
+                MessageBox.Show("원본 발주/출고 라인이 없는 항목(확정 스냅샷 등)은 여기서 수정할 수 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                RefreshBoard();
+            });
             return;
         }
 
@@ -1254,7 +1378,9 @@ public class PartnerClosingForm : Form
         }
         else if (columnName == "UnitPrice")
         {
-            HandleUnitPriceEdit(line, detailId);
+            // 위와 같은 이유로 CellEndEdit 이벤트가 완전히 끝난 뒤 실행한다 — HandleUnitPriceEdit이
+            // 그 안에서 MessageBox.Show(모달) + RefreshBoard(그리드 데이터소스 교체)를 수행한다.
+            BeginInvoke(() => HandleUnitPriceEdit(line, detailId));
         }
     }
 

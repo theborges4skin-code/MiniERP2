@@ -16,26 +16,29 @@ public class NewMasterSkuDialog : Form
 
     private TextBox _skuText = new();
     private TextBox _itemNameText = new();
+    private ComboBox _productGroupCombo = new();
     private TextBox _costPriceText = new();
     private TextBox _unitText = new();
 
     public string? ResultSku { get; private set; }
     public string? ResultItemName { get; private set; }
     public string? ResultUnit { get; private set; }
+    public string? ResultProductGroup { get; private set; }
 
     /// <param name="suggestedItemName">CSKU 등록 화면에서 검색어로 입력해둔 품목명이 있으면
     /// 기본값으로 넘겨받아 품명 칸에 미리 채운다(매번 다시 타이핑하지 않도록).</param>
     /// <param name="suggestedCostPrice">간이 마진 계산기 등에서 이미 계산해둔 제조원가(적용)가
     /// 있으면 미리 채운다(간이마진계산기_개발기획서.md §6.4).</param>
-    public NewMasterSkuDialog(string? suggestedItemName = null, decimal? suggestedCostPrice = null)
+    /// <param name="suggestedProductGroup">미리 채울 상품그룹(비워두면 마지막에 등록한 그룹 없이 빈 값).</param>
+    public NewMasterSkuDialog(string? suggestedItemName = null, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null)
     {
-        InitializeComponent(suggestedItemName, suggestedCostPrice);
+        InitializeComponent(suggestedItemName, suggestedCostPrice, suggestedProductGroup);
     }
 
-    private void InitializeComponent(string? suggestedItemName, decimal? suggestedCostPrice = null)
+    private void InitializeComponent(string? suggestedItemName, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null)
     {
         Text = "새 마스터SKU 등록";
-        Size = new Size(420, 260);
+        Size = new Size(420, 300);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
@@ -44,18 +47,33 @@ public class NewMasterSkuDialog : Form
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(12) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 5; i++) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        for (int i = 0; i < 6; i++) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
 
-        var existingSkus = _itemRepository.GetAll().Select(i => i.Sku);
-        _skuText = new TextBox { Dock = DockStyle.Fill, Text = TempSkuGenerator.GenerateNext(existingSkus) };
+        var existingItems = _itemRepository.GetAll();
+        _skuText = new TextBox { Dock = DockStyle.Fill, Text = TempSkuGenerator.GenerateNext(existingItems.Select(i => i.Sku)) };
         _itemNameText = new TextBox { Dock = DockStyle.Fill, Text = suggestedItemName ?? string.Empty };
+
+        // 상품그룹은 자유 입력이지만(ItemTable.ProductGroup은 TEXT), 오타로 그룹이 갈라지면
+        // 이익분석의 상품그룹별 요약이 쪼개지므로 이미 쓰이는 그룹을 목록으로 제시한다.
+        _productGroupCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown };
+        _productGroupCombo.Items.AddRange(existingItems
+            .Select(i => i.ProductGroup)
+            .Where(g => !string.IsNullOrWhiteSpace(g))
+            .Select(g => g!.Trim())
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(g => g, StringComparer.CurrentCultureIgnoreCase)
+            .Cast<object>()
+            .ToArray());
+        _productGroupCombo.Text = suggestedProductGroup ?? string.Empty;
+
         _costPriceText = new TextBox { Dock = DockStyle.Fill, Text = (suggestedCostPrice ?? 0m).ToString("0.####") };
         _unitText = new TextBox { Dock = DockStyle.Fill, Text = "kg" };
 
         AddRow(layout, 0, "SKU 코드", _skuText);
         AddRow(layout, 1, "품명", _itemNameText);
-        AddRow(layout, 2, "제조원가", _costPriceText);
-        AddRow(layout, 3, "단위", _unitText);
+        AddRow(layout, 2, "상품그룹", _productGroupCombo);
+        AddRow(layout, 3, "제조원가", _costPriceText);
+        AddRow(layout, 4, "단위", _unitText);
 
         var hint = new Label
         {
@@ -64,7 +82,7 @@ public class NewMasterSkuDialog : Form
             Dock = DockStyle.Fill,
             ForeColor = Color.DimGray,
         };
-        layout.Controls.Add(hint, 0, 4);
+        layout.Controls.Add(hint, 0, 5);
         layout.SetColumnSpan(hint, 2);
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0), Height = 40 };
@@ -112,12 +130,21 @@ public class NewMasterSkuDialog : Form
         }
         decimal.TryParse(_costPriceText.Text, out var costPrice);
         var unit = string.IsNullOrWhiteSpace(_unitText.Text) ? "kg" : _unitText.Text.Trim();
+        var productGroup = _productGroupCombo.Text.Trim();
 
-        _itemRepository.Upsert(new ItemModel { Sku = sku, ItemName = itemName, CostPrice = costPrice, Unit = unit });
+        _itemRepository.Upsert(new ItemModel
+        {
+            Sku = sku,
+            ItemName = itemName,
+            CostPrice = costPrice,
+            Unit = unit,
+            ProductGroup = string.IsNullOrEmpty(productGroup) ? null : productGroup,
+        });
 
         ResultSku = sku;
         ResultItemName = itemName;
         ResultUnit = unit;
+        ResultProductGroup = string.IsNullOrEmpty(productGroup) ? null : productGroup;
         DialogResult = DialogResult.OK;
         Close();
     }

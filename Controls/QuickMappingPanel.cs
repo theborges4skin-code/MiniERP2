@@ -187,6 +187,45 @@ public class QuickMappingPanel : Panel
         }
     }
 
+    /// <summary>검색창에 포커스가 있는 상태에서도 위/아래로 결과 목록을 훑고 Enter로 확정할 수
+    /// 있게 한다 — 매번 마우스로 목록을 클릭해야 하는 불편을 없애기 위함(사용자 요청).</summary>
+    private void OnSkuSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_skuResultList.Items.Count == 0) return;
+
+        if (e.KeyCode == Keys.Down)
+        {
+            _skuResultList.SelectedIndex = Math.Min(_skuResultList.SelectedIndex + 1, _skuResultList.Items.Count - 1);
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Up)
+        {
+            _skuResultList.SelectedIndex = Math.Max(_skuResultList.SelectedIndex - 1, 0);
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Enter)
+        {
+            if (_skuResultList.SelectedIndex < 0) _skuResultList.SelectedIndex = 0;
+            e.SuppressKeyPress = true;
+        }
+    }
+
+    /// <summary>
+    /// "검색" 버튼 — 인라인 5줄 목록보다 넓게 보고 싶을 때 쓰는 작은 팝업. 더블클릭(또는 Enter)
+    /// 으로 고르면 그 SKU를 검색창에 채우고 곧바로 선택 상태로 만든다(사용자 요청).
+    /// </summary>
+    private void OpenSkuSearchPopup()
+    {
+        using var dialog = new MasterSkuSearchDialog(_allItems, _skuSearchBox.Text.Trim());
+        if (dialog.ShowDialog(FindForm()) != DialogResult.OK || dialog.SelectedSku == null) return;
+
+        // Text 대입이 TextChanged를 통해 SearchMsku()를 이미 한 번 태우므로, 여기서는 그 결과
+        // 목록에서 정확히 고른 항목만 다시 짚어준다(검색어와 SKU 코드가 정확히 같은 항목이
+        // 여러 개일 순 없으므로 안전).
+        var idx = _skuResultList.Items.Cast<MskuItem>().ToList().FindIndex(i => string.Equals(i.Sku, dialog.SelectedSku, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0) _skuResultList.SelectedIndex = idx;
+    }
+
     private void OnSkuResultSelected(object? sender, EventArgs e)
     {
         if (_skuResultList.SelectedItem is MskuItem item)
@@ -414,18 +453,23 @@ public class QuickMappingPanel : Panel
         var rightLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
         rightLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         rightLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        // 검색결과 목록은 타이핑하는 즉시 아래로 채워지므로(사용자 요청) 컨테이너 크기와
+        // 무관하게 항상 5줄 정도 보이도록 고정 높이를 준다 — 나머지는 CSKU 목록이 가져간다.
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         rightLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _recentPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         _recentPanel.Controls.Add(new Label { Text = "최근:", AutoSize = true, Padding = new Padding(0, 4, 4, 0) });
 
         var searchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        _skuSearchBox = new TextBox { Width = 160, PlaceholderText = "SKU코드 또는 이름 검색 (Enter)" };
-        _skuSearchBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { SearchMsku(); e.SuppressKeyPress = true; } };
+        _skuSearchBox = new TextBox { Width = 160, PlaceholderText = "SKU코드 또는 이름 검색" };
+        // 타이핑하는 즉시 아래 목록이 갱신되고(사용자 요청), 위/아래 화살표로 그 목록을 바로
+        // 훑을 수 있게 한다(포커스를 옮기지 않고도). Enter는 현재 하이라이트된 항목을 확정한다.
+        _skuSearchBox.TextChanged += (s, e) => SearchMsku();
+        _skuSearchBox.KeyDown += OnSkuSearchBoxKeyDown;
         var btnSearch = new Button { Text = "검색", Size = new Size(55, 22) };
-        btnSearch.Click += (s, e) => SearchMsku();
+        btnSearch.Click += (s, e) => OpenSkuSearchPopup();
         searchPanel.Controls.Add(_skuSearchBox);
         searchPanel.Controls.Add(btnSearch);
 

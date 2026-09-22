@@ -12,6 +12,9 @@ public static class ChannelFieldSets
     [
         StdField.ProductNo, StdField.ProductName, StdField.OptionName, StdField.Quantity,
         StdField.Recipient, StdField.Phone, StdField.Address, StdField.DeliveryMessage, StdField.OrderDate,
+        // 발주서가 주소를 "주소" + "주소상세"(동/호수) 두 열로 주는 채널만 매핑하면 됨(필수 아님).
+        // 읽을 때 주소 뒤에 공백 하나로 이어붙여 한 값으로 만든다(OrderLoader.CombineAddress).
+        StdField.AddressDetail,
         StdField.Remark, StdField.ChannelHint,
         // 발주서에 매출액/판매가 열이 있는 채널만 매핑하면 됨(필수 아님). 1:1 정확매핑을
         // 상품명+옵션명+수량+매출액 4필드로 확장하는 데 쓰인다(매핑시스템 통합개편 기획서 §4.1/§6.1).

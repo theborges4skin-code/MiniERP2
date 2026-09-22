@@ -47,6 +47,9 @@ public class SettlementForm : Form
     private string? _settlementGridClickedColumnName;
     private ToolStripStatusLabel _statusLabel = new();
     private bool _isReapplying;
+    /// <summary>그리드를 다시 바인딩하려고 강제로 편집 모드를 빠져나오는 동안에는 셀 검증을 건너뛴다
+    /// (검증이 e.Cancel로 편집 종료를 막으면 재바인딩 자체가 예외로 실패한다).</summary>
+    private bool _suppressSettlementCellValidation;
     private string _cfsSummaryText = string.Empty;
 
     private ExcelLikeDataGridView _summaryGrid = new();
@@ -88,6 +91,19 @@ public class SettlementForm : Form
         };
     }
 
+    /// <summary>
+    /// 창을 껐다 다시 킨 것처럼 완전히 새로 초기화한다. 이미 정산 데이터가 로드된 상태에서
+    /// "정산파일 로드"를 다시 누르면 "기존 내용을 초기화할지" 묻는 확인창이 뜨는데, 그 확인
+    /// 절차 자체가 생산성을 떨어뜨린다는 지적(사용자 신고)에 따라 새 창을 띄우고 이 창은 닫아
+    /// 즉시 빈 상태로 만든다 — 이후 "정산파일 로드"를 누르면 확인창 없이 바로 불러와진다.
+    /// </summary>
+    private void OnResetWindowClick(object? sender, EventArgs e)
+    {
+        var newForm = new SettlementForm();
+        newForm.Show();
+        Close();
+    }
+
     // ===================== 이익분석(자동) =====================
 
     private TabPage CreateProfitAnalysisTab()
@@ -106,16 +122,19 @@ public class SettlementForm : Form
         var btnSave = new Button { Text = "결과 저장", Size = new Size(100, 30) };
         var btnSaveReport = new Button { Text = "보고서 저장", Size = new Size(100, 30) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
+        var btnResetWindow = new Button { Text = "창 초기화", Size = new Size(90, 30) };
 
         btnLoad.Click += OnLoadSettlementClick;
         btnSave.Click += OnSaveSettlementClick;
         btnSaveReport.Click += OnSaveProfitFactClick;
         btnExport.Click += OnExportSettlementClick;
+        btnResetWindow.Click += OnResetWindowClick;
 
         toolStrip.Controls.Add(btnLoad);
         toolStrip.Controls.Add(btnSave);
         toolStrip.Controls.Add(btnSaveReport);
         toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnResetWindow);
 
         // 99.1: 기본값은 미매핑/확인필요 건만 보이게 — 체크 해제하면 전체(미매핑이 위로 정렬된 채)를 본다.
         _unmappedOnlyCheckBox = new CheckBox { Text = "미매핑건만 보기", AutoSize = true, Checked = true, Padding = new Padding(10, 7, 0, 0) };
@@ -234,6 +253,35 @@ public class SettlementForm : Form
     /// <summary>진단용: RefreshProfitAnalysisView 내부 단계별 소요 시간(가장 최근 호출 기준).</summary>
     public string LastRefreshDiagnostics { get; private set; } = string.Empty;
 
+    /// <summary>정산 그리드를 다시 바인딩하기 전에 편집 중이던 셀을 확실히 빠져나온다.
+    /// 편집 내용은 버린다 — 이 갱신을 유발한 매핑 변경 결과가 곧 그 셀에 다시 채워지므로,
+    /// 커밋을 시도하다 검증에 걸려 재바인딩이 통째로 실패하는 것보다 안전하다.</summary>
+    private void LeaveSettlementGridEditMode()
+    {
+        if (_settlementGrid.IsDisposed) return;
+
+        _suppressSettlementCellValidation = true;
+        try
+        {
+            if (_settlementGrid.IsCurrentCellInEditMode)
+            {
+                _settlementGrid.CancelEdit();
+                _settlementGrid.EndEdit(DataGridViewDataErrorContexts.Commit);
+            }
+            _settlementGrid.CurrentCell = null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 그래도 빠져나오지 못하는 경우까지 앱을 죽일 이유는 없다 — 아래 재바인딩이 실패하면
+            // 화면만 갱신되지 않고 데이터는 그대로 유지된다.
+            DiagnosticsLogger.Log($"[SettlementForm] 편집 모드 해제 실패(무시하고 계속): {ex.Message}");
+        }
+        finally
+        {
+            _suppressSettlementCellValidation = false;
+        }
+    }
+
     private void RefreshProfitAnalysisView(bool liteRefresh = false)
     {
         DiagnosticsLogger.Log($"[SettlementForm] RefreshProfitAnalysisView 시작 (_settlementRows={_settlementRows.Count}건, liteRefresh={liteRefresh})");
@@ -251,29 +299,45 @@ public class SettlementForm : Form
         filterStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 필터링 완료 — 표시대상 {view.Count}건 ({filterStopwatch.Elapsed.TotalSeconds:F2}s)");
 
+        // 편집 중인 셀이 남아 있으면 DataSource 교체 시 WinForms가 CurrentCell을 비우면서
+        // "프로그램에서 셀 값 변경을 커밋하거나 중단할 수 없으므로 작업을 수행하지 못했습니다"
+        // (InvalidOperationException)로 앱이 죽는다 — 매핑 SKU 셀을 편집하던 중 우클릭으로 매핑창을
+        // 열어 CSKU를 바꾸면 편집 모드가 살아있는 채 이 갱신이 들어와 실제로 재현됐다.
+        LeaveSettlementGridEditMode();
+
         var unbindStopwatch = Stopwatch.StartNew();
+        var rebuildColumnsStopwatch = new Stopwatch();
+        var bindStopwatch = new Stopwatch();
+        // SuspendLayout 이후 예외가 나면 ResumeLayout이 영영 호출되지 않아 그리드가 다시 배치되지
+        // 않는 상태로 남는다(글자가 겹쳐 그려지고 행이 엉뚱한 위치에 보이던 증상) — try/finally로 묶는다.
         _settlementGrid.SuspendLayout();
-        if (!liteRefresh)
+        try
         {
-            // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
-            // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
-            // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
-            _settlementGrid.DataSource = null;
-        }
-        unbindStopwatch.Stop();
-        DiagnosticsLogger.Log($"[SettlementForm] 그리드 분리 완료 ({unbindStopwatch.Elapsed.TotalSeconds:F2}s)");
+            if (!liteRefresh)
+            {
+                // 성능: 열을 먼저 채운 뒤 데이터를 바인딩한다(반대 순서로 하면 이미 수천 행이 바인딩된
+                // 그리드에 동적 열을 하나씩 추가할 때마다 전체 재배치가 일어나 수 분까지 걸릴 수 있다 —
+                // "파일 로드는 빠른데 그 다음 처리가 오래 걸린다"는 신고의 원인이었다).
+                _settlementGrid.DataSource = null;
+            }
+            unbindStopwatch.Stop();
+            DiagnosticsLogger.Log($"[SettlementForm] 그리드 분리 완료 ({unbindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
-        var rebuildColumnsStopwatch = Stopwatch.StartNew();
-        if (!liteRefresh)
+            rebuildColumnsStopwatch.Start();
+            if (!liteRefresh)
+            {
+                RebuildRawTailColumns(view);
+            }
+            rebuildColumnsStopwatch.Stop();
+            DiagnosticsLogger.Log($"[SettlementForm] 원본열 구성 완료 — 그리드 전체 열수={_settlementGrid.Columns.Count} ({rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s)");
+
+            bindStopwatch.Start();
+            _settlementGrid.DataSource = new BindingList<SettlementData>(view);
+        }
+        finally
         {
-            RebuildRawTailColumns(view);
+            _settlementGrid.ResumeLayout(false);
         }
-        rebuildColumnsStopwatch.Stop();
-        DiagnosticsLogger.Log($"[SettlementForm] 원본열 구성 완료 — 그리드 전체 열수={_settlementGrid.Columns.Count} ({rebuildColumnsStopwatch.Elapsed.TotalSeconds:F2}s)");
-
-        var bindStopwatch = Stopwatch.StartNew();
-        _settlementGrid.DataSource = new BindingList<SettlementData>(view);
-        _settlementGrid.ResumeLayout(false);
         bindStopwatch.Stop();
         DiagnosticsLogger.Log($"[SettlementForm] 데이터 바인딩 완료 ({bindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
@@ -1120,6 +1184,8 @@ public class SettlementForm : Form
     /// </summary>
     private void OnSettlementGridCellValidating(object? sender, DataGridViewCellValidatingEventArgs e)
     {
+        if (_suppressSettlementCellValidation) return;
+        if (e.ColumnIndex < 0 || e.ColumnIndex >= _settlementGrid.Columns.Count) return;
         if (_settlementGrid.Columns[e.ColumnIndex].Name != "Msku") return;
 
         var text = e.FormattedValue?.ToString();
@@ -1198,7 +1264,9 @@ public class SettlementForm : Form
     private void ShowQuickMapPanel()
     {
         _profitMainLayout.RowStyles[1].SizeType = SizeType.Absolute;
-        _profitMainLayout.RowStyles[1].Height = 220;
+        // SKU 검색 결과 목록을 5줄 정도 고정으로 보여주도록 늘린 만큼(QuickMappingPanel 참고)
+        // CSKU 목록도 여유가 있게 패널 전체 높이를 함께 늘렸다.
+        _profitMainLayout.RowStyles[1].Height = 260;
         _quickMapPanel.Visible = true;
     }
 
@@ -1367,6 +1435,10 @@ public class SettlementForm : Form
             var hit = _settlementGrid.HitTest(e.X, e.Y);
             if (hit.RowIndex < 0) return;
             var colIdx = hit.ColumnIndex >= 0 ? hit.ColumnIndex : 0;
+
+            // 편집 중이던 셀이 남아 있으면 CurrentCell 이동이 실패해(아래 catch) 우클릭 메뉴가
+            // 엉뚱한(직전에 선택돼 있던) 행에 대해 실행된다 — 먼저 편집 모드를 정리한다.
+            LeaveSettlementGridEditMode();
             try
             {
                 _settlementGrid.CurrentCell = _settlementGrid.Rows[hit.RowIndex].Cells[colIdx];

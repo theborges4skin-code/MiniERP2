@@ -100,9 +100,11 @@ public class ChannelConfigForm : Form
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         // Left Panel (Channel List)
-        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
+        var leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        // 일괄등록 버튼 3개는 좁은 좌측 열에서 여러 줄로 접히고 접히는 줄 수가 DPI 배율에 따라 달라지므로 높이를 고정하지 않는다.
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
@@ -139,7 +141,14 @@ public class ChannelConfigForm : Form
         buttonPanel.Controls.Add(_statusLabel);
 
         // 채널 일괄등록(엑셀) — 기획서 §4.2.
-        var bulkImportPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
+        var bulkImportPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            Padding = new Padding(5),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
         var btnExportBlank = new Button { Text = "엑셀 다운로드", Width = 100 };
         var btnExportCurrent = new Button { Text = "현재 설정 내보내기", Width = 120 };
         var btnBulkImport = new Button { Text = "엑셀 일괄 등록", Width = 100 };
@@ -160,8 +169,6 @@ public class ChannelConfigForm : Form
         btnLegacyImport.Click += OnLegacyChannelImportClick;
         legacyImportPanel.Controls.Add(btnLegacyImport);
 
-        leftPanel.RowCount = 5;
-        leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         leftPanel.Controls.Add(_channelTreeView, 0, 0);
         leftPanel.Controls.Add(buttonPanel, 0, 1);
         leftPanel.Controls.Add(bulkImportPanel, 0, 2);
@@ -494,14 +501,20 @@ public class ChannelConfigForm : Form
 
         btnLoadSample.Click += (s, e) =>
         {
-            using var ofd = new OpenFileDialog { Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*", Title = "샘플 파일을 선택하세요" };
+            using var ofd = new OpenFileDialog
+            {
+                // 정산파일 로드(SettlementForm)와 같은 범위를 받는다 — 구형 .xls로 오는 정산서를
+                // 여기서는 고를 수 없어 매핑 설정을 못 잡던 문제(사용자 신고).
+                Filter = "Excel/CSV (*.xlsx;*.xls;*.csv)|*.xlsx;*.xls;*.csv|Excel (*.xlsx;*.xls)|*.xlsx;*.xls|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+                Title = "샘플 파일을 선택하세요",
+            };
             if (ofd.ShowDialog(this) != DialogResult.OK) return;
 
             try
             {
-                var opened = Path.GetExtension(ofd.FileName).Equals(".csv", StringComparison.OrdinalIgnoreCase)
-                    ? CsvWorkbookReader.LoadAsPackage(ofd.FileName)
-                    : ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
+                // ExcelFileOpener가 확장자별로 알아서 갈라준다(.csv → CsvWorkbookReader,
+                // .xls → XlsWorkbookReader, .xlsx → EPPlus + 필요 시 암호 입력).
+                var opened = ExcelFileOpener.OpenWithPasswordPrompt(ofd.FileName, this);
                 if (opened == null) return;
 
                 samplePackage?.Dispose();
@@ -633,12 +646,13 @@ public class ChannelConfigForm : Form
                 comboBox.DropDownStyle = ComboBoxStyle.DropDown;
             }
         };
-        // 직접 입력한 값이 Items에 없으면 DataGridView가 검증 오류를 던진다.
-        // CellEndEdit에서 입력값을 Items에 추가해 렌더링 오류를 막고, DataError는 억제한다.
-        _courierOverrideGrid.CellEndEdit += (s, e) =>
+        // 직접 입력한 값이 Items에 없으면 DataGridView가 커밋 시점에 검증 오류를 던지고 입력값을
+        // 버린다. CellEndEdit(커밋 이후)에서 Items에 추가하면 이미 늦으므로, 커밋 전에 열리는
+        // CellValidating에서 미리 Items에 추가해 검증을 통과시킨다.
+        _courierOverrideGrid.CellValidating += (s, e) =>
         {
-            if (e.RowIndex < 0 || _courierOverrideGrid.Columns[e.ColumnIndex] is not DataGridViewComboBoxColumn col) return;
-            var val = _courierOverrideGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value as string;
+            if (_courierOverrideGrid.Columns[e.ColumnIndex] is not DataGridViewComboBoxColumn col) return;
+            var val = e.FormattedValue as string;
             if (!string.IsNullOrEmpty(val) && !col.Items.Contains(val))
                 col.Items.Add(val);
         };

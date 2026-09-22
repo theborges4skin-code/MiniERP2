@@ -80,6 +80,11 @@ public class FbaHistoryForm : Form
         // 바로 채워 넣기 위함(사용자 요청, 2026-08-10).
         var btnInputShipmentId = new Button { Text = "Shipment ID 입력", Size = new Size(120, 30), Margin = new Padding(12, 0, 0, 0) };
         btnInputShipmentId.Click += OnInputShipmentIdClick;
+        // 운송장 결과 파일을 발주 작성 화면(FbaOrderForm)을 다시 열지 않고 이력에서 바로 반영한다
+        // (FboHistoryForm과 동일한 편의 동작, 사용자 요청 2026-09-17). 매칭이 발주 단위가 아니라
+        // 전체 미출고 박스 대상이므로 행 선택이 필요 없고, 뷰 전환에도 비활성화하지 않는다.
+        var btnImportTracking = new Button { Text = "운송장 불러오기", Size = new Size(120, 30), Margin = new Padding(6, 0, 0, 0) };
+        btnImportTracking.Click += OnImportTrackingClick;
         var btnDeleteOrder = new Button { Text = "발주 삭제", Size = new Size(90, 30), Margin = new Padding(12, 0, 0, 0) };
         btnDeleteOrder.Click += OnDeleteOrderClick;
         // 선택한 발주(들) 또는 선택이 없으면 현재 조회+검색된 전체 발주를 대상으로 박스 포장용
@@ -109,15 +114,22 @@ public class FbaHistoryForm : Form
             new Label { Text = "보기:", AutoSize = true, Padding = new Padding(12, 5, 4, 0) }, _viewModeCombo,
             _searchBox,
         ]);
-        actionBar.Controls.AddRange([btnOpenDetail, btnCopyAsNew, btnExportCourier, btnExportShipment, btnInputShipmentId, btnDeleteOrder, btnIssueWorkOrder]);
+        actionBar.Controls.AddRange([btnOpenDetail, btnCopyAsNew, btnExportCourier, btnExportShipment, btnInputShipmentId, btnImportTracking, btnDeleteOrder, btnIssueWorkOrder]);
 
+        // CellSelect(엑셀식 셀 단위 선택) — FullRowSelect였을 때는 셀 하나를 클릭해도 DataGridView가
+        // 행 전체를 선택해버려서 "운송장번호 열만 드래그해서 복사"가 원리적으로 불가능했다(사용자
+        // 요청, 2026-09-17). 셀 단위로 바꾸면 드래그한 범위만 복사된다. 발주 단위 버튼들은
+        // SelectedRows(셀 단위 모드에서는 항상 비어있다) 대신 GetSelectedGridRows()로 판정한다.
+        // ClipboardCopyMode를 명시해 열 머리글 문구가 값과 함께 복사되지 않게 한다.
         _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            SelectionMode = DataGridViewSelectionMode.CellSelect,
+            MultiSelect = true,
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
         };
         _grid.CellDoubleClick += (s, e) =>
@@ -155,7 +167,25 @@ public class FbaHistoryForm : Form
         return string.IsNullOrWhiteSpace(fbaNo) ? null : fbaNo;
     }
 
-    /// <summary>그리드에서 일괄(Ctrl/Shift+클릭) 또는 임의로 선택된 행들의 발주번호를 중복 없이
+    /// <summary>
+    /// 선택된 셀들이 걸쳐 있는 행을 행 순서대로, 중복 없이 반환한다. 그리드가 CellSelect 모드라
+    /// DataGridView.SelectedRows는 항상 비어있으므로(행 전체가 선택되는 모드에서만 채워진다) 발주
+    /// 단위 버튼들은 이 메서드로 선택을 판정해야 한다. 아무것도 선택돼 있지 않으면 현재 셀이 있는
+    /// 행 하나로 간주한다(클릭만 하고 드래그하지 않은 경우).
+    /// </summary>
+    private List<DataGridViewRow> GetSelectedGridRows()
+    {
+        var rows = _grid.SelectedCells.Cast<DataGridViewCell>()
+            .Select(c => c.RowIndex)
+            .Distinct()
+            .OrderBy(index => index)
+            .Select(index => _grid.Rows[index])
+            .ToList();
+        if (rows.Count > 0) return rows;
+        return _grid.CurrentRow == null ? [] : [_grid.CurrentRow];
+    }
+
+    /// <summary>그리드에서 일괄(드래그 또는 Ctrl/Shift+클릭) 선택된 행들의 발주번호를 중복 없이
     /// 반환한다(선택 없거나 CSKU별 집계 뷰면 안내 후 null). "Shipment ID 입력"이 여러 발주를
     /// 한 번에 처리할 때 쓴다 — 상세보기 뷰에서는 같은 발주의 여러 라인이 함께 선택될 수 있어
     /// Distinct가 필요하다.</summary>
@@ -166,13 +196,15 @@ public class FbaHistoryForm : Form
             MessageBox.Show("이 작업은 'CSKU별 집계' 뷰에서는 할 수 없습니다. 상세보기/발주번호별 뷰에서 시도하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return null;
         }
-        if (_grid.SelectedRows.Count == 0)
+
+        var selectedRows = GetSelectedGridRows();
+        if (selectedRows.Count == 0)
         {
             MessageBox.Show("대상 발주 건을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return null;
         }
 
-        var fbaNos = _grid.SelectedRows.Cast<DataGridViewRow>()
+        var fbaNos = selectedRows
             .Select(r => r.Cells["FbaNo"].Value?.ToString())
             .Where(no => !string.IsNullOrWhiteSpace(no))
             .Select(no => no!)
@@ -197,19 +229,55 @@ public class FbaHistoryForm : Form
         _statusLabel.Text = $"발주 {fbaNos.Count}건에 Shipment ID '{dlg.ShipmentId}'를 적용했습니다.";
     }
 
+    /// <summary>택배사(CJ)에서 내려받은 운송장 결과 파일("운송장출력데이터 상세")을 가공 없이 그대로
+    /// 읽어 미출고 박스의 운송장번호를 채운다(§7.2). 매칭은 고객주문번호 칸에 실려오는
+    /// "[SEND] {Shipment ID} 총 N박스중 M번째"에서 뽑은 (Shipment ID, 박스순번)으로 하고, FBA
+    /// 형식이 아닌 행(FBO·일반 택배)은 자동으로 건너뛴다(FbaTrackingImporter). 대상이 발주 단위가
+    /// 아니라 전체 박스이므로 발주 작성 화면에서 불러오든 여기서 불러오든 결과는 같다. 미매칭이나
+    /// 운송장번호 불일치가 하나라도 있으면 아무것도 반영하지 않고 목록을 보여준다(부분 반영 금지).</summary>
+    private void OnImportTrackingClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel/CSV (*.xlsx;*.csv)|*.xlsx;*.csv|Excel (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "운송장 결과 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("FbaTrackingImport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+        _settingsService.SetLastFolder("FbaTrackingImport", Path.GetDirectoryName(ofd.FileName)!);
+
+        try
+        {
+            var result = new FbaTrackingImporter(_orderRepository).Import(ofd.FileName);
+            if (!result.Success)
+            {
+                MessageBox.Show(result.BuildFailureMessage(), "운송장 불러오기 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            RunQuery();
+            _statusLabel.Text = result.BuildSuccessSummary();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     /// <summary>"작업지시서 발행"의 대상 발주번호를 정한다 — 그리드에 선택된 행이 있으면(상세보기/
     /// 발주번호별 뷰) 그 발주들, 없으면(또는 CSKU별 집계 뷰라 선택 개념이 없으면) 현재 조회+검색된
     /// 전체 발주로 자동 대체한다("임의 또는 조회된 발주건" — 사용자 요청).</summary>
     private List<string> GetTargetFbaNosForWorkOrder()
     {
-        if (_viewModeCombo.SelectedIndex != ViewModeByCsku && _grid.SelectedRows.Count > 0)
+        if (_viewModeCombo.SelectedIndex != ViewModeByCsku)
         {
-            return _grid.SelectedRows.Cast<DataGridViewRow>()
+            var fbaNos = GetSelectedGridRows()
                 .Select(r => r.Cells["FbaNo"].Value?.ToString())
                 .Where(no => !string.IsNullOrWhiteSpace(no))
                 .Select(no => no!)
                 .Distinct()
                 .ToList();
+            if (fbaNos.Count > 0) return fbaNos;
         }
 
         return GetFilteredRows().Select(r => r.FbaNo).Distinct().ToList();

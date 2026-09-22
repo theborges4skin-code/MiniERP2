@@ -53,6 +53,94 @@ public class DbBackupServiceTests
     }
 
     [TestMethod]
+    public void CreateOrUpdateDailyBackup_OverwritesSameDayFileInsteadOfAccumulating()
+    {
+        var service = new DbBackupService();
+
+        var firstPath = service.CreateOrUpdateDailyBackup();
+        new ItemRepository().Upsert(new Models.ItemModel { Sku = "SKU-DAILY", ItemName = "일일백업", CostPrice = 100m });
+        var secondPath = service.CreateOrUpdateDailyBackup();
+
+        Assert.AreEqual(firstPath, secondPath);
+        Assert.HasCount(1, service.GetDailyBackups());
+    }
+
+    [TestMethod]
+    public void CreateOrUpdateDailyBackup_DoesNotAffectManualBackupRetention()
+    {
+        var service = new DbBackupService();
+
+        for (int i = 0; i < 5; i++)
+        {
+            service.CreateBackup($"backup{i}");
+            Thread.Sleep(10);
+        }
+        service.CreateOrUpdateDailyBackup();
+
+        Assert.HasCount(3, service.GetBackups());
+        Assert.HasCount(1, service.GetDailyBackups());
+    }
+
+    [TestMethod]
+    public void CreateOrUpdateDailyBackup_PrunesFilesOlderThanTwoMonths()
+    {
+        var service = new DbBackupService();
+        var backupsFolder = Path.Combine(_testFolder, "backups");
+        Directory.CreateDirectory(backupsFolder);
+
+        var oldFile = Path.Combine(backupsFolder, "ERP_DailyBackup_20250101.sqlite");
+        File.WriteAllText(oldFile, "old");
+        File.SetLastWriteTimeUtc(oldFile, DateTime.UtcNow.AddMonths(-3));
+
+        var recentFile = Path.Combine(backupsFolder, $"ERP_DailyBackup_{DateTime.UtcNow.AddDays(-10):yyyyMMdd}.sqlite");
+        File.WriteAllText(recentFile, "recent");
+        File.SetLastWriteTimeUtc(recentFile, DateTime.UtcNow.AddDays(-10));
+
+        service.CreateOrUpdateDailyBackup();
+
+        var remaining = service.GetDailyBackups().Select(f => f.Name).ToList();
+        Assert.DoesNotContain("ERP_DailyBackup_20250101.sqlite", remaining);
+        Assert.Contains(Path.GetFileName(recentFile), remaining);
+    }
+
+    [TestMethod]
+    public void NeedsMonthlyBackup_TrueWhenNoneExistsYet()
+    {
+        var service = new DbBackupService();
+
+        Assert.IsTrue(service.NeedsMonthlyBackup());
+    }
+
+    [TestMethod]
+    public void CreateMonthlyBackup_ThenNeedsMonthlyBackupIsFalse()
+    {
+        var service = new DbBackupService();
+
+        var path = service.CreateMonthlyBackup();
+
+        Assert.IsTrue(File.Exists(path));
+        Assert.Contains(DateTime.Now.ToString("yyyyMM"), Path.GetFileName(path));
+        Assert.IsFalse(service.NeedsMonthlyBackup());
+    }
+
+    [TestMethod]
+    public void CreateMonthlyBackup_DoesNotAffectDailyOrManualBackupRetention()
+    {
+        var service = new DbBackupService();
+
+        for (int i = 0; i < 5; i++)
+        {
+            service.CreateBackup($"backup{i}");
+            Thread.Sleep(10);
+        }
+        service.CreateOrUpdateDailyBackup();
+        service.CreateMonthlyBackup();
+
+        Assert.HasCount(3, service.GetBackups());
+        Assert.HasCount(1, service.GetDailyBackups());
+    }
+
+    [TestMethod]
     public void Restore_OverwritesCurrentDatabaseFileWithBackupContent()
     {
         var service = new DbBackupService();

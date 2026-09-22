@@ -38,6 +38,7 @@ public static class FeatureIndex
         Sub("발주/배송", "발주/출고 이력", "조회", () => FormManager.Show<OutboundHistoryForm>());
         Sub("발주/배송", "발주/출고 이력", "운송장번호 불러오기", () => FormManager.Show<OutboundHistoryForm>());
         Sub("발주/배송", "발주/출고 이력", "누적발주서 송장번호 입력", () => FormManager.Show<OutboundHistoryForm>());
+        Sub("발주/배송", "발주/출고 이력", "누적발주서에 송장번호 기입", () => FormManager.Show<OutboundHistoryForm>());
         Sub("발주/배송", "발주/출고 이력", "운송장 파일 누락건 점검", () => FormManager.Show<OutboundHistoryForm>());
         Sub("발주/배송", "발주/출고 이력", "선택 건 택배사 양식 출력", () => FormManager.Show<OutboundHistoryForm>());
         Sub("발주/배송", "발주/출고 이력", "변경사항 저장", () => FormManager.Show<OutboundHistoryForm>());
@@ -99,9 +100,14 @@ public static class FeatureIndex
         Sub("발주/배송", "FBA 발주 이력", "하배출고이서 재출력", () => FormManager.Show<FbaHistoryForm>());
         Sub("발주/배송", "FBA 발주 이력", "선적명세 재출력", () => FormManager.Show<FbaHistoryForm>());
         Sub("발주/배송", "FBA 발주 이력", "Shipment ID 입력", () => FormManager.Show<FbaHistoryForm>());
+        Sub("발주/배송", "FBA 발주 이력", "운송장 불러오기", () => FormManager.Show<FbaHistoryForm>());
         Sub("발주/배송", "FBA 발주 이력", "작업지시서 발행", () => FormManager.Show<FbaHistoryForm>());
 
         // ── 기준정보 ──────────────────────────────────────────────────────
+        // 별도 창이 없는 메인 화면 상단의 조회 기능이라, 고르면 그 입력칸으로 포커스만 옮긴다.
+        Top("기준정보", "빠른 원가검색 (MSKU·CSKU 원가/최종 수정일)",
+            () => Application.OpenForms.OfType<MainHub>().FirstOrDefault()?.FocusCostSearch());
+
         Top("기준정보", "마스터SKU 관리", () => FormManager.Show<MasterSkuForm>());
         Sub("기준정보", "마스터SKU 관리", "새 마스터SKU 추가", () => FormManager.Show<MasterSkuForm>());
         Sub("기준정보", "마스터SKU 관리", "엑셀 가져오기", () => FormManager.Show<MasterSkuForm>());
@@ -274,6 +280,8 @@ public static class FeatureIndex
         Top("데이터관리", "레거시 데이터 가져오기", () => MessageBox.Show(
             "메인 허브 상단 메뉴의 '데이터관리 > 레거시 데이터 가져오기'에서 실행할 수 있습니다.",
             "안내", MessageBoxButtons.OK, MessageBoxIcon.Information));
+
+        Top("데이터관리", "메뉴 사용 통계", () => FormManager.Show<MenuUsageStatsForm>());
 
         return entries;
     }

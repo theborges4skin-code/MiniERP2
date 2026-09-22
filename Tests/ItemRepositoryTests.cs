@@ -102,4 +102,131 @@ public class ItemRepositoryTests
         Assert.IsEmpty(deletedHistory, "삭제된 아이템의 이력이 남아있으면 안 됩니다.");
         Assert.IsNotNull(repository.GetBySku("SKU-KEEP-001"), "다른 아이템이 삭제되면 안 됩니다.");
     }
+
+    [TestMethod]
+    public void Rename_UpdatesItemAndCostHistory()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "이름변경상품", CostPrice = 1000m });
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "이름변경상품", CostPrice = 1200m }); // 원가이력 1건 생성
+
+        var (success, _) = repository.Rename("OLD-SKU", "NEW-SKU");
+
+        Assert.IsTrue(success);
+        Assert.IsNull(repository.GetBySku("OLD-SKU"));
+        Assert.IsNotNull(repository.GetBySku("NEW-SKU"));
+        Assert.IsEmpty(repository.GetCostHistory("OLD-SKU"));
+        Assert.HasCount(1, repository.GetCostHistory("NEW-SKU"));
+    }
+
+    [TestMethod]
+    public void Rename_CascadesToChannelSkuAndPurchaseSku()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "상품", CostPrice = 1000m });
+        new ChannelSkuRepository().Upsert(new ChannelSkuModel { ChannelCode = "CH1", CskuCode = "CH1_OLD-SKU", Msku = "OLD-SKU", SupplyPrice = 5000m });
+        new PurchaseSkuRepository().Upsert(new PurchaseSkuModel { ChannelCode = "VEND1", Msku = "OLD-SKU", PurchasePrice = 800m });
+
+        repository.Rename("OLD-SKU", "NEW-SKU");
+
+        var csku = new ChannelSkuRepository().GetAll().Single(c => c.CskuCode == "CH1_OLD-SKU");
+        Assert.AreEqual("NEW-SKU", csku.Msku);
+        var purchaseSku = new PurchaseSkuRepository().GetAll().Single(p => p.ChannelCode == "VEND1");
+        Assert.AreEqual("NEW-SKU", purchaseSku.Msku);
+    }
+
+    [TestMethod]
+    public void Rename_CascadesToRuleConditionTargetMskuButNotTargetSku()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "상품", CostPrice = 1000m });
+
+        using (var connection = SqliteConnectionFactory.OpenConnection())
+        {
+            using var command = connection.CreateCommand();
+            // TargetSku는 CSKU 코드 전용 칸이라, 값이 우연히 옛 마스터SKU와 같아도 바뀌면 안 된다.
+            command.CommandText = "INSERT INTO RuleCondition (ChannelCode, Key, TargetSku, TargetMsku) VALUES ('CH1', 'K1', 'OLD-SKU', 'OLD-SKU')";
+            command.ExecuteNonQuery();
+        }
+
+        repository.Rename("OLD-SKU", "NEW-SKU");
+
+        using var verifyConnection = SqliteConnectionFactory.OpenConnection();
+        using var verifyCommand = verifyConnection.CreateCommand();
+        verifyCommand.CommandText = "SELECT TargetSku, TargetMsku FROM RuleCondition WHERE ChannelCode = 'CH1' AND Key = 'K1'";
+        using var reader = verifyCommand.ExecuteReader();
+        Assert.IsTrue(reader.Read());
+        Assert.AreEqual("OLD-SKU", reader.GetString(0), "TargetSku는 CSKU 코드 칸이라 바뀌면 안 됩니다.");
+        Assert.AreEqual("NEW-SKU", reader.GetString(1));
+    }
+
+    [TestMethod]
+    public void Rename_UpdatesUnconfirmedClosingLineButLeavesConfirmedOneAsSnapshot()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "상품", CostPrice = 1000m });
+
+        using (var connection = SqliteConnectionFactory.OpenConnection())
+        {
+            using var insertClosing = connection.CreateCommand();
+            insertClosing.CommandText = """
+                INSERT INTO PartnerClosingTable (Period, PartyKey, ConfirmedAt) VALUES ('2026-08', 'PARTY-UNCONFIRMED', NULL);
+                INSERT INTO PartnerClosingTable (Period, PartyKey, ConfirmedAt) VALUES ('2026-08', 'PARTY-CONFIRMED', '2026-08-31');
+                """;
+            insertClosing.ExecuteNonQuery();
+
+            using var getIds = connection.CreateCommand();
+            getIds.CommandText = "SELECT Id, PartyKey FROM PartnerClosingTable";
+            using var reader = getIds.ExecuteReader();
+            var ids = new Dictionary<string, long>();
+            while (reader.Read()) ids[reader.GetString(1)] = reader.GetInt64(0);
+
+            using var insertLines = connection.CreateCommand();
+            insertLines.CommandText = $"""
+                INSERT INTO PartnerClosingLineTable (ClosingId, MasterSku) VALUES ({ids["PARTY-UNCONFIRMED"]}, 'OLD-SKU');
+                INSERT INTO PartnerClosingLineTable (ClosingId, MasterSku) VALUES ({ids["PARTY-CONFIRMED"]}, 'OLD-SKU');
+                """;
+            insertLines.ExecuteNonQuery();
+        }
+
+        repository.Rename("OLD-SKU", "NEW-SKU");
+
+        using var verifyConnection = SqliteConnectionFactory.OpenConnection();
+        using var verifyCommand = verifyConnection.CreateCommand();
+        verifyCommand.CommandText = """
+            SELECT c.PartyKey, l.MasterSku FROM PartnerClosingLineTable l
+            JOIN PartnerClosingTable c ON c.Id = l.ClosingId
+            """;
+        using var verifyReader = verifyCommand.ExecuteReader();
+        var results = new Dictionary<string, string>();
+        while (verifyReader.Read()) results[verifyReader.GetString(0)] = verifyReader.GetString(1);
+
+        Assert.AreEqual("NEW-SKU", results["PARTY-UNCONFIRMED"], "미확정 마감 라인은 새 SKU로 갱신되어야 합니다.");
+        Assert.AreEqual("OLD-SKU", results["PARTY-CONFIRMED"], "확정된 마감 라인은 발행 시점 스냅샷이라 바뀌면 안 됩니다.");
+    }
+
+    [TestMethod]
+    public void Rename_FailsWhenNewSkuAlreadyExists()
+    {
+        var repository = new ItemRepository();
+        repository.Upsert(new ItemModel { Sku = "OLD-SKU", ItemName = "상품", CostPrice = 1000m });
+        repository.Upsert(new ItemModel { Sku = "TAKEN-SKU", ItemName = "다른상품", CostPrice = 500m });
+
+        var (success, message) = repository.Rename("OLD-SKU", "TAKEN-SKU");
+
+        Assert.IsFalse(success);
+        Assert.Contains("이미 사용 중", message);
+        Assert.IsNotNull(repository.GetBySku("OLD-SKU"));
+    }
+
+    [TestMethod]
+    public void Rename_FailsWhenOldSkuDoesNotExist()
+    {
+        var repository = new ItemRepository();
+
+        var (success, message) = repository.Rename("NO-SUCH-SKU", "NEW-SKU");
+
+        Assert.IsFalse(success);
+        Assert.Contains("찾을 수 없습니다", message);
+    }
 }

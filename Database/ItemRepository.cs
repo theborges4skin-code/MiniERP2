@@ -60,6 +60,64 @@ public class ItemRepository
         }
     }
 
+    /// <summary>
+    /// 마스터SKU 코드를 바꾼다. ItemTable의 PK를 새 값으로 바꾸는 것과 같아서, 이 코드를
+    /// 참조하는 다른 표(거래처별 CSKU 매핑, B2B 매입 단가, 견적 라인, Settlement 전용 매핑 규칙,
+    /// 미확정 거래처 마감 라인)도 한 트랜잭션 안에서 함께 바꿔야 한다. 원가 변경 이력
+    /// (ItemCostHistory)도 "이 품목의 과거 이력"을 찾는 조회 키일 뿐이라 함께 바꾼다.
+    /// 반대로 ChannelSkuFieldHistory 등 "그 시점에 실제로 어떤 값이었는지"를 남기는 감사로그와,
+    /// CSKU 코드를 저장하는 컬럼(RuleXxx.TargetSku, ChannelSkuPriceHistory.Msku — 이름과 달리
+    /// 마스터SKU가 아니라 CSKU 코드를 담고 있음, OutboundDetailTable.MskuCode 등)은 대상이 아니므로
+    /// 손대지 않는다. 확정된 거래처 마감의 라인은 발행 시점 스냅샷이라 일부러 갱신하지 않는다.
+    /// </summary>
+    public (bool Success, string Message) Rename(string oldSku, string newSku)
+    {
+        newSku = newSku.Trim();
+        if (string.IsNullOrWhiteSpace(newSku)) return (false, "새 SKU 코드를 입력하세요.");
+        if (newSku == oldSku) return (false, "기존 SKU 코드와 같습니다.");
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            if (GetBySku(connection, oldSku) is null)
+                return (false, $"'{oldSku}' 품목을 찾을 수 없습니다.");
+            if (GetBySku(connection, newSku) is not null)
+                return (false, $"'{newSku}' 코드가 이미 사용 중입니다.");
+
+            void Update(string sql)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = sql;
+                command.Parameters.AddWithValue("$old", oldSku);
+                command.Parameters.AddWithValue("$new", newSku);
+                command.ExecuteNonQuery();
+            }
+
+            Update("UPDATE ItemTable SET Sku = $new WHERE Sku = $old");
+            Update("UPDATE ItemCostHistory SET Sku = $new WHERE Sku = $old");
+            Update("UPDATE ChannelSkuTable SET Msku = $new WHERE Msku = $old");
+            Update("UPDATE PurchaseSkuTable SET Msku = $new WHERE Msku = $old");
+            Update("UPDATE PurchaseSkuPriceHistory SET Msku = $new WHERE Msku = $old");
+            Update("UPDATE PriceQuoteLineTable SET Msku = $new WHERE Msku = $old");
+            Update("UPDATE RuleCondition SET TargetMsku = $new WHERE TargetMsku = $old");
+            Update("""
+                UPDATE PartnerClosingLineTable SET MasterSku = $new
+                WHERE MasterSku = $old
+                  AND ClosingId IN (SELECT Id FROM PartnerClosingTable WHERE ConfirmedAt IS NULL)
+                """);
+
+            transaction.Commit();
+            return (true, $"'{oldSku}' → '{newSku}'(으)로 변경되었습니다.");
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
     public void Delete(string sku)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();

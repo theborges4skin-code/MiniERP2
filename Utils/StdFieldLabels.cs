@@ -21,6 +21,7 @@ public static class StdFieldLabels
         StdField.Recipient => "수취인",
         StdField.Phone => "연락처",
         StdField.Address => "주소",
+        StdField.AddressDetail => "주소상세(주소에 이어붙일 열)",
         StdField.DeliveryMessage => "배송메세지",
         StdField.OrderDate => "발주일(누적발주서용)",
         StdField.Remark => "비고(내부관리용)",
