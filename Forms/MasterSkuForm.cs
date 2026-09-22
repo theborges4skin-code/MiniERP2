@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
@@ -661,17 +661,67 @@ public class MasterSkuForm : Form
         }
     }
 
+    /// <summary>
+    /// 내보낼 대상 행을 고른다. 여러 행을 골라 놓았으면 그 선택이 우선이고, 아니면 검색어로
+    /// 걸러져 화면에 보이는 행이 대상이다(§2 — "검색해서 나온 것만 엑셀로 뽑고 싶다").
+    /// 대상이 전체와 같으면 굳이 물어볼 게 없으므로 빈 목록을 돌려준다.
+    /// </summary>
+    private List<ItemModel> GetExportSubset(out string scopeLabel)
+    {
+        // FullRowSelect라 클릭만 해도 1행은 늘 선택 상태다 — 2행 이상일 때만 "골라서 내보내기"로 본다.
+        var selected = _itemsGrid.SelectedRows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow && r.Visible)
+            .Select(r => r.DataBoundItem as ItemModel)
+            .Where(i => i != null)
+            .Select(i => i!)
+            .ToList();
+
+        if (selected.Count >= 2)
+        {
+            scopeLabel = "선택한 행";
+            // 화면에 보이는 순서대로 정렬해 내보낸다.
+            return _itemsGrid.Rows.Cast<DataGridViewRow>()
+                .Where(r => !r.IsNewRow && r.Visible && r.Selected && r.DataBoundItem is ItemModel)
+                .Select(r => (ItemModel)r.DataBoundItem)
+                .ToList();
+        }
+
+        scopeLabel = "현재 검색 결과";
+        return _itemsGrid.Rows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow && r.Visible && r.DataBoundItem is ItemModel)
+            .Select(r => (ItemModel)r.DataBoundItem)
+            .ToList();
+    }
+
     private void OnExportClick(object? sender, EventArgs e)
     {
-        if (_itemsGrid.Rows.Count == 0)
+        var allItems = _items.ToList();
+        if (allItems.Count == 0)
         {
             MessageBox.Show("내보낼 데이터가 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
+        var exportItems = allItems;
+        var fileSuffix = string.Empty;
+
+        var subset = GetExportSubset(out var scopeLabel);
+        if (subset.Count > 0 && subset.Count < allItems.Count)
+        {
+            var answer = MessageBox.Show(
+                $"어느 범위를 내보낼까요?\n\n[예] {scopeLabel} {subset.Count}건만\n[아니오] 전체 {allItems.Count}건",
+                "엑셀로 내보내기", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel) return;
+            if (answer == DialogResult.Yes)
+            {
+                exportItems = subset;
+                fileSuffix = "_선택";
+            }
+        }
+
         // 기획서 2.4절: 기능별 마지막 폴더 위치 기억
         var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
-            $"MasterSKU_{DateTime.Now:yyyyMMdd}.xlsx",
+            $"MasterSKU{fileSuffix}_{DateTime.Now:yyyyMMdd}.xlsx",
             _settingsService.GetLastFolder("MasterSkuExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
         if (filePath == null) return;
@@ -697,10 +747,10 @@ public class MasterSkuForm : Form
                 worksheet.Cells[1, i + 1].Value = visibleColumns[i].HeaderText;
             }
 
-            // 데이터 바인딩된 아이템들을 순회하며 셀에 값을 채웁니다.
-            for (var rowIndex = 0; rowIndex < _items.Count; rowIndex++)
+            // 대상 품목들을 순회하며 셀에 값을 채웁니다.
+            for (var rowIndex = 0; rowIndex < exportItems.Count; rowIndex++)
             {
-                var item = _items[rowIndex];
+                var item = exportItems[rowIndex];
                 worksheet.Cells[rowIndex + 2, 1].Value = item.Sku;
                 worksheet.Cells[rowIndex + 2, 2].Value = item.ItemName;
                 worksheet.Cells[rowIndex + 2, 3].Value = item.CostPrice;
@@ -712,6 +762,9 @@ public class MasterSkuForm : Form
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
             ExportHelper.SaveExcel(package, filePath);
+
+            _statusLabel.ForeColor = Color.DarkGreen;
+            _statusLabel.Text = $"{exportItems.Count}건을 엑셀로 내보냈습니다. ({DateTime.Now:HH:mm:ss})";
 
             // 기획서 2.2절: 엑셀 내보내기 후 처리 공통 다이얼로그 호출
             ExportHelper.ShowPostExportDialog(this, filePath);
