@@ -950,8 +950,8 @@ public class PartnerClosingForm : Form
     }
 
     /// <summary>
-    /// 좌측 거래처 목록(현황판)을 지금 화면에 보이는 그대로(★/거래처/출고건/수량/공급가합/이익/상태/
-    /// 미출고건/경고/비고, VAT별도 체크박스 기준 환산 포함) 엑셀 1장으로 저장한다.
+    /// 좌측 거래처 목록(현황판)을 지금 화면에 보이는 그대로(★/거래처/출고건/수량/공급가합/이익/
+    /// 마진율/상태/미출고건/경고/비고, VAT별도 체크박스 기준 환산 포함) 엑셀 1장으로 저장한다.
     /// </summary>
     private void OnExportBoardClick(object? sender, EventArgs e)
     {
@@ -975,7 +975,7 @@ public class PartnerClosingForm : Form
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("거래처마감현황");
 
-            var headers = new[] { "★", "거래처", "출고건", "수량", "공급가합", "이익", "상태", "미출고건", "경고", "비고" };
+            var headers = new[] { "★", "거래처", "출고건", "수량", "공급가합", "이익", "마진율", "상태", "미출고건", "경고", "비고" };
             for (var i = 0; i < headers.Length; i++) worksheet.Cells[1, i + 1].Value = headers[i];
 
             var vatExcluded = _vatExcludedCheck.Checked;
@@ -989,14 +989,17 @@ public class PartnerClosingForm : Form
                 worksheet.Cells[r, 4].Value = row.TotalQty;
                 worksheet.Cells[r, 5].Value = VatCalculator.ToDisplay(row.TotalSupply, vatExcluded);
                 worksheet.Cells[r, 6].Value = VatCalculator.ToDisplay(row.TotalProfit, vatExcluded);
-                worksheet.Cells[r, 7].Value = row.Status;
-                worksheet.Cells[r, 8].Value = row.UnshippedCount;
-                worksheet.Cells[r, 9].Value = row.Warning;
-                worksheet.Cells[r, 10].Value = row.ReconcileNote;
+                // 마진율은 VAT 기준과 무관하게 같은 값이라 환산하지 않는다(분자·분모가 함께 환산됨).
+                if (row.MarginRate is { } marginRate) worksheet.Cells[r, 7].Value = marginRate;
+                worksheet.Cells[r, 8].Value = row.Status;
+                worksheet.Cells[r, 9].Value = row.UnshippedCount;
+                worksheet.Cells[r, 10].Value = row.Warning;
+                worksheet.Cells[r, 11].Value = row.ReconcileNote;
             }
 
             worksheet.Cells[1, 1, 1, headers.Length].Style.Font.Bold = true;
             worksheet.Cells[2, 5, rows.Count + 1, 6].Style.Numberformat.Format = "#,##0";
+            worksheet.Cells[2, 7, rows.Count + 1, 7].Style.Numberformat.Format = "0.0%";
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
             ExportHelper.SaveExcel(package, filePath);
 
@@ -1536,8 +1539,14 @@ public class PartnerClosingForm : Form
         public string ReconcileNote { get; } = source.ReconcileNote;
         public string Warning { get; } = BuildWarning(source);
 
-        /// <summary>거래처 전체 마진율 = 이익합 / 공급가합. 이익합에는 배부된 운임이 이미 빠져 있다.</summary>
-        public string MarginRateText { get; } = FormatMarginRate(source.TotalProfit, source.TotalSupply);
+        /// <summary>
+        /// 거래처 전체 마진율 = 이익합 / 공급가합(이익합에는 배부된 운임이 이미 빠져 있다).
+        /// 공급가가 0이면 비율이 의미 없어 null이다 — 화면에는 "-", 엑셀에는 빈 칸으로 나간다.
+        /// 엑셀은 비율 원값을 그대로 넣고 백분율 서식만 입혀야 정렬·필터가 먹으므로 숫자도 함께 둔다.
+        /// </summary>
+        public decimal? MarginRate { get; } = source.TotalSupply == 0 ? null : source.TotalProfit / source.TotalSupply;
+
+        public string MarginRateText => MarginRate is { } rate ? $"{rate * 100:0.0}%" : "-";
 
         private static string BuildWarning(PartnerClosingSummary s)
         {
