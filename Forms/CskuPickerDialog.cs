@@ -1,6 +1,7 @@
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -41,6 +42,7 @@ public class CskuPickerDialog : Form
 
     private readonly bool _allowMasterSkuOnly;
     private readonly bool _allowMultiSelect;
+    private readonly string? _priorityChannelCode;
 
     /// <param name="priorityChannelCode">이 채널의 CSKU를 목록 맨 위로 올려서(그 외는 채널명순)
     /// 보여준다. 다른 채널의 CSKU도 항상 함께 검색된다(제한하지 않음).</param>
@@ -58,6 +60,7 @@ public class CskuPickerDialog : Form
     {
         _allowMasterSkuOnly = allowMasterSkuOnly;
         _allowMultiSelect = allowMultiSelect;
+        _priorityChannelCode = priorityChannelCode;
         InitializeComponent();
         LoadData(priorityChannelCode, preselectChannelFilter);
     }
@@ -178,9 +181,9 @@ public class CskuPickerDialog : Form
         _filteredRows = _allRows.Where(r =>
             (channelFilter == "" || r.ChannelName == channelFilter) &&
             (search == "" ||
-             r.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-             r.CskuCode.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-             r.Msku.Contains(search, StringComparison.OrdinalIgnoreCase))
+             KoreanSearch.Matches(r.ItemName, search) ||
+             KoreanSearch.Matches(r.CskuCode, search) ||
+             KoreanSearch.Matches(r.Msku, search))
         ).ToList();
 
         _grid.Rows.Clear();
@@ -240,7 +243,8 @@ public class CskuPickerDialog : Form
     /// </summary>
     private void OnNewCskuClick(object? sender, EventArgs e)
     {
-        string? channelCode = null;
+        // 채널 콤보가 "(전체)"여도(OFS 수동주문처럼) 이 창을 연 쪽의 채널을 새 CSKU 채널 기본값으로 쓴다.
+        string? channelCode = _priorityChannelCode;
         if (_channelCombo.SelectedIndex > 0)
         {
             var name = _channelCombo.SelectedItem!.ToString();

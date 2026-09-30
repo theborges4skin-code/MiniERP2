@@ -33,6 +33,11 @@ public class NewCskuRegistrationDialog : Form
 
     private ItemModel? _selectedMaster;
 
+    // 마지막으로 자동으로 채워 넣은 값. 입력칸이 비었거나 아직 이 값 그대로면 "사용자가 손대지
+    // 않은 것"으로 보고 채널/마스터SKU가 바뀔 때마다 새로 채운다.
+    private string _autoCskuCode = string.Empty;
+    private string _autoInvoiceName = string.Empty;
+
     public string? ResultChannelCode { get; private set; }
     public string? ResultCskuCode { get; private set; }
     public string? ResultMsku { get; private set; }
@@ -71,11 +76,15 @@ public class NewCskuRegistrationDialog : Form
         _channelCombo.DataSource = channels;
         _channelCombo.DisplayMember = nameof(SalesChannel.ChannelName);
         _channelCombo.ValueMember = nameof(SalesChannel.ChannelCode);
-        if (priorityChannelCode != null)
+        // DataSource 바인딩은 폼이 뜰 때(BindingContext가 생길 때) 첫 항목으로 다시 맞춰질 수 있어서
+        // 미리 고른 채널은 Load 시점에 적용한다 — 그래야 호출한 쪽 채널이 확실히 선택돼 있다.
+        Load += (s, e) =>
         {
-            var match = channels.FirstOrDefault(c => c.ChannelCode == priorityChannelCode);
+            var match = priorityChannelCode == null ? null
+                : channels.FirstOrDefault(c => c.ChannelCode.Equals(priorityChannelCode, StringComparison.OrdinalIgnoreCase));
             if (match != null) _channelCombo.SelectedItem = match;
-        }
+            SuggestCskuCode();
+        };
         _channelCombo.SelectedIndexChanged += (s, e) => SuggestCskuCode();
 
         AddRow(form, 0, "채널", _channelCombo, 30);
@@ -170,7 +179,7 @@ public class NewCskuRegistrationDialog : Form
         var allItems = _itemRepository.GetAll();
         var matches = string.IsNullOrEmpty(query)
             ? allItems
-            : allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : allItems.Where(i => KoreanSearch.Matches(i.Sku, query) || KoreanSearch.Matches(i.ItemName, query)).ToList();
         _candidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }
 
@@ -180,6 +189,7 @@ public class NewCskuRegistrationDialog : Form
         _selectedMskuText.Text = _selectedMaster?.Sku ?? string.Empty;
         if (_selectedMaster != null) _unitText.Text = _selectedMaster.Unit;
         SuggestCskuCode();
+        SuggestInvoiceName();
     }
 
     /// <summary>마스터SKU 없이 CSKU를 등록할 수는 없다(§3.2 — CSKU는 반드시 마스터SKU에 연결).
@@ -195,19 +205,35 @@ public class NewCskuRegistrationDialog : Form
         _selectedMskuText.Text = _selectedMaster?.Sku ?? dialog.ResultSku;
         _unitText.Text = _selectedMaster?.Unit ?? dialog.ResultUnit ?? "kg";
         SuggestCskuCode();
+        SuggestInvoiceName();
 
         MessageBox.Show(
             $"마스터SKU '{dialog.ResultSku}'을(를) 등록했습니다. 이어서 CSKU 정보를 입력하고 등록하세요.",
             "마스터SKU 등록 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    /// <summary>채널을 바꾸면 앞부분(채널명), 마스터SKU를 바꾸면 뒷부분(SKU)이 따라 바뀐다.
+    /// 사용자가 직접 고쳐 쓴 코드는 덮어쓰지 않는다.</summary>
     private void SuggestCskuCode()
     {
         if (_selectedMaster == null) return;
-        if (!string.IsNullOrWhiteSpace(_cskuCodeText.Text)) return; // 사용자가 이미 손댔으면 덮어쓰지 않음
+        if (!IsUntouched(_cskuCodeText, _autoCskuCode)) return;
         var channelName = (_channelCombo.SelectedItem as SalesChannel)?.ChannelName ?? string.Empty;
-        _cskuCodeText.Text = CskuCodeGenerator.BuildDefault(channelName, _selectedMaster.Sku);
+        _autoCskuCode = CskuCodeGenerator.BuildDefault(channelName, _selectedMaster.Sku);
+        _cskuCodeText.Text = _autoCskuCode;
     }
+
+    /// <summary>송장표시명은 선택한 마스터SKU 품명을 기본값으로 채워 두고 그걸 고쳐 쓰게 한다.</summary>
+    private void SuggestInvoiceName()
+    {
+        if (_selectedMaster == null) return;
+        if (!IsUntouched(_invoiceDisplayNameText, _autoInvoiceName)) return;
+        _autoInvoiceName = _selectedMaster.ItemName;
+        _invoiceDisplayNameText.Text = _autoInvoiceName;
+    }
+
+    private static bool IsUntouched(TextBox box, string lastAutoValue) =>
+        string.IsNullOrWhiteSpace(box.Text) || box.Text == lastAutoValue;
 
     private void OnRegisterClick(object? sender, EventArgs e)
     {
