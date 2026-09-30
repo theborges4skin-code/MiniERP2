@@ -746,6 +746,7 @@ public class MappingForm : Form
         _unmappedVatIncludedRadio.Checked = true;
         _masterSearchBox.Text = string.Empty;
         _onMappingApplied?.Invoke();
+        PromptCloseIfAllMapped();
     }
 
     /// <summary>
@@ -808,6 +809,7 @@ public class MappingForm : Form
         {
             RefreshUnmappedGrid();
             _onMappingApplied?.Invoke();
+            PromptCloseIfAllMapped();
         }
     }
 
@@ -916,6 +918,7 @@ public class MappingForm : Form
 
         RefreshUnmappedGrid();
         _onMappingApplied?.Invoke();
+        PromptCloseIfAllMapped();
     }
 
     private TabPage CreateConflictTabPage()
@@ -2301,6 +2304,38 @@ public class MappingForm : Form
             default:
                 return false; // 작업을 취소하고 계속 진행하지 않음
         }
+    }
+
+    /// <summary>
+    /// OFS에서 넘어온 미매핑 건을 마지막 한 건까지 처리하면 바로 "저장하고 종료"를 묻는다.
+    /// 예 → 저장할 탭이 있으면 저장한 뒤 창을 닫고, 아니오 → 창을 그대로 둔다.
+    /// 더블클릭 등 이벤트 처리 도중에 폼을 닫지 않도록 BeginInvoke로 한 박자 늦춰 묻는다.
+    /// </summary>
+    private void PromptCloseIfAllMapped()
+    {
+        if (_sourceOrders == null || string.IsNullOrEmpty(_unmappedChannelCode)) return;
+        if (_unmappedGrid.Rows.Count > 0) return;
+
+        BeginInvoke(async () =>
+        {
+            if (IsDisposed || _unmappedGrid.Rows.Count > 0) return;
+
+            var answer = MessageBox.Show(this,
+                "미매핑 건을 모두 처리했습니다.\n저장하고 종료하시겠습니까?",
+                "매핑 완료", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) return;
+
+            var selectedChannel = _channelComboBox.SelectedValue as string;
+            if (_dirtyTabs.Count > 0 && !string.IsNullOrEmpty(selectedChannel))
+            {
+                await SaveDirtyTabsAsync(selectedChannel);
+                if (_dirtyTabs.Count > 0) return; // 저장 실패 — 창을 닫지 않고 그대로 둔다
+            }
+
+            _unmappedGrid.SaveLayout();
+            _closeConfirmed = true;
+            Close();
+        });
     }
 
     /// <summary>
