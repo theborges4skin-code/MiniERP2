@@ -193,7 +193,7 @@ public class OrderSkuMappingDialog : Form
 
         var matches = string.IsNullOrEmpty(query)
             ? _allItems
-            : _allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : _allItems.Where(i => KoreanSearch.Matches(i.Sku, query) || KoreanSearch.Matches(i.ItemName, query)).ToList();
 
         _candidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }

@@ -1,6 +1,7 @@
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -98,9 +99,9 @@ public class AddressBookPickerDialog : Form
 
         _filteredEntries = _allEntries.Where(a =>
             search.Length == 0 ||
-            a.Label.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            a.ReceiverName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            a.Address.Contains(search, StringComparison.OrdinalIgnoreCase)
+            KoreanSearch.Matches(a.Label, search) ||
+            KoreanSearch.Matches(a.ReceiverName, search) ||
+            KoreanSearch.Matches(a.Address, search)
         ).ToList();
 
         _grid.Rows.Clear();

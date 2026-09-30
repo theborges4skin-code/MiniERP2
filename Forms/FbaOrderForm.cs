@@ -280,9 +280,9 @@ public class FbaOrderForm : Form
         var matches = string.IsNullOrEmpty(search)
             ? _cskus
             : _cskus.Where(c =>
-                c.Csku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                c.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                c.Asin.Contains(search, StringComparison.OrdinalIgnoreCase))
+                KoreanSearch.Matches(c.Csku, search) ||
+                KoreanSearch.Matches(c.ItemName, search) ||
+                KoreanSearch.Matches(c.Asin, search))
               .ToList();
 
         var text = _cskuCombo.Text;

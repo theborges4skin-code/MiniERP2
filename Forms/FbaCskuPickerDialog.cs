@@ -1,5 +1,6 @@
 using MiniERP2.Controls;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -108,9 +109,9 @@ public class FbaCskuPickerDialog : Form
         var search = _searchBox.Text.Trim();
         _filteredCskus = _allCskus.Where(c =>
             search == "" ||
-            c.Csku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            c.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            c.Asin.Contains(search, StringComparison.OrdinalIgnoreCase)
+            KoreanSearch.Matches(c.Csku, search) ||
+            KoreanSearch.Matches(c.ItemName, search) ||
+            KoreanSearch.Matches(c.Asin, search)
         ).OrderBy(c => c.Csku).ToList();
 
         _grid.Rows.Clear();

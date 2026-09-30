@@ -454,7 +454,7 @@ public class MappingForm : Form
 
         var matches = string.IsNullOrEmpty(query)
             ? allItems
-            : allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : allItems.Where(i => KoreanSearch.Matches(i.Sku, query) || KoreanSearch.Matches(i.ItemName, query)).ToList();
 
         _masterCandidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }
@@ -478,9 +478,9 @@ public class MappingForm : Form
         var matches = string.IsNullOrEmpty(query)
             ? allCskus
             : allCskus.Where(c =>
-                c.CskuCode.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                c.Msku.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                (c.InvoiceDisplayName ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase))
+                KoreanSearch.Matches(c.CskuCode, query) ||
+                KoreanSearch.Matches(c.Msku, query) ||
+                KoreanSearch.Matches(c.InvoiceDisplayName, query))
               .ToList();
 
         _cskuHistoryGrid.DataSource = new BindingList<ChannelSkuModel>(matches);
@@ -1145,7 +1145,7 @@ public class MappingForm : Form
     private static bool MatchesUnifiedRuleKeyword(UnifiedRuleRow row, string target, string keyword)
     {
         if (string.IsNullOrEmpty(keyword)) return true;
-        bool Has(string text) => text.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        bool Has(string text) => KoreanSearch.Matches(text, keyword);
 
         return target switch
         {
@@ -1804,7 +1804,7 @@ public class MappingForm : Form
         _skuSearchListBox.Items.Clear();
         if (!string.IsNullOrEmpty(query))
         {
-            foreach (var code in _allSkuCodes.Where(s => s.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(20))
+            foreach (var code in _allSkuCodes.Where(s => KoreanSearch.Matches(s, query)).Take(20))
                 _skuSearchListBox.Items.Add(code);
         }
         _skuSearchListBox.EndUpdate();

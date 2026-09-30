@@ -628,10 +628,10 @@ public class FboHistoryForm : Form
 
         var filtered = _rows.Where(r =>
             search.Length == 0 ||
-            r.Csku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            r.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            r.FboNo.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            (r.TrackingNo?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+            KoreanSearch.Matches(r.Csku, search) ||
+            KoreanSearch.Matches(r.ItemName, search) ||
+            KoreanSearch.Matches(r.FboNo, search) ||
+            KoreanSearch.Matches(r.TrackingNo, search)
         ).ToList();
 
         _grid.Columns.Clear();

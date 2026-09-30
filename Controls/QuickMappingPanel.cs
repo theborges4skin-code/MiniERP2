@@ -2,6 +2,7 @@ using MiniERP2.Database;
 using MiniERP2.Forms;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Controls;
 
@@ -172,8 +173,8 @@ public class QuickMappingPanel : Panel
         if (string.IsNullOrEmpty(query)) return;
 
         var results = _allItems
-            .Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                       (i.ItemName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Where(i => KoreanSearch.Matches(i.Sku, query) ||
+                       KoreanSearch.Matches(i.ItemName, query))
             .Take(20)
             .ToList();
 

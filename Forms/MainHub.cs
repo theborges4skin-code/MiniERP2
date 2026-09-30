@@ -340,7 +340,7 @@ public class MainHub : Form
         }
 
         _searchMatches = FeatureIndex.All
-            .Where(f => f.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Where(f => KoreanSearch.Matches(f.SearchText, query))
             .Take(40)
             .ToList();
 

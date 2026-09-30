@@ -3,6 +3,7 @@ using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -83,7 +84,7 @@ public class MasterSkuPickerDialog : Form
         var all = _itemRepository.GetAll();
         _filtered = string.IsNullOrEmpty(query)
             ? all
-            : all.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : all.Where(i => KoreanSearch.Matches(i.Sku, query) || KoreanSearch.Matches(i.ItemName, query)).ToList();
 
         _grid.Rows.Clear();
         foreach (var item in _filtered) _grid.Rows.Add(item.Sku, item.ItemName);

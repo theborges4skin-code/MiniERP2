@@ -243,7 +243,7 @@ public class MappingWorkbenchDialog : Form
         var query = _exactSearchBox.Text.Trim();
         var matches = string.IsNullOrEmpty(query)
             ? _allItems
-            : _allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) || i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : _allItems.Where(i => KoreanSearch.Matches(i.Sku, query) || KoreanSearch.Matches(i.ItemName, query)).ToList();
         _exactCandidateGrid.DataSource = new BindingList<ItemModel>(matches);
     }
 

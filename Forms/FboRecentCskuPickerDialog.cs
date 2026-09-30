@@ -1,5 +1,6 @@
 using MiniERP2.Controls;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -110,8 +111,8 @@ public class FboRecentCskuPickerDialog : Form
         var search = _searchBox.Text.Trim();
         _filteredGroups = _allGroups.Where(g =>
             search.Length == 0 ||
-            g.Csku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            g.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase)
+            KoreanSearch.Matches(g.Csku, search) ||
+            KoreanSearch.Matches(g.ItemName, search)
         ).ToList();
 
         _grid.Rows.Clear();

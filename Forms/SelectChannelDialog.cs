@@ -2,6 +2,7 @@ using MiniERP2.Config;
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -206,9 +207,9 @@ public class SelectChannelDialog : Form
         if (hasFilter)
         {
             pool = _allChannels.Where(c =>
-                (!string.IsNullOrEmpty(c.ChannelCode) && c.ChannelCode.Contains(filter!, StringComparison.OrdinalIgnoreCase)) ||
-                (!string.IsNullOrEmpty(c.ChannelName) && c.ChannelName.Contains(filter!, StringComparison.OrdinalIgnoreCase)) ||
-                (!string.IsNullOrEmpty(c.GroupName) && c.GroupName.Contains(filter!, StringComparison.OrdinalIgnoreCase)));
+                KoreanSearch.Matches(c.ChannelCode, filter) ||
+                KoreanSearch.Matches(c.ChannelName, filter) ||
+                KoreanSearch.Matches(c.GroupName, filter));
         }
         var poolList = pool.ToList();
 

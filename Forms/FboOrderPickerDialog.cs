@@ -1,6 +1,7 @@
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -104,8 +105,8 @@ public class FboOrderPickerDialog : Form
         var search = _searchBox.Text.Trim();
         _filteredOrders = _allOrders.Where(o =>
             search.Length == 0 ||
-            o.FboNo.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            o.ChannelName.Contains(search, StringComparison.OrdinalIgnoreCase)
+            KoreanSearch.Matches(o.FboNo, search) ||
+            KoreanSearch.Matches(o.ChannelName, search)
         ).ToList();
 
         _grid.Rows.Clear();

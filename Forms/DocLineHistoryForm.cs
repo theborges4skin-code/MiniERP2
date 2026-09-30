@@ -323,7 +323,7 @@ public class DocLineHistoryForm : Form
 
         var filtered = _summaryRows
             .Where(s => s.LastIssueDate.Date >= from && s.FirstIssueDate.Date <= to)
-            .Where(s => string.IsNullOrEmpty(cskuFilter) || s.CskuCode.Contains(cskuFilter, StringComparison.OrdinalIgnoreCase))
+            .Where(s => string.IsNullOrEmpty(cskuFilter) || KoreanSearch.Matches(s.CskuCode, cskuFilter))
             .ToList();
 
         _summaryGrid.DataSource = new BindingList<SummaryRow>(filtered.Select(s => new SummaryRow(s)).ToList());

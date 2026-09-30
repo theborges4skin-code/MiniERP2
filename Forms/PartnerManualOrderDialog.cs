@@ -1,6 +1,7 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -127,8 +128,8 @@ public class PartnerManualOrderDialog : Form
         var matches = string.IsNullOrEmpty(search)
             ? _cskus
             : _cskus.Where(c =>
-                c.CskuCode.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                (c.InvoiceDisplayName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
+                KoreanSearch.Matches(c.CskuCode, search) ||
+                KoreanSearch.Matches(c.InvoiceDisplayName, search))
               .ToList();
 
         var text = _cskuCombo.Text;

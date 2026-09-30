@@ -397,12 +397,42 @@ public class DataManagementForm : Form
     private static string BuildRowFilter(DataTable table, string searchText)
     {
         if (string.IsNullOrEmpty(searchText)) return string.Empty;
+        if (KoreanSearch.HasChoseong(searchText) && table.PrimaryKey.Length > 0)
+            return BuildChoseongRowFilter(table, searchText);
         var escaped = searchText.Replace("'", "''");
         var conditions = table.Columns.Cast<DataColumn>()
             .Where(c => c.DataType == typeof(string))
             .Select(c => $"[{c.ColumnName}] LIKE '%{escaped}%'");
         return string.Join(" OR ", conditions);
     }
+
+    /// <summary>
+    /// 초성 검색은 DataView 식(LIKE)으로 표현할 수 없어서, 맞는 행을 직접 골라 그 행들의 기본키로
+    /// 필터를 만든다. 복합키면 앞쪽 키로 묶고 마지막 키만 IN 목록으로 넣어 식이 길어지지 않게 한다.
+    /// </summary>
+    private static string BuildChoseongRowFilter(DataTable table, string searchText)
+    {
+        var stringColumns = table.Columns.Cast<DataColumn>().Where(c => c.DataType == typeof(string)).ToList();
+        var keys = table.PrimaryKey;
+        var matchedRows = table.Rows.Cast<DataRow>()
+            .Where(r => r.RowState != DataRowState.Deleted && r.RowState != DataRowState.Detached)
+            .Where(r => keys.All(k => r[k] != DBNull.Value))
+            .Where(r => stringColumns.Any(c => KoreanSearch.Matches(r[c] as string, searchText)))
+            .ToList();
+        if (matchedRows.Count == 0) return "1 = 0";
+
+        var lastKey = keys[^1];
+        var groups = matchedRows.GroupBy(r => string.Join(" AND ", keys[..^1].Select(k => $"[{k.ColumnName}] = {FormatFilterValue(r[k])}")));
+        return string.Join(" OR ", groups.Select(g =>
+        {
+            var inList = $"[{lastKey.ColumnName}] IN ({string.Join(", ", g.Select(r => FormatFilterValue(r[lastKey])).Distinct())})";
+            return g.Key.Length == 0 ? inList : $"({g.Key} AND {inList})";
+        }));
+    }
+
+    private static string FormatFilterValue(object value) => value is string s
+        ? $"'{s.Replace("'", "''")}'"
+        : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "NULL";
 
     // ===================== CSKU 탭 (매핑 규칙 패널 포함) =====================
 

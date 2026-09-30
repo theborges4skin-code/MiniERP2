@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Database;
 
@@ -21,6 +22,8 @@ public class CostSearchRepository
         if (query.Length == 0) return new List<CostSearchResult>();
 
         using var connection = SqliteConnectionFactory.OpenConnection();
+        // LIKE로는 초성 검색을 못 하므로 화면 검색창과 같은 판정(KoreanSearch)을 SQL 함수로 등록해 쓴다.
+        connection.CreateFunction("kmatch", (string? text, string? q) => KoreanSearch.Matches(text, q), isDeterministic: true);
         var results = new List<CostSearchResult>();
         results.AddRange(SearchMasterSkus(connection, query, limit));
         results.AddRange(SearchCskus(connection, query, limit));
@@ -50,12 +53,12 @@ public class CostSearchRepository
             SELECT i.Sku, i.ItemName, i.CostPrice, i.Unit,
                    (SELECT MAX(h.ChangedAt) FROM ItemCostHistory h WHERE h.Sku = i.Sku)
             FROM ItemTable i
-            WHERE i.Sku LIKE $pattern ESCAPE '\'
-               OR i.ItemName LIKE $pattern ESCAPE '\'
+            WHERE kmatch(i.Sku, $query)
+               OR kmatch(i.ItemName, $query)
             ORDER BY i.Sku
             LIMIT $limit
             """;
-        command.Parameters.AddWithValue("$pattern", ToContainsPattern(query));
+        command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$limit", limit);
 
         var results = new List<CostSearchResult>();
@@ -89,14 +92,14 @@ public class CostSearchRepository
             FROM ChannelSkuTable c
             LEFT JOIN SalesChannelTable ch ON ch.ChannelCode = c.ChannelCode
             LEFT JOIN ItemTable i ON i.Sku = c.Msku
-            WHERE c.CskuCode LIKE $pattern ESCAPE '\'
-               OR c.Msku LIKE $pattern ESCAPE '\'
-               OR IFNULL(c.InvoiceDisplayName, '') LIKE $pattern ESCAPE '\'
-               OR IFNULL(i.ItemName, '') LIKE $pattern ESCAPE '\'
+            WHERE kmatch(c.CskuCode, $query)
+               OR kmatch(c.Msku, $query)
+               OR kmatch(c.InvoiceDisplayName, $query)
+               OR kmatch(i.ItemName, $query)
             ORDER BY c.CskuCode
             LIMIT $limit
             """;
-        command.Parameters.AddWithValue("$pattern", ToContainsPattern(query));
+        command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$costFieldName", CostOverrideFieldName);
         command.Parameters.AddWithValue("$limit", limit);
 
@@ -132,15 +135,5 @@ public class CostSearchRepository
             });
         }
         return results;
-    }
-
-    /// <summary>LIKE 부분일치 패턴으로 바꾼다. 검색어에 들어있는 %, _, \ 는 리터럴로 취급한다.</summary>
-    private static string ToContainsPattern(string query)
-    {
-        var escaped = query
-            .Replace("\\", "\\\\")
-            .Replace("%", "\\%")
-            .Replace("_", "\\_");
-        return $"%{escaped}%";
     }
 }

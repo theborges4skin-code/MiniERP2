@@ -391,7 +391,7 @@ public class ChannelCskuForm : Form
         return Contains(csku.CskuCode) || Contains(csku.Msku) || Contains(csku.InvoiceDisplayName)
             || Contains(csku.Unit) || Contains(csku.Packing) || Contains(csku.Note);
 
-        bool Contains(string? value) => !string.IsNullOrEmpty(value) && value.Contains(keyword, StringComparison.CurrentCultureIgnoreCase);
+        bool Contains(string? value) => KoreanSearch.Matches(value, keyword);
     }
 
     /// <summary>저장 대상 — 거래처 전체 목록에, 검색 중인 그리드에서 새로 추가된 행까지 합친 것.

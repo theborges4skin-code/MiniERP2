@@ -338,8 +338,8 @@ public class MasterSkuForm : Form
         {
             if (row.IsNewRow || string.IsNullOrEmpty(keyword)) { row.Visible = true; continue; }
             if (row.DataBoundItem is not ItemModel item) { row.Visible = true; continue; }
-            row.Visible = item.Sku.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                || item.ItemName.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+            row.Visible = KoreanSearch.Matches(item.Sku, keyword)
+                || KoreanSearch.Matches(item.ItemName, keyword);
         }
     }
 

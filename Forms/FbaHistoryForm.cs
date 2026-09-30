@@ -461,11 +461,11 @@ public class FbaHistoryForm : Form
         var search = _searchBox.Text.Trim();
         return _rows.Where(r =>
             search.Length == 0 ||
-            r.FbaNo.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            (r.ShipmentId?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            r.Csku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            r.ItemName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-            (r.TrackingNo?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+            KoreanSearch.Matches(r.FbaNo, search) ||
+            KoreanSearch.Matches(r.ShipmentId, search) ||
+            KoreanSearch.Matches(r.Csku, search) ||
+            KoreanSearch.Matches(r.ItemName, search) ||
+            KoreanSearch.Matches(r.TrackingNo, search)
         ).ToList();
     }
 

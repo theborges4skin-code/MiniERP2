@@ -1,4 +1,5 @@
 using MiniERP2.Models;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -80,8 +81,8 @@ public class MasterSkuSearchDialog : Form
         var query = _searchBox.Text.Trim();
         var results = string.IsNullOrEmpty(query)
             ? _allItems
-            : _allItems.Where(i => i.Sku.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                                    i.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            : _allItems.Where(i => KoreanSearch.Matches(i.Sku, query) ||
+                                    KoreanSearch.Matches(i.ItemName, query)).ToList();
         _grid.DataSource = results.Take(200).ToList();
     }
 
