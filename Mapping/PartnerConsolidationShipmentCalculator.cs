@@ -4,8 +4,8 @@ namespace MiniERP2.Mapping;
 
 /// <summary>
 /// 온라인 거래처 취합(OnlinePartnerConsolidation_Spec.md §6.3) — 채널별 배송건수 산정 및
-/// 거래처 단위 배송비 청구액 계산. 마감/이익분석의 ShipmentCountEstimator(반올림)는 건드리지
-/// 않는다(D12) — 이 화면 전용 계산이며 소수점은 내림(D11)이다.
+/// 거래처 단위 배송비 청구액 계산. 마감/이익분석의 ShipmentCountEstimator와 같은 규칙(송장번호 Distinct,
+/// 없으면 배송비÷단가 내림)이지만 단가를 거래처 설정에서 받는 이 화면 전용 계산이다.
 /// </summary>
 public static class PartnerConsolidationShipmentCalculator
 {

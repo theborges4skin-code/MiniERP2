@@ -40,6 +40,16 @@ public class ShipmentCountEstimatorTests
     }
 
     [TestMethod]
+    public void Compute_NoTrackingNumbers_TruncatesFraction()
+    {
+        // 쿠팡: 배송비 163,000원 ÷ 3,000 = 54.33 → 54건(소수점 이하 버림). 8,500원(2.83)도 반올림하지 않고 2건.
+        var rows = new List<SettlementData> { new() { Shipping = 163000m } };
+
+        Assert.AreEqual(54, ShipmentCountEstimator.Compute(rows).Count);
+        Assert.AreEqual(2, ShipmentCountEstimator.Compute(new List<SettlementData> { new() { Shipping = 8500m } }).Count);
+    }
+
+    [TestMethod]
     public void Compute_NoRowsAndNoShipping_ReturnsZeroEstimated()
     {
         var (count, isEstimated) = ShipmentCountEstimator.Compute(new List<SettlementData>());

@@ -1,4 +1,4 @@
-using MiniERP2.Mapping;
+﻿using MiniERP2.Mapping;
 using MiniERP2.Models;
 
 namespace MiniERP2.Tests;
@@ -177,5 +177,35 @@ public class ProfitCalculatorTests
         ProfitCalculator.ApplyElevenStreetFilter(ChannelType.General, rows);
 
         Assert.AreEqual(2, rows.Count);
+    }
+
+    [TestMethod]
+    public void ApplyActualShippingFee_ChargesOncePerTrackingNo_ThenPerOrderNo()
+    {
+        // 송장 T1을 두 행이 공유(합포장) → 1건. 송장이 없는 행은 주문번호로 묶고, 둘 다 없으면 행마다 1건.
+        var rows = new List<SettlementData>
+        {
+            new() { TrackingNo = "T1", OrderNo = "A", Shipping = 2500m },
+            new() { TrackingNo = " t1 ", OrderNo = "B", Shipping = 2500m },
+            new() { TrackingNo = "T2", OrderNo = "C" },
+            new() { OrderNo = "D" },
+            new() { OrderNo = "D" },
+            new() { },
+            new() { },
+        };
+
+        ProfitCalculator.ApplyActualShippingFee(rows, 3000m);
+
+        CollectionAssert.AreEqual(new[] { 3000m, 0m, 3000m, 3000m, 0m, 3000m, 3000m }, rows.Select(r => r.Shipping).ToArray());
+    }
+
+    [TestMethod]
+    public void ApplyActualShippingFee_ZeroFee_LeavesShippingUntouched()
+    {
+        var rows = new List<SettlementData> { new() { TrackingNo = "T1", Shipping = 2500m } };
+
+        ProfitCalculator.ApplyActualShippingFee(rows, 0m);
+
+        Assert.AreEqual(2500m, rows[0].Shipping);
     }
 }

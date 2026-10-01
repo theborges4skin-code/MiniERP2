@@ -271,6 +271,7 @@ public class SettlementLoader
             ProfitCalculator.ApplyElevenStreetFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyCoupangGeneralShippingAggregation(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyAmazonTransferFilter(channelConfig.ChannelType, rows, channelConfig.AmazonTransferTypeValue);
+            ProfitCalculator.ApplyActualShippingFee(rows, channelConfig.ActualShippingFeePerShipment);
             DiagnosticsLogger.Log($"[SettlementLoader] '{fileName}' 전체 완료 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
         });
 

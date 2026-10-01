@@ -35,7 +35,11 @@ public class PartnerConsolidationAggregator(
 
                 var item = itemRepository.GetBySku(msku);
                 var costPrice = item?.CostPrice; // null이면 W7: 제조원가 미등록
-                var invoiceDisplayName = channelSkuRepository.GetByChannelAndCskuCode(representative.ChannelCode, representative.ResolvedCskuCode!)?.InvoiceDisplayName ?? "";
+                var invoiceDisplayName = channelSkuRepository.GetByChannelAndCskuCode(representative.ChannelCode, representative.ResolvedCskuCode!)?.InvoiceDisplayName;
+                // 단가를 대표단가 채널에서 상속했다면 송장표시명도 거기서 가져온다 — 비대표 채널 CSKU의
+                // 송장표시명은 보통 비어 있다(단가 입력 탭이 대표 채널에만 저장하므로).
+                if (string.IsNullOrWhiteSpace(invoiceDisplayName) && priceResolution.MasterChannelCode != null)
+                    invoiceDisplayName = FindMasterInvoiceDisplayName(priceResolution.MasterChannelCode, representative.ResolvedCskuCode!, msku);
 
                 var supplyRevenue = totalQty * priceResolution.Price;
                 decimal? supplyProfit = costPrice.HasValue ? supplyRevenue - totalQty * costPrice.Value : null;
@@ -46,7 +50,7 @@ public class PartnerConsolidationAggregator(
                     CskuCode = representative.ResolvedCskuCode!,
                     Msku = msku,
                     ProductName = item?.ItemName ?? representative.ProductName,
-                    InvoiceDisplayName = invoiceDisplayName,
+                    InvoiceDisplayName = invoiceDisplayName ?? "",
                     Quantity = totalQty,
                     SupplyPrice = priceResolution.Price,
                     PriceSource = priceResolution.Source,
@@ -70,6 +74,18 @@ public class PartnerConsolidationAggregator(
         }
 
         return result;
+    }
+
+    /// <summary>대표단가 채널에서 같은 CSKU 코드, 없으면 같은 마스터SKU를 가진 유일한 CSKU의 송장표시명.</summary>
+    private string? FindMasterInvoiceDisplayName(string masterChannelCode, string cskuCode, string msku)
+    {
+        var byCode = channelSkuRepository.GetByChannelAndCskuCode(masterChannelCode, cskuCode);
+        if (byCode != null) return byCode.InvoiceDisplayName;
+
+        var byMsku = channelSkuRepository.GetAllByChannel(masterChannelCode)
+            .Where(c => string.Equals(c.Msku, msku, StringComparison.Ordinal))
+            .ToList();
+        return byMsku.Count == 1 ? byMsku[0].InvoiceDisplayName : null;
     }
 
     /// <summary>

@@ -267,8 +267,7 @@ public class PartnerConsolidationForm : Form
             if (_files.Any(f => string.Equals(f.FilePath, path, StringComparison.OrdinalIgnoreCase)))
                 continue; // 같은 경로는 중복 추가하지 않음(W6은 "같은 채널의 다른 파일"이 대상이지 동일 경로 재추가가 아니다).
 
-            var file = PartnerConsolidationFileLoader.Load(path, _channelSkuRepository, _channelConfigService);
-            _files.Add(file);
+            _files.Add(LoadFile(path));
             addedCount++;
         }
 
@@ -290,8 +289,23 @@ public class PartnerConsolidationForm : Form
         var paths = _files.Select(f => f.FilePath).ToList();
         _files.Clear();
         foreach (var path in paths)
-            _files.Add(PartnerConsolidationFileLoader.Load(path, _channelSkuRepository, _channelConfigService));
+            _files.Add(LoadFile(path));
         _statusLabel.Text = $"{paths.Count}개 파일을 다시 불러왔습니다. '집계 실행'을 눌러 반영하세요.";
+    }
+
+    /// <summary>
+    /// _META의 상호명이 빈 파일(채널을 거래처에 연결하기 전에 내보낸 이익분석 파일)은 지금 DB의
+    /// 채널→거래처 연결(DocPartyTable)로 상호명을 채운다 — 이익분석을 다시 내보내지 않아도 된다.
+    /// </summary>
+    private PartnerConsolidationFile LoadFile(string path)
+    {
+        var file = PartnerConsolidationFileLoader.Load(path, _channelSkuRepository, _channelConfigService);
+        if (string.IsNullOrWhiteSpace(file.CompanyName) && !string.IsNullOrWhiteSpace(file.ChannelCode))
+        {
+            file.CompanyName = _docPartyRepository.GetByChannelCode(file.ChannelCode)?.CompanyName ?? "";
+            foreach (var row in file.Rows) row.CompanyName = file.CompanyName;
+        }
+        return file;
     }
 
     /// <summary>

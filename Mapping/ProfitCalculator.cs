@@ -254,4 +254,25 @@ public static class ProfitCalculator
         rows.Clear();
         rows.AddRange(target);
     }
+
+    /// <summary>
+    /// 실배송비 모드(ChannelConfig.ActualShippingFeePerShipment &gt; 0): 정산서 배송비를 버리고 실제 발송
+    /// 1건당 feePerShipment를 넣는다. 같은 송장번호(공백 제거·대소문자 무시)는 1건이며 그 첫 행에만
+    /// 금액을 두고 나머지는 0으로 둔다. 송장번호가 빈 행은 주문번호로 묶고, 둘 다 없으면 행마다 1건이다.
+    /// 다른 배송비 후처리(쿠팡일반 집계 등)가 끝난 뒤 호출해야 한다 — 그 결과를 덮어쓴다.
+    /// 이익(Profit)은 다시 계산하지 않는다(일반/쿠팡일반 이익식은 배송비를 차감하지 않음).
+    /// </summary>
+    public static void ApplyActualShippingFee(List<SettlementData> rows, decimal feePerShipment)
+    {
+        if (feePerShipment <= 0 || rows.Count == 0) return;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            var key = !string.IsNullOrWhiteSpace(row.TrackingNo) ? "T:" + row.TrackingNo.Trim()
+                : !string.IsNullOrWhiteSpace(row.OrderNo) ? "O:" + row.OrderNo.Trim()
+                : null;
+            row.Shipping = key == null || seen.Add(key) ? feePerShipment : 0m;
+        }
+    }
 }

@@ -196,4 +196,22 @@ public class PartnerConsolidationAggregatorTests
         Assert.AreEqual(3000m, pep.TotalSupplyRevenue);
         Assert.AreEqual(8000m, han.TotalSupplyRevenue);
     }
+
+    [TestMethod]
+    public void Aggregate_InheritedPrice_AlsoInheritsInvoiceDisplayNameFromMaster()
+    {
+        SavePartner("CH_MASTER", "한결", isPriceMaster: true);
+        SavePartner("CH_SUB", "한결");
+        _channelSkuRepository.Upsert(new ChannelSkuModel
+        {
+            ChannelCode = "CH_MASTER", CskuCode = "M-SKU1", Msku = "MSKU1", SupplyPrice = 4000m, InvoiceDisplayName = "면도기세정액 (500ml)",
+        });
+        SaveCsku("CH_SUB", "S-SKU1", "MSKU1");
+
+        var result = _aggregator.Aggregate(new[] { MappedRow("한결", "CH_SUB", "S-SKU1", "MSKU1", 2) });
+
+        var detail = result.CskuDetails.Single();
+        Assert.AreEqual(4000m, detail.SupplyPrice);
+        Assert.AreEqual("면도기세정액 (500ml)", detail.InvoiceDisplayName);
+    }
 }

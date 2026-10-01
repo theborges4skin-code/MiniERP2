@@ -38,6 +38,14 @@ public class ChannelConfig
     [Description("누적발주서 채널에서 발주서 로드 시 발주일 기준 최근 N일 이내 항목만 표시합니다. 기본값 5일.")]
     public int CumulativeOrderWindowDays { get; set; } = 5;
 
+    [Category("기본 정보")]
+    [DisplayName("실배송비 — 발송 1건당 금액(원)")]
+    [Description("0보다 크면 이익분석의 배송비를 정산서 배송비 대신 '실제 발송 건수 × 이 금액'으로 다시 " +
+        "계산합니다. 송장번호(정산서 매핑의 실제발송송장수 열)가 같은 행은 1건으로 보고 그 첫 행에만 " +
+        "금액을 넣으며, 송장번호가 없는 행은 주문번호로 묶습니다(쿠팡처럼 정산서에 송장번호 열이 없는 " +
+        "채널). 실배송비만 청구하는 온라인 거래처 채널에 씁니다. 0이면 사용하지 않습니다.")]
+    public decimal ActualShippingFeePerShipment { get; set; }
+
     // 채널설정 창의 "발주서 매핑"/"정산서 매핑" 전용 탭에서 편집한다(PropertyGrid는 Dictionary를 지원하지 않음).
     [Browsable(false)]
     public Dictionary<StdField, FieldMapping> OrderFieldMappings { get; set; } = new();
