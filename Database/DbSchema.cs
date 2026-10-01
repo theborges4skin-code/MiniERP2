@@ -810,6 +810,49 @@ public static class DbSchema
             );
 
             CREATE INDEX IF NOT EXISTS IX_CskuStatFile_FileName ON CskuStatFileTable (FileName);
+
+            -- 이공그로스수동마감(ManualGrowthClosing_Spec.md §6.1). 수동 엑셀 거래명세표 기반 월 마감 헤더.
+            -- DocStatementTable(레거시 이식용, Upsert가 라인 전체 재삽입)·PartnerClosingTable(마감보드가
+            -- PartyKey 전체를 열거)은 재사용하면 서로 간섭하므로 별도 테이블로 둔다.
+            CREATE TABLE IF NOT EXISTS ManualGrowthClosingTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Period TEXT NOT NULL,
+                ChannelCode TEXT NOT NULL,
+                SourceFileName TEXT NOT NULL DEFAULT '',
+                SourceSheetName TEXT NOT NULL DEFAULT '',
+                Status TEXT NOT NULL DEFAULT '미확정',
+                TotalQty REAL NOT NULL DEFAULT 0,
+                TotalSupply REAL NOT NULL DEFAULT 0,
+                TotalTax REAL NOT NULL DEFAULT 0,
+                TotalCost REAL NOT NULL DEFAULT 0,
+                TotalProfit REAL NOT NULL DEFAULT 0,
+                StatusFlags TEXT NOT NULL DEFAULT '',
+                ConfirmedAt TEXT,
+                CreatedAt TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_ManualGrowthClosing_Period_Channel ON ManualGrowthClosingTable (Period, ChannelCode);
+
+            -- 라인은 CskuCode·MasterSku·CostPrice를 스냅샷해 확정 후 CSKU/원가가 바뀌어도 마감값이 변하지 않는다.
+            CREATE TABLE IF NOT EXISTS ManualGrowthClosingLineTable (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClosingId INTEGER NOT NULL,
+                RowNo INTEGER NOT NULL DEFAULT 0,
+                LineDate TEXT NOT NULL DEFAULT '',
+                ItemName TEXT NOT NULL DEFAULT '',
+                CskuCode TEXT NOT NULL DEFAULT '',
+                MasterSku TEXT NOT NULL DEFAULT '',
+                ProductGroup TEXT NOT NULL DEFAULT '',
+                Qty REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                SupplyAmount REAL NOT NULL DEFAULT 0,
+                Tax REAL NOT NULL DEFAULT 0,
+                CostPrice REAL NOT NULL DEFAULT 0,
+                Profit REAL NOT NULL DEFAULT 0,
+                PriceMismatch INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_ManualGrowthClosingLine_ClosingId ON ManualGrowthClosingLineTable (ClosingId);
             """;
         command.ExecuteNonQuery();
 
