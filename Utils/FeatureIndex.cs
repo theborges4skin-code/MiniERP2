@@ -223,6 +223,14 @@ public static class FeatureIndex
         Sub("정산", "거래처 마감보드", "현황판 엑셀저장", () => FormManager.Show<PartnerClosingForm>());
         Sub("정산", "거래처 마감보드", "비매출 내역", () => FormManager.Show<PartnerClosingForm>());
 
+        Top("정산", "이공그로스수동마감", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "파일 열기/시트 선택(제트·그로스)", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "미배정 일괄 배정", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "마감 확정", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "리포트 반영", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "엑셀 내보내기", () => FormManager.Show<ManualGrowthClosingForm>());
+        Sub("정산", "이공그로스수동마감", "마감 이력", () => FormManager.Show<ManualGrowthClosingForm>());
+
         Top("정산", "온라인 거래처 취합", () => FormManager.Show<PartnerConsolidationForm>());
         Sub("정산", "온라인 거래처 취합", "파일 추가", () => FormManager.Show<PartnerConsolidationForm>());
         Sub("정산", "온라인 거래처 취합", "채널 수동 지정", () => FormManager.Show<PartnerConsolidationForm>());
