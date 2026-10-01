@@ -1,4 +1,5 @@
 using MiniERP2.Mapping;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Models;
 
@@ -133,6 +134,10 @@ public class PartnerConsolidationCskuDetail
     public string InvoiceDisplayName { get; set; } = "";
     public int Quantity { get; set; }
     public decimal SupplyPrice { get; set; }
+
+    /// <summary>VAT별도 납품단가(=SupplyPrice÷1.1, 소수 둘째 자리 반올림) — 거래명세표 단가와 대조용.</summary>
+    public decimal SupplyPriceVatExcluded => Math.Round(VatCalculator.ToDisplay(SupplyPrice, vatExcluded: true), 2);
+
     public SupplyPriceSource PriceSource { get; set; }
     public string? MasterChannelName { get; set; }
     public decimal SupplyRevenue { get; set; }

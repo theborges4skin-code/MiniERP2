@@ -101,6 +101,9 @@ public class PartnerClosingForm : Form
         var btnBulkImport = new Button { Text = "엑셀 일괄 추가", Size = new Size(100, 28) };
         btnBulkImport.Click += OnBulkImportClick;
 
+        var btnImportOnlineRollup = new Button { Text = "온라인취합 불러오기", Size = new Size(130, 28) };
+        btnImportOnlineRollup.Click += OnImportOnlineRollupClick;
+
         var btnConfirm = new Button { Text = "마감확정", Size = new Size(80, 28) };
         btnConfirm.Click += OnConfirmClick;
 
@@ -149,6 +152,7 @@ public class PartnerClosingForm : Form
         row1.Controls.Add(btnManualEntry);
         row1.Controls.Add(btnAddManualOrder);
         row1.Controls.Add(btnBulkImport);
+        row1.Controls.Add(btnImportOnlineRollup);
         row1.Controls.Add(btnConfirm);
         row1.Controls.Add(btnCancelClosing);
 
@@ -551,6 +555,24 @@ public class PartnerClosingForm : Form
     }
 
     /// <summary>"수동 주문 추가"의 엑셀 일괄 버전. 같은 선택 가드(채널 경유 거래처 1개)를 쓴다.</summary>
+    /// <summary>
+    /// 온라인 거래처 취합에서 내보낸 파일을 골라 마감보드로 보낸다(확정 또는 대조중). 취합 직후 바로
+    /// 보내지 않고 파일로 먼저 검토한 경우의 경로다. 기본 마감월은 지금 보고 있는 기간.
+    /// </summary>
+    private void OnImportOnlineRollupClick(object? sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Filter = "Excel Files (*.xlsx)|*.xlsx",
+            Title = "온라인 거래처 취합 결과 파일을 선택하세요",
+            InitialDirectory = _settingsService.GetLastFolder("PartnerRollupExport") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+        if (PartnerConsolidationClosingDialog.ShowForFile(this, ofd.FileName, CurrentPeriod))
+            RefreshBoardKeepingSelection();
+    }
+
     private void OnBulkImportClick(object? sender, EventArgs e)
     {
         var selected = SelectedPartyRows();
@@ -678,8 +700,9 @@ public class PartnerClosingForm : Form
             MessageBox.Show("공급자(기본 거래처) 프로필이 설정되어 있지 않습니다. 문서관리 화면에서 먼저 등록하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        // 수동 거래처는 같은 상호명의 거래처 프로필(온라인 거래처 취합의 채널 연결 등)이 있으면 그 사업자 정보를 쓴다.
         var buyer = row.IsManual
-            ? new DocParty { CompanyName = row.PartyName }
+            ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
             : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]);
         if (buyer == null)
         {
@@ -778,7 +801,7 @@ public class PartnerClosingForm : Form
             // 채널에 공급받는자 프로필이 연결되어 있지 않아도 발행 자체는 막지 않는다(사용자 요청) —
             // 미리보기(위 OnPreviewClick)와 같은 방식으로 거래처명만 채운 빈 프로필로 대체한다.
             var buyer = row.IsManual
-                ? new DocParty { CompanyName = row.PartyName }
+                ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
                 : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
 
             var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
@@ -898,7 +921,7 @@ public class PartnerClosingForm : Form
 
             // 위 OnPublishClick과 동일하게, 프로필 미연결이 발행 자체를 막지 않게 빈 프로필로 대체한다.
             var buyer = row.IsManual
-                ? new DocParty { CompanyName = row.PartyName }
+                ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
                 : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
 
             var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);

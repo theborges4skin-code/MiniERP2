@@ -67,7 +67,7 @@ public static class PartnerConsolidationExporter
     }
 
     private static readonly string[] CskuDetailHeaders =
-        ["상호명", "CSKU", "품목명", "송장출력용 상품명", "마스터SKU", "수량", "납품단가", "단가출처", "납품매출액", "제조원가", "납품이익액"];
+        ["상호명", "CSKU", "품목명", "송장출력용 상품명", "마스터SKU", "수량", "납품단가", "납품단가(VAT별도)", "단가출처", "납품매출액", "제조원가", "납품이익액"];
 
     private static void WriteCskuDetailSheet(ExcelPackage package, IReadOnlyList<PartnerConsolidationCskuDetail> details)
     {
@@ -84,10 +84,12 @@ public static class PartnerConsolidationExporter
             sheet.Cells[row, 5].Value = d.Msku;
             sheet.Cells[row, 6].Value = d.Quantity;
             sheet.Cells[row, 7].Value = d.SupplyPrice;
-            sheet.Cells[row, 8].Value = d.PriceSourceDisplay;
-            sheet.Cells[row, 9].Value = d.SupplyRevenue;
-            sheet.Cells[row, 10].Value = (object?)d.CostPrice ?? "";
-            sheet.Cells[row, 11].Value = (object?)d.SupplyProfit ?? "";
+            sheet.Cells[row, 8].Value = d.SupplyPriceVatExcluded;
+            sheet.Cells[row, 8].Style.Numberformat.Format = "#,##0.##";
+            sheet.Cells[row, 9].Value = d.PriceSourceDisplay;
+            sheet.Cells[row, 10].Value = d.SupplyRevenue;
+            sheet.Cells[row, 11].Value = (object?)d.CostPrice ?? "";
+            sheet.Cells[row, 12].Value = (object?)d.SupplyProfit ?? "";
             row++;
         }
         sheet.Cells[1, 1, 1, CskuDetailHeaders.Length].AutoFitColumns(8, 50);

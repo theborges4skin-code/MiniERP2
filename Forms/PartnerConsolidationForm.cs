@@ -146,6 +146,7 @@ public class PartnerConsolidationForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "마스터SKU", Name = "Msku", DataPropertyName = "Msku", Width = 120 },
             new DataGridViewTextBoxColumn { HeaderText = "수량", Name = "Quantity", DataPropertyName = "Quantity", Width = 70, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "납품단가", Name = "SupplyPrice", DataPropertyName = "SupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "납품단가(VAT별도)", Name = "SupplyPriceVatExcluded", DataPropertyName = "SupplyPriceVatExcluded", Width = 110, DefaultCellStyle = new DataGridViewCellStyle { Format = "#,##0.##", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "단가출처", Name = "PriceSourceDisplay", DataPropertyName = "PriceSourceDisplay", Width = 110 },
             new DataGridViewTextBoxColumn { HeaderText = "납품매출액", Name = "SupplyRevenue", DataPropertyName = "SupplyRevenue", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
             new DataGridViewTextBoxColumn { HeaderText = "제조원가", Name = "CostPrice", DataPropertyName = "CostPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
@@ -540,6 +541,10 @@ public class PartnerConsolidationForm : Form
 
             PartnerConsolidationExporter.Export(_companySummaries, _cskuDetails, _channelShipments,
                 _unmappedExcludedRows, _files, ResolveBillingRate, filePath);
+
+            // 저장한 파일 그대로 거래처 마감보드로 보낼지 묻는다. 닫으면 파일만 남고, 검토 후
+            // 마감보드의 [온라인취합 불러오기]로 같은 파일을 보내 확정할 수 있다.
+            PartnerConsolidationClosingDialog.ShowForFile(this, filePath);
 
             ExportHelper.ShowPostExportDialog(this, filePath);
         }

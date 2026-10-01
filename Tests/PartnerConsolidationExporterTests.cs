@@ -87,6 +87,27 @@ public class PartnerConsolidationExporterTests
     }
 
     [TestMethod]
+    public void Export_CskuDetailSheet_HasVatExcludedPriceNextToSupplyPrice()
+    {
+        var details = new List<PartnerConsolidationCskuDetail>
+        {
+            new() { CompanyName = "한결", CskuCode = "A", Msku = "rz500", PriceSource = SupplyPriceSource.Own, SupplyPrice = 4000m, Quantity = 2, SupplyRevenue = 8000m },
+        };
+
+        PartnerConsolidationExporter.Export([], details, [], [], [], _ => 3000m, _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["CSKU상세"]!;
+
+        Assert.AreEqual("납품단가", sheet.Cells[1, 7].Text);
+        Assert.AreEqual("납품단가(VAT별도)", sheet.Cells[1, 8].Text);
+        Assert.AreEqual(3636.36d, sheet.Cells[2, 8].GetValue<double>());
+        Assert.AreEqual("자체", sheet.Cells[2, 9].Text);
+        Assert.AreEqual(8000d, sheet.Cells[2, 10].GetValue<double>());
+    }
+
+    [TestMethod]
     public void Export_UnassignedSheet_OnlyIncludesUnassignedPriceRows()
     {
         var details = new List<PartnerConsolidationCskuDetail>

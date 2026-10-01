@@ -449,6 +449,35 @@ public class PartnerClosingRepository
         return header;
     }
 
+    /// <summary>
+    /// 외부에서 집계해 온 라인(온라인 거래처 취합 파일 등)으로 MANUAL 거래처의 이 기간 라인을 통째로
+    /// 바꾼다. 출고 상세는 DB에 두지 않고 품목별 합계 라인만 저장한다. confirm이면 확정, 아니면
+    /// 대조중으로 둔다. 이미 확정된 헤더는 덮어쓰지 않는다 — 호출 측이 먼저 확정취소해야 한다.
+    /// </summary>
+    public PartnerClosing ReplaceManualLines(string period, string partyKey, string partyName,
+        List<PartnerClosingLine> lines, string reconcileNote, bool confirm)
+    {
+        var header = GetHeader(period, partyKey) ?? new PartnerClosing { Period = period, PartyKey = partyKey };
+        if (header.ConfirmedAt != null)
+            throw new InvalidOperationException($"'{partyName}' {period} 마감이 이미 확정되어 있습니다. 확정취소 후 다시 시도하세요.");
+
+        header.PartyName = partyName;
+        header.IsManual = true;
+        header.Status = confirm ? "확정" : "대조중";
+        header.TotalQty = lines.Sum(l => l.Qty);
+        header.TotalSupply = lines.Sum(l => l.Qty * l.UnitPrice);
+        header.TotalCost = lines.Sum(l => l.Qty * l.CostPrice);
+        header.TotalProfit = lines.Sum(l => l.Profit);
+        header.FreightAllocated = 0;
+        header.ReconcileNote = reconcileNote;
+        header.ConfirmedAt = confirm ? DateTime.Now : null;
+
+        SaveHeader(header);
+        DeleteLinesByClosingId(header.Id);
+        InsertLines(header.Id, lines);
+        return header;
+    }
+
     /// <summary>대조 진행 중(미확인/대조중) 상태의 MANUAL 헤더를 저장한다. 확정은 ConfirmManual로만 한다.</summary>
     public PartnerClosing SaveManualDraft(string period, string partyKey, string partyName, decimal totalQty, decimal totalSupply, decimal totalProfit, string status, string reconcileNote)
     {
