@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MiniERP2.Forms;
 using MiniERP2.Models;
+using MiniERP2.UI;
 using OfficeOpenXml;
 
 namespace MiniERP2.Utils;
@@ -44,12 +45,17 @@ public static class ExportHelper
             };
 
             if (sfd.ShowDialog(owner) != DialogResult.OK) return null;
+            DiagnosticsLogger.Log($"[내보내기] SaveFileDialog 닫힘 — {sfd.FileName}");
 
             if (File.Exists(sfd.FileName))
             {
-                var result = MessageBox.Show(owner,
-                    $"'{Path.GetFileName(sfd.FileName)}' 파일이 이미 있습니다. 덮어쓰시겠습니까?",
-                    "다른 이름으로 저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                // MessageBox.Show는 SaveFileDialog가 닫힌 직후 보이지 않게 생성되는 경우가 있어
+                // (덮어쓰기 때만 생기던 긴 지연의 원인) ShowDialogSafe로 띄우는 일반 폼을 쓴다.
+                DiagnosticsLogger.Log("[내보내기] 덮어쓰기 확인 창 표시");
+                using var confirm = new SafeConfirmDialog("다른 이름으로 저장 확인",
+                    $"'{Path.GetFileName(sfd.FileName)}' 파일이 이미 있습니다. 덮어쓰시겠습니까?");
+                var result = FormManager.ShowDialogSafe(confirm, owner);
+                DiagnosticsLogger.Log($"[내보내기] 덮어쓰기 확인 응답 — {result}");
                 if (result != DialogResult.Yes) continue;
             }
 

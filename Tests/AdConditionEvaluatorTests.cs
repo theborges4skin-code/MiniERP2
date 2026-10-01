@@ -19,6 +19,32 @@ public class AdConditionEvaluatorTests
     }
 
     [TestMethod]
+    public void Matches_BlankValueRowInOrGroup_IsIgnoredInsteadOfMatchingEverything()
+    {
+        // "조건 추가"만 누르고 값을 안 넣은 줄이 Or로 묶여 있어도, 그 줄 때문에 전 행이 일치하면 안 된다.
+        var details = new List<AdConditionDetail>
+        {
+            new() { HeaderField = AdStdField.OptionName, Operator = AdConditionOperator.Contains, TargetValue = "면도", Logic = ConditionLogic.Or },
+            new() { HeaderField = AdStdField.OptionName, Operator = AdConditionOperator.Contains, TargetValue = "윤활", Logic = ConditionLogic.Or },
+            new() { HeaderField = AdStdField.OptionName, Operator = AdConditionOperator.Contains, TargetValue = "", Logic = ConditionLogic.Or },
+        };
+
+        Assert.IsTrue(AdConditionEvaluator.Matches(details, new AdSpendItem { OptionName = "$면도기세정액_MO" }));
+        Assert.IsFalse(AdConditionEvaluator.Matches(details, new AdSpendItem { OptionName = "$보르피린_MO" }));
+    }
+
+    [TestMethod]
+    public void Matches_OnlyBlankValueRows_ReturnsFalse()
+    {
+        var details = new List<AdConditionDetail>
+        {
+            new() { HeaderField = AdStdField.ProductName, Operator = AdConditionOperator.Contains, TargetValue = " ", Logic = ConditionLogic.And },
+        };
+
+        Assert.IsFalse(AdConditionEvaluator.Matches(details, new AdSpendItem { ProductName = "아무 상품" }));
+    }
+
+    [TestMethod]
     public void Matches_AllAndConditions_RequiresEveryConditionToMatch()
     {
         var details = new List<AdConditionDetail>

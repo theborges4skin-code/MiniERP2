@@ -254,6 +254,9 @@ public class OfsForm : Form
         var gridSplit = new PersistentSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 250, PersistenceKey = "OfsForm.GridSplit" };
         gridSplit.Panel1.Controls.Add(_ordersGrid);
         gridSplit.Panel2.Controls.Add(CreateExportPreviewPanel());
+        // 상세 그리드가 헤더만 남을 만큼 접히지 않도록 최소 높이를 둔다(헤더+몇 줄). 생성 직후엔
+        // 컨테이너가 기본 크기(100px)라 최소값 검증에 걸리므로 창이 실제 크기로 뜬 뒤에 적용한다.
+        Shown += (s, e) => { try { gridSplit.Panel1MinSize = 100; } catch (ArgumentOutOfRangeException) { } };
 
         // 3. Status Bar
         _statusStrip = new StatusStrip { Dock = DockStyle.Bottom };
@@ -983,8 +986,13 @@ public class OfsForm : Form
         // 새로 추가된 행으로 스크롤
         int lastIdx = _ordersGrid.Rows.Count - 1;
         while (lastIdx >= 0 && _ordersGrid.Rows[lastIdx].IsNewRow) lastIdx--;
-        if (lastIdx >= 0)
-            _ordersGrid.FirstDisplayedScrollingRowIndex = lastIdx;
+        // 분할선을 위로 끝까지 올려 상세 그리드에 헤더만 보이는 상태면 WinForms가 "행을 표시할 공간이
+        // 없습니다" 예외를 던진다 — 스크롤은 편의 기능일 뿐이므로 표시 공간이 있을 때만 시도한다.
+        if (lastIdx >= 0 && _ordersGrid.DisplayRectangle.Height > _ordersGrid.ColumnHeadersHeight)
+        {
+            try { _ordersGrid.FirstDisplayedScrollingRowIndex = lastIdx; }
+            catch (InvalidOperationException) { }
+        }
 
         RefreshExportPreview();
         _statusLabel.Text = $"수동 주문 추가 — {item.MappedSku ?? "(빈 행)"}  (총 {_orders.Count}건)";

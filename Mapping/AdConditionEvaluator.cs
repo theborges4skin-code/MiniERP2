@@ -12,6 +12,10 @@ public static class AdConditionEvaluator
 {
     public static bool Matches(List<AdConditionDetail> details, AdSpendItem item)
     {
+        // "비교할 값"이 빈 조건(조건 추가만 하고 값을 안 넣은 줄)은 무시한다. 빈 문자열은 모든 값에
+        // Contains로 일치하므로, Or로 묶이면 그 규칙이 전 행을 가져가 오분류된다. 예상 매칭 건수
+        // 미리보기(AdMappingForm.UpdateConditionPreview)도 같은 기준이다.
+        details = details.Where(IsMeaningful).ToList();
         if (details.Count == 0) return false;
 
         var firstLogic = details[0].Logic;
@@ -30,6 +34,9 @@ public static class AdConditionEvaluator
         }
         return result;
     }
+
+    public static bool IsMeaningful(AdConditionDetail detail) =>
+        detail.Operator == AdConditionOperator.IsZero || !string.IsNullOrWhiteSpace(detail.TargetValue);
 
     /// <summary>예외 규칙(행 필터) 1건이 이 행에 매치되는지 확인합니다. 조건 평가 로직은 동일합니다.</summary>
     public static bool MatchesException(AdExceptionRule rule, AdSpendItem item) =>

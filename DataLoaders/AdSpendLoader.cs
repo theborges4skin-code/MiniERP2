@@ -154,6 +154,9 @@ public class AdSpendLoader
                 };
 
                 if (string.IsNullOrWhiteSpace(item.ProductName) && string.IsNullOrWhiteSpace(item.ProductId)) continue;
+                if (IsTotalRow(item)) continue;
+                // 광고비 0원 행(노출만 되고 과금 없음, "-" 표기 포함)은 분석 대상이 아니므로 불러오지 않는다.
+                if (item.Cost == 0m) continue;
 
                 engine.ApplyMapping(item);
                 items.Add(item);
@@ -217,6 +220,9 @@ public class AdSpendLoader
                 };
 
                 if (string.IsNullOrWhiteSpace(item.ProductName) && string.IsNullOrWhiteSpace(item.ProductId)) continue;
+                if (IsTotalRow(item)) continue;
+                // 광고비 0원 행(노출만 되고 과금 없음, "-" 표기 포함)은 분석 대상이 아니므로 불러오지 않는다.
+                if (item.Cost == 0m) continue;
 
                 engine.ApplyMapping(item);
                 items.Add(item);
@@ -247,24 +253,62 @@ public class AdSpendLoader
 
     private static List<string[]> ReadCsvRows(string filePath)
     {
-        var rows = new List<string[]>();
-        System.Text.Encoding enc = new System.Text.UTF8Encoding(true);
+        var lines = ReadCsvText(filePath).Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
 
-        // Try UTF-8; if it contains replacement characters, fall back to EUC-KR (CP949)
-        var lines = File.ReadAllLines(filePath, enc);
-        if (lines.Length > 0 && lines[0].Contains('?'))
-        {
-            try { lines = File.ReadAllLines(filePath, System.Text.Encoding.GetEncoding(949)); }
-            catch { /* keep UTF-8 result */ }
-        }
-
-        foreach (var line in lines)
-            rows.Add(ParseCsvLine(line));
-
-        return rows;
+        var delimiter = DetectDelimiter(lines);
+        return lines.Select(line => ParseCsvLine(line, delimiter)).ToList();
     }
 
-    private static string[] ParseCsvLine(string line)
+    /// <summary>
+    /// BOM(UTF-8/UTF-16)이 있으면 그대로 따르고, 없으면 UTF-8로 엄격하게 읽어보고 깨지면 CP949로
+    /// 읽는다. 11번가 광고 리포트는 "CSV"지만 실제로는 UTF-16 탭 구분 파일이고, 스마트스토어는
+    /// UTF-8(BOM), 엑셀에서 저장한 CSV는 CP949다.
+    /// </summary>
+    private static string ReadCsvText(string filePath)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return System.Text.Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            return System.Text.Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            return System.Text.Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+
+        try
+        {
+            return new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (System.Text.DecoderFallbackException)
+        {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            return System.Text.Encoding.GetEncoding(949).GetString(bytes);
+        }
+    }
+
+    /// <summary>앞쪽 몇 줄에서 탭이 쉼표보다 많으면 탭 구분 파일로 본다.</summary>
+    private static char DetectDelimiter(List<string> lines)
+    {
+        var sample = lines.Where(l => l.Length > 0).Take(5).ToList();
+        var tabs = sample.Sum(l => l.Count(c => c == '\t'));
+        var commas = sample.Sum(l => l.Count(c => c == ','));
+        return tabs > commas ? '\t' : ',';
+    }
+
+    /// <summary>
+    /// 리포트 상단/하단의 합계 행(예: 11번가 "합계")은 상품 행의 합과 같은 금액이라, 그대로 읽으면
+    /// 광고비가 두 번 잡힌다.
+    /// </summary>
+    private static readonly HashSet<string> TotalRowLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "합계", "총합계", "총계", "전체", "Total", "Grand Total",
+    };
+
+    private static bool IsTotalRow(AdSpendItem item) =>
+        (item.ProductId != null && TotalRowLabels.Contains(item.ProductId.Trim())) ||
+        (item.ProductName != null && TotalRowLabels.Contains(item.ProductName.Trim()));
+
+    private static string[] ParseCsvLine(string line, char delimiter)
     {
         var fields = new List<string>();
         int i = 0;
@@ -281,12 +325,12 @@ public class AdSpendLoader
                     else { sb.Append(line[i++]); }
                 }
                 fields.Add(sb.ToString());
-                if (i < line.Length && line[i] == ',') i++;
+                if (i < line.Length && line[i] == delimiter) i++;
             }
             else
             {
                 int start = i;
-                while (i < line.Length && line[i] != ',') i++;
+                while (i < line.Length && line[i] != delimiter) i++;
                 fields.Add(line[start..i]);
                 if (i < line.Length) i++;
             }

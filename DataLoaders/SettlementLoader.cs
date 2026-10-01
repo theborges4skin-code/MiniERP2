@@ -332,9 +332,20 @@ public class SettlementLoader
             masterSku = channelSkuRepository.ResolveMasterSku(channelConfig.ChannelCode, data.Msku);
         }
 
-        var item = itemCache != null
-            ? itemCache.GetValueOrDefault(masterSku)
-            : itemRepository.GetBySku(masterSku);
+        ItemModel? LookupItem(string sku) => itemCache != null
+            ? itemCache.GetValueOrDefault(sku)
+            : itemRepository.GetBySku(sku);
+
+        var item = LookupItem(masterSku);
+
+        // 등록되지 않은 "{마스터SKU}x{수량}" 묶음 코드(1회성 대량구매 등) — 기준 마스터SKU 원가 × 수량.
+        var bundleQuantity = 1;
+        if (item == null && BundleSkuCode.TryParse(masterSku, out var bundleBaseSku, out var parsedQuantity))
+        {
+            item = LookupItem(bundleBaseSku);
+            if (item != null) bundleQuantity = parsedQuantity;
+        }
+
         data.ProductGroup = item?.ProductGroup;
         if (item == null)
         {
@@ -344,7 +355,7 @@ public class SettlementLoader
         }
 
         var cfsMode = channelConfig.GrowthCfsFee != null && channelConfig.ChannelType == ChannelType.CoupangGrowth;
-        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice, data.Qty, data.Shipping, data.Fee, cfsMode);
+        data.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, data.Settlement, item.CostPrice * bundleQuantity, data.Qty, data.Shipping, data.Fee, cfsMode);
     }
 
     /// <summary>

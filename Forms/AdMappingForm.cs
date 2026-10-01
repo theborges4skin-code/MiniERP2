@@ -60,6 +60,13 @@ public class AdMappingForm : Form
     private DataGridView _conditionRuleGrid = new();
     private DataGridView _conditionDetailGrid = new();
     private TextBox _conditionKeyTextBox = new();
+    // 조건부 규칙 편집기에 저장하지 않은 변경이 있는지. 다른 규칙으로 넘어가거나 창을 닫을 때
+    // 확인 없이 버려지면(키/대상그룹만 고치고 저장 안 함 등) 잘못된 그룹으로 매핑되는 원인이 된다.
+    private bool _conditionDirty;
+    // 광고비 데이터 그리드에서 마지막으로 우클릭한 열 이름(조건부 규칙 기본 조건 항목 결정용).
+    private string? _adGridClickedColumnName;
+    // 프로그램이 편집기 값을 채우는 동안(규칙 선택/초기화)에는 변경으로 보지 않는다.
+    private bool _suppressConditionDirty;
     private TextBox _conditionTargetGroupTextBox = new();
     private Label _conditionPreviewLabel = new();
     private Label _conditionSaveFeedbackLabel = new();
@@ -337,6 +344,14 @@ public class AdMappingForm : Form
         menu.Items.Add("조건부 매핑 규칙 추가", null, (s, e) => OnAddConditionRuleFromSelectedAdItem());
         menu.Items.Add("이 행 예외처리(계산 제외)", null, (s, e) => OnAddExceptionFromSelectedAdItem());
         _adDataGrid.ContextMenuStrip = menu;
+        // 우클릭한 셀로 현재 행/열을 옮긴다. 그러지 않으면 메뉴 동작이 우클릭한 행이 아니라 직전에
+        // 선택돼 있던 행에 적용돼 엉뚱한 규칙이 만들어진다. 열은 조건부 규칙의 기본 조건 항목에 쓴다.
+        _adDataGrid.CellMouseDown += (s, e) =>
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            _adDataGrid.CurrentCell = _adDataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            _adGridClickedColumnName = _adDataGrid.Columns[e.ColumnIndex].Name;
+        };
         _adDataGrid.RowPrePaint += OnAdGridRowPrePaint;
 
         _adSummaryLabel = new Label { Dock = DockStyle.Fill, Text = "광고비 파일을 불러오세요.", TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
@@ -426,6 +441,7 @@ public class AdMappingForm : Form
             {
                 // 레이아웃 자동탐지
                 var detected = _adSpendLoader.DetectLayout(fileName, layouts);
+                if (detected.Count == 0 && !ConfirmLoadIntoSelectedChannel(fileName)) continue;
                 Models.AdFileLayout? selectedLayout = detected.Count switch
                 {
                     1 => detected[0],
@@ -528,6 +544,27 @@ public class AdMappingForm : Form
         var newForm = new AdMappingForm();
         newForm.Show();
         Close();
+    }
+
+    /// <summary>
+    /// 지금 고른 채널의 광고 레이아웃과는 맞지 않는데 다른 채널의 레이아웃과는 맞는 파일이면
+    /// (예: 스마트 채널을 고른 채 쿠팡 광고 파일을 선택) 채널을 잘못 골랐을 가능성이 높으므로 확인한다.
+    /// 어느 채널과도 맞지 않으면 기존처럼 레이아웃 선택으로 넘어간다.
+    /// </summary>
+    private bool ConfirmLoadIntoSelectedChannel(string fileName)
+    {
+        var otherChannels = _channelConfigService.Load()
+            .Where(c => c.ChannelCode != _currentChannelConfig?.ChannelCode && c.AdFileLayouts.Count > 0)
+            .Where(c => _adSpendLoader.DetectLayout(fileName, c.AdFileLayouts).Count > 0)
+            .Select(c => c.ChannelName)
+            .ToList();
+        if (otherChannels.Count == 0) return true;
+
+        using var confirm = new SafeConfirmDialog("채널 확인",
+            $"'{Path.GetFileName(fileName)}'은(는) 지금 선택한 채널({_currentChannelConfig?.ChannelName})의 광고 파일 형식과 맞지 않고,\n" +
+            $"[{string.Join(", ", otherChannels)}] 채널의 광고 파일 형식과 일치합니다.\n\n" +
+            "채널을 잘못 선택했을 수 있습니다. 그래도 이 채널로 불러오시겠습니까?");
+        return FormManager.ShowDialogSafe(confirm, this) == DialogResult.Yes;
     }
 
     private Models.AdFileLayout? PickLayout(IReadOnlyList<Models.AdFileLayout> layouts, string prompt)
@@ -932,24 +969,65 @@ public class AdMappingForm : Form
     {
         if (_adDataGrid.CurrentRow?.DataBoundItem is not AdSpendItem item) return;
         var channelCode = _selectedChannel?.ChannelCode;
-        if (string.IsNullOrEmpty(channelCode) || string.IsNullOrWhiteSpace(item.ProductName)) return;
+        if (string.IsNullOrEmpty(channelCode)) return;
+
+        var (field, value) = ResolveClickedConditionField(item);
+        if (string.IsNullOrWhiteSpace(value)) return;
 
         using var dialog = new AdTargetGroupPromptDialog();
         if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.TargetGroup)) return;
 
         var details = new List<AdConditionDetail>
         {
-            new() { HeaderField = AdStdField.ProductName, Operator = AdConditionOperator.Contains, TargetValue = item.ProductName!, Logic = ConditionLogic.And },
+            new() { HeaderField = field, Operator = AdConditionOperator.Contains, TargetValue = value, Logic = ConditionLogic.And },
         };
-        var newRuleId = _adMappingRepository.AddConditionRuleWithDetails(channelCode, item.ProductName!, dialog.TargetGroup, details);
+        var newRuleId = _adMappingRepository.AddConditionRuleWithDetails(channelCode, value, dialog.TargetGroup, details);
 
+        // 탭을 먼저 연다 — 숨겨진 탭의 그리드는 행이 아직 만들어지지 않아 새 규칙 선택이 조용히
+        // 실패하고, 탭이 열릴 때 첫 행이 대신 선택되어 다른 규칙을 편집하게 됐다.
+        _tabControl.SelectedTab = _conditionDetailTabPage;
         LoadConditionRules(channelCode);
         SelectConditionRuleById(newRuleId);
-        _tabControl.SelectedTab = _conditionDetailTabPage;
         ReapplyMapping(channelCode);
         // 노션 5.1 후속 점검: 탭 전환+그리드 재구성 직후 모달을 띄우면 같은 위험군이라 비모달
         // 라벨로 대체(어차피 조건부 매핑(상세) 탭으로 전환되며 새 규칙이 바로 선택된 채로 보임).
         _conditionSaveFeedbackLabel.Text = $"조건부 매핑 규칙을 추가했습니다 ({DateTime.Now:HH:mm:ss}) — 조건을 다듬은 뒤 저장하세요.";
+    }
+
+    /// <summary>
+    /// 우클릭한 열이 조건으로 쓸 수 있는 항목(상품명/상품번호/옵션명/추가항목/비고)이고 값이 있으면
+    /// 그 항목과 값을, 아니면(광고비·상태 등 다른 열, 빈 셀) 상품명을 기본 조건으로 쓴다.
+    /// </summary>
+    private (AdStdField Field, string? Value) ResolveClickedConditionField(AdSpendItem item)
+    {
+        AdStdField? clicked = _adGridClickedColumnName switch
+        {
+            "ProductName" => AdStdField.ProductName,
+            "ProductId" => AdStdField.ProductId,
+            "OptionName" => AdStdField.OptionName,
+            "Extra1" => AdStdField.Extra1,
+            "Extra2" => AdStdField.Extra2,
+            "Note1" => AdStdField.Note1,
+            "Note2" => AdStdField.Note2,
+            "Note3" => AdStdField.Note3,
+            _ => null,
+        };
+
+        string? ValueOf(AdStdField field) => field switch
+        {
+            AdStdField.ProductName => item.ProductName,
+            AdStdField.ProductId => item.ProductId,
+            AdStdField.OptionName => item.OptionName,
+            AdStdField.Extra1 => item.Extra1,
+            AdStdField.Extra2 => item.Extra2,
+            AdStdField.Note1 => item.Note1,
+            AdStdField.Note2 => item.Note2,
+            AdStdField.Note3 => item.Note3,
+            _ => null,
+        };
+
+        if (clicked is { } field && !string.IsNullOrWhiteSpace(ValueOf(field))) return (field, ValueOf(field));
+        return (AdStdField.ProductName, item.ProductName);
     }
 
     private void OnAddExceptionFromSelectedAdItem()
@@ -1081,8 +1159,13 @@ public class AdMappingForm : Form
         var summaryPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         _conditionKeyTextBox = new TextBox { Width = 220 };
         _conditionTargetGroupTextBox = new TextBox { Width = 120 };
-        var btnSaveSummary = new Button { Text = "규칙 정보 저장", Size = new Size(110, 28) };
-        btnSaveSummary.Click += OnSaveConditionSummaryClick;
+        // 키/대상그룹을 고치는 즉시 왼쪽 목록에도 반영해, 지금 어떤 규칙을 편집 중인지 헷갈리지 않게 한다.
+        _conditionKeyTextBox.TextChanged += (s, e) => OnConditionSummaryTextChanged();
+        _conditionTargetGroupTextBox.TextChanged += (s, e) => OnConditionSummaryTextChanged();
+        // 저장 버튼이 키/대상그룹용과 상세조건용으로 나뉘어 한쪽만 누르면 나머지가 버려졌다.
+        // 두 버튼 모두 규칙 전체(키·대상그룹·상세조건)를 저장한다.
+        var btnSaveSummary = new Button { Text = "규칙 저장", Size = new Size(110, 28) };
+        btnSaveSummary.Click += (s, e) => SaveCurrentConditionRule();
         summaryPanel.Controls.Add(new Label { Text = "키(요약):", AutoSize = true, Padding = new Padding(0, 7, 3, 0) });
         summaryPanel.Controls.Add(_conditionKeyTextBox);
         summaryPanel.Controls.Add(new Label { Text = "대상 그룹:", AutoSize = true, Padding = new Padding(10, 7, 3, 0) });
@@ -1098,15 +1181,15 @@ public class AdMappingForm : Form
         var logicColumn = new DataGridViewComboBoxColumn { Name = "Logic", HeaderText = "다음 조건과 결합", DataPropertyName = "Logic", DataSource = Enum.GetValues(typeof(ConditionLogic)), Width = 110 };
         _conditionDetailGrid.Columns.AddRange(headerFieldColumn, operatorColumn, targetValueColumn, logicColumn);
         _conditionDetailGrid.CurrentCellDirtyStateChanged += (s, e) => { if (_conditionDetailGrid.IsCurrentCellDirty) _conditionDetailGrid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
-        _conditionDetailGrid.CellValueChanged += (s, e) => UpdateConditionPreview();
+        _conditionDetailGrid.CellValueChanged += (s, e) => { MarkConditionDirty(); UpdateConditionPreview(); };
 
         var detailButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
         var btnAddDetail = new Button { Text = "조건 추가", Size = new Size(90, 28) };
         btnAddDetail.Click += OnAddConditionDetailClick;
         var btnDeleteDetail = new Button { Text = "조건 삭제", Size = new Size(90, 28) };
         btnDeleteDetail.Click += OnDeleteConditionDetailClick;
-        var btnSaveDetails = new Button { Text = "상세조건 저장", Size = new Size(110, 28) };
-        btnSaveDetails.Click += OnSaveConditionDetailsClick;
+        var btnSaveDetails = new Button { Text = "규칙 저장", Size = new Size(110, 28) };
+        btnSaveDetails.Click += (s, e) => SaveCurrentConditionRule();
         detailButtonPanel.Controls.Add(btnAddDetail);
         detailButtonPanel.Controls.Add(btnDeleteDetail);
         detailButtonPanel.Controls.Add(btnSaveDetails);
@@ -1121,6 +1204,11 @@ public class AdMappingForm : Form
         mainLayout.Controls.Add(rightPanel, 1, 0);
         tabPage.Controls.Add(mainLayout);
 
+        FormClosing += (s, e) =>
+        {
+            if (_conditionDirty && _selectedConditionRuleId >= 0) PromptSavePendingConditionRule(CapturePendingConditionRule());
+        };
+
         SetConditionDetailEditorEnabled(false);
         return tabPage;
     }
@@ -1132,11 +1220,72 @@ public class AdMappingForm : Form
         _conditionDetailGrid.Enabled = enabled;
         if (!enabled)
         {
+            _suppressConditionDirty = true;
             _conditionKeyTextBox.Text = string.Empty;
             _conditionTargetGroupTextBox.Text = string.Empty;
             _conditionDetailGrid.DataSource = null;
+            _suppressConditionDirty = false;
+            _conditionDirty = false;
         }
         UpdateConditionPreview();
+    }
+
+    private void MarkConditionDirty()
+    {
+        if (_suppressConditionDirty || _selectedConditionRuleId < 0) return;
+        _conditionDirty = true;
+        _conditionSaveFeedbackLabel.ForeColor = Color.Red;
+        _conditionSaveFeedbackLabel.Text = "저장하지 않은 변경사항이 있습니다 — [규칙 저장]을 눌러주세요.";
+    }
+
+    private void OnConditionSummaryTextChanged()
+    {
+        if (_suppressConditionDirty || _selectedConditionRuleId < 0) return;
+        if (_conditionRuleGrid.CurrentRow?.DataBoundItem is AdMappingRule rule && rule.Id == _selectedConditionRuleId)
+        {
+            rule.Key = _conditionKeyTextBox.Text;
+            rule.TargetGroup = _conditionTargetGroupTextBox.Text;
+            _conditionRuleGrid.InvalidateRow(_conditionRuleGrid.CurrentRow.Index);
+        }
+        MarkConditionDirty();
+    }
+
+    private record PendingConditionRule(long RuleId, string Key, string TargetGroup, List<AdConditionDetail>? Details);
+
+    private PendingConditionRule CapturePendingConditionRule()
+    {
+        _conditionDetailGrid.EndEdit();
+        return new PendingConditionRule(_selectedConditionRuleId, _conditionKeyTextBox.Text, _conditionTargetGroupTextBox.Text,
+            (_conditionDetailGrid.DataSource as BindingList<AdConditionDetail>)?.ToList());
+    }
+
+    /// <summary>
+    /// 저장하지 않은 규칙에서 벗어날 때 저장 여부를 묻는다. "아니요"면 DB 값으로 목록을 되돌린다
+    /// (왼쪽 목록은 입력 즉시 바뀌므로 그대로 두면 저장된 것처럼 보인다).
+    /// </summary>
+    private void PromptSavePendingConditionRule(PendingConditionRule pending)
+    {
+        _conditionDirty = false;
+        using var confirm = new SafeConfirmDialog("저장 확인",
+            $"조건부 규칙 '{pending.Key}'에 저장하지 않은 변경사항이 있습니다.\n저장하시겠습니까?");
+        var save = FormManager.ShowDialogSafe(confirm, this) == DialogResult.Yes;
+        if (save) WriteConditionRule(pending);
+
+        var channelCode = _selectedChannel?.ChannelCode;
+        if (IsDisposed || Disposing || string.IsNullOrEmpty(channelCode)) return;
+
+        var keepSelectedId = _selectedConditionRuleId;
+        LoadConditionRules(channelCode);
+        if (keepSelectedId >= 0) SelectConditionRuleById(keepSelectedId);
+        if (save) ReapplyMapping(channelCode);
+    }
+
+    private void WriteConditionRule(PendingConditionRule pending)
+    {
+        _adMappingRepository.UpdateConditionRuleSummary(pending.RuleId, pending.Key.Trim(), pending.TargetGroup.Trim());
+        // 값을 안 넣은 조건 줄은 저장하지 않는다(평가에서도 무시되므로 남겨두면 헷갈리기만 한다).
+        if (pending.Details != null)
+            _adMappingRepository.ReplaceConditionDetails(pending.RuleId, pending.Details.Where(AdConditionEvaluator.IsMeaningful).ToList());
     }
 
     private void LoadConditionRules(string channelCode)
@@ -1148,7 +1297,19 @@ public class AdMappingForm : Form
 
     private void OnConditionRuleSelectionChanged(object? sender, EventArgs e)
     {
-        if (_conditionRuleGrid.CurrentRow?.DataBoundItem is not AdMappingRule rule)
+        var rule = _conditionRuleGrid.CurrentRow?.DataBoundItem as AdMappingRule;
+        if (rule?.Id == _selectedConditionRuleId) return;
+
+        // 저장 안 한 규칙에서 다른 규칙으로 넘어가는 중 — 지금 값을 잡아두고, 선택 변경 이벤트가
+        // 끝난 뒤(BeginInvoke) 저장 여부를 묻는다(이벤트 안에서 목록을 다시 불러오면 재진입된다).
+        if (_conditionDirty && _selectedConditionRuleId >= 0)
+        {
+            var pending = CapturePendingConditionRule();
+            _conditionDirty = false;
+            BeginInvoke(() => PromptSavePendingConditionRule(pending));
+        }
+
+        if (rule == null)
         {
             _selectedConditionRuleId = -1;
             SetConditionDetailEditorEnabled(false);
@@ -1156,9 +1317,13 @@ public class AdMappingForm : Form
         }
 
         _selectedConditionRuleId = rule.Id;
+        _suppressConditionDirty = true;
         _conditionKeyTextBox.Text = rule.Key;
         _conditionTargetGroupTextBox.Text = rule.TargetGroup;
         _conditionDetailGrid.DataSource = new BindingList<AdConditionDetail>(_adMappingRepository.GetConditionDetails(rule.Id));
+        _suppressConditionDirty = false;
+        _conditionDirty = false;
+        _conditionSaveFeedbackLabel.Text = string.Empty;
         SetConditionDetailEditorEnabled(true);
     }
 
@@ -1186,6 +1351,10 @@ public class AdMappingForm : Form
                 break;
             }
         }
+
+        // 이미 그 행이 현재 행이면 CurrentCell을 다시 지정해도 선택 변경 이벤트가 나지 않아
+        // (LoadConditionRules가 편집기를 비운 뒤라) 편집기가 빈 채로 남는다 — 직접 채운다.
+        if (_selectedConditionRuleId != ruleId) OnConditionRuleSelectionChanged(this, EventArgs.Empty);
     }
 
     private void OnDeleteConditionRuleClick(object? sender, EventArgs e)
@@ -1198,11 +1367,21 @@ public class AdMappingForm : Form
         if (!string.IsNullOrEmpty(channelCode)) { LoadConditionRules(channelCode); ReapplyMapping(channelCode); }
     }
 
-    private void OnSaveConditionSummaryClick(object? sender, EventArgs e)
+    /// <summary>선택한 조건부 규칙의 키·대상그룹·상세조건을 한 번에 저장한다(두 "규칙 저장" 버튼 공통).</summary>
+    private void SaveCurrentConditionRule()
     {
         if (_selectedConditionRuleId < 0) return;
-        var ruleId = _selectedConditionRuleId;
-        _adMappingRepository.UpdateConditionRuleSummary(ruleId, _conditionKeyTextBox.Text, _conditionTargetGroupTextBox.Text);
+        var pending = CapturePendingConditionRule();
+
+        if (string.IsNullOrWhiteSpace(pending.Key) || string.IsNullOrWhiteSpace(pending.TargetGroup))
+        {
+            _conditionSaveFeedbackLabel.ForeColor = Color.Red;
+            _conditionSaveFeedbackLabel.Text = "키(요약)와 대상 그룹을 모두 입력해야 저장할 수 있습니다.";
+            return;
+        }
+
+        WriteConditionRule(pending);
+        _conditionDirty = false;
 
         var channelCode = _selectedChannel?.ChannelCode;
         if (!string.IsNullOrEmpty(channelCode))
@@ -1210,18 +1389,40 @@ public class AdMappingForm : Form
             // LoadConditionRules가 목록을 다시 불러오며 선택을 초기화하므로, 같은 규칙을 다시
             // 선택해 편집을 이어갈 수 있게 한다.
             LoadConditionRules(channelCode);
-            SelectConditionRuleById(ruleId);
+            SelectConditionRuleById(pending.RuleId);
             ReapplyMapping(channelCode);
         }
         // 노션 5.1 후속 점검: 그리드 재구성 직후 모달을 띄우면 다른 화면들에서 반복 재현됐던
         // 경쟁 상태와 같은 위험군이라 비모달 라벨로 대체했다.
-        _conditionSaveFeedbackLabel.Text = $"규칙 정보 저장됨 ({DateTime.Now:HH:mm:ss})";
+        _conditionSaveFeedbackLabel.ForeColor = Color.DarkGreen;
+        _conditionSaveFeedbackLabel.Text = $"규칙 저장됨 — '{pending.Key.Trim()}' → {pending.TargetGroup.Trim()} ({DateTime.Now:HH:mm:ss})";
     }
 
+    /// <summary>
+    /// 새 상세조건은 바로 위 조건의 비교할 항목·조건·다음 조건과 결합을 그대로 이어받는다
+    /// (같은 항목에 값만 바꿔 여러 줄 넣는 경우가 대부분이라 매번 다시 고르지 않도록).
+    /// </summary>
     private void OnAddConditionDetailClick(object? sender, EventArgs e)
     {
         if (_conditionDetailGrid.DataSource is not BindingList<AdConditionDetail> details) return;
-        details.Add(new AdConditionDetail { RuleId = _selectedConditionRuleId, HeaderField = AdStdField.ProductName, Operator = AdConditionOperator.Contains, TargetValue = string.Empty, Logic = ConditionLogic.And });
+        _conditionDetailGrid.EndEdit();
+
+        var previous = details.Count > 0 ? details[^1] : null;
+        details.Add(new AdConditionDetail
+        {
+            RuleId = _selectedConditionRuleId,
+            HeaderField = previous?.HeaderField ?? AdStdField.ProductName,
+            Operator = previous?.Operator ?? AdConditionOperator.Contains,
+            TargetValue = string.Empty,
+            Logic = previous?.Logic ?? ConditionLogic.And,
+        });
+
+        // 새 줄의 "비교할 값" 칸으로 바로 이동해 입력을 이어갈 수 있게 한다.
+        var newRowIndex = details.Count - 1;
+        if (newRowIndex < _conditionDetailGrid.Rows.Count)
+            _conditionDetailGrid.CurrentCell = _conditionDetailGrid.Rows[newRowIndex].Cells["TargetValue"];
+
+        MarkConditionDirty();
         UpdateConditionPreview();
     }
 
@@ -1230,18 +1431,8 @@ public class AdMappingForm : Form
         if (_conditionDetailGrid.DataSource is not BindingList<AdConditionDetail> details) return;
         if (_conditionDetailGrid.CurrentRow?.DataBoundItem is not AdConditionDetail detail) return;
         details.Remove(detail);
+        MarkConditionDirty();
         UpdateConditionPreview();
-    }
-
-    private void OnSaveConditionDetailsClick(object? sender, EventArgs e)
-    {
-        if (_selectedConditionRuleId < 0) return;
-        if (_conditionDetailGrid.DataSource is not BindingList<AdConditionDetail> details) return;
-
-        _adMappingRepository.ReplaceConditionDetails(_selectedConditionRuleId, details.ToList());
-        var channelCode = _selectedChannel?.ChannelCode;
-        if (!string.IsNullOrEmpty(channelCode)) ReapplyMapping(channelCode);
-        _conditionSaveFeedbackLabel.Text = $"상세조건 저장됨 ({DateTime.Now:HH:mm:ss})";
     }
 
     /// <summary>현재 불러온 광고비 데이터(_loadedAdItems)에 조건을 즉시 적용해 예상 매칭 건수를 보여준다.</summary>

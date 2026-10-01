@@ -30,12 +30,14 @@ public class NewMasterSkuDialog : Form
     /// <param name="suggestedCostPrice">간이 마진 계산기 등에서 이미 계산해둔 제조원가(적용)가
     /// 있으면 미리 채운다(간이마진계산기_개발기획서.md §6.4).</param>
     /// <param name="suggestedProductGroup">미리 채울 상품그룹(비워두면 마지막에 등록한 그룹 없이 빈 값).</param>
-    public NewMasterSkuDialog(string? suggestedItemName = null, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null)
+    /// <param name="suggestedSku">미리 채울 SKU 코드. 비워두면 TEMP 자동 제안값을 쓴다(매핑 규칙이 이미
+    /// 가리키고 있는데 마스터DB에 없는 코드를 그대로 등록할 때 사용).</param>
+    public NewMasterSkuDialog(string? suggestedItemName = null, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null, string? suggestedSku = null)
     {
-        InitializeComponent(suggestedItemName, suggestedCostPrice, suggestedProductGroup);
+        InitializeComponent(suggestedItemName, suggestedCostPrice, suggestedProductGroup, suggestedSku);
     }
 
-    private void InitializeComponent(string? suggestedItemName, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null)
+    private void InitializeComponent(string? suggestedItemName, decimal? suggestedCostPrice = null, string? suggestedProductGroup = null, string? suggestedSku = null)
     {
         Text = "새 마스터SKU 등록";
         Size = new Size(420, 300);
@@ -50,7 +52,7 @@ public class NewMasterSkuDialog : Form
         for (int i = 0; i < 6; i++) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
 
         var existingItems = _itemRepository.GetAll();
-        _skuText = new TextBox { Dock = DockStyle.Fill, Text = TempSkuGenerator.GenerateNext(existingItems.Select(i => i.Sku)) };
+        _skuText = new TextBox { Dock = DockStyle.Fill, Text = string.IsNullOrWhiteSpace(suggestedSku) ? TempSkuGenerator.GenerateNext(existingItems.Select(i => i.Sku)) : suggestedSku.Trim() };
         _itemNameText = new TextBox { Dock = DockStyle.Fill, Text = suggestedItemName ?? string.Empty };
 
         // 상품그룹은 자유 입력이지만(ItemTable.ProductGroup은 TEXT), 오타로 그룹이 갈라지면

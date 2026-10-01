@@ -47,6 +47,10 @@ public class QuickMappingPanel : Panel
     private bool _orphanMode;
     private string? _orphanChannelCode;
     private string? _orphanCskuCode;
+    private string _orphanProductName = "";
+    // 규칙의 대상 코드가 CSKU로도 마스터SKU로도 등록되지 않은 경우(예: 임시매핑 등록 때 아무 데도
+    // 없는 코드를 직접 입력). 이때는 연결할 CSKU가 없으므로 그 코드를 마스터SKU로 바로 등록하게 한다.
+    private bool _orphanIsUnregisteredCode;
 
     private List<ItemModel> _allItems = new();
 
@@ -108,6 +112,8 @@ public class QuickMappingPanel : Panel
         _orphanMode = true;
         _orphanChannelCode = channelCode;
         _orphanCskuCode = cskuCode;
+        _orphanProductName = productName;
+        _orphanIsUnregisteredCode = _cskuRepo.GetByChannelAndCskuCode(channelCode, cskuCode) == null;
 
         _mainSplit.Visible = false;
         _orphanPanel.Visible = true;
@@ -121,9 +127,20 @@ public class QuickMappingPanel : Panel
         parts.Add($"수량: {qty:N0}");
         _infoLabel.Text = string.Join("  |  ", parts);
 
-        _orphanMessageLabel.Text =
-            $"CSKU '{cskuCode}'는 매핑 규칙에 정상 연결되어 있지만, 연결된 마스터SKU가 등록되어 있지 않아 " +
-            "원가를 알 수 없습니다. 아래 버튼으로 이 CSKU에 마스터SKU를 연결하세요(새 매핑 규칙을 만들 필요는 없습니다).";
+        if (_orphanIsUnregisteredCode)
+        {
+            _assignMasterSkuBtn.Text = "이 코드를 마스터SKU로 등록하기";
+            _orphanMessageLabel.Text =
+                $"매핑 규칙의 대상 코드 '{cskuCode}'가 CSKU로도 마스터SKU로도 등록되어 있지 않아 원가를 알 수 없습니다. " +
+                "아래 버튼으로 이 코드를 마스터SKU로 등록하고 제조원가를 입력하세요(대량구매 묶음이면 묶음 전체 원가).";
+        }
+        else
+        {
+            _assignMasterSkuBtn.Text = "이 CSKU에 마스터SKU 연결하기";
+            _orphanMessageLabel.Text =
+                $"CSKU '{cskuCode}'는 매핑 규칙에 정상 연결되어 있지만, 연결된 마스터SKU가 등록되어 있지 않아 " +
+                "원가를 알 수 없습니다. 아래 버튼으로 이 CSKU에 마스터SKU를 연결하세요(새 매핑 규칙을 만들 필요는 없습니다).";
+        }
         _statusLabel.Text = "";
     }
 
@@ -537,6 +554,12 @@ public class QuickMappingPanel : Panel
     {
         if (!_orphanMode || _orphanChannelCode == null || _orphanCskuCode == null) return;
 
+        if (_orphanIsUnregisteredCode)
+        {
+            RegisterOrphanCodeAsMasterSku(_orphanChannelCode, _orphanCskuCode);
+            return;
+        }
+
         var existing = _cskuRepo.GetByChannelAndCskuCode(_orphanChannelCode, _orphanCskuCode);
         if (existing == null)
         {
@@ -560,6 +583,25 @@ public class QuickMappingPanel : Panel
         _statusLabel.Text = codeChanged
             ? $"'{oldCskuCode}' → '{existing.CskuCode}'(으)로 정식 등록하고 마스터SKU '{dlg.SelectedSku}'를 연결했습니다."
             : $"'{oldCskuCode}'에 마스터SKU '{dlg.SelectedSku}'를 연결했습니다.";
+        RuleSaved?.Invoke();
+    }
+
+    /// <summary>
+    /// 규칙이 가리키는 코드가 어디에도 등록되지 않은 경우 — 그 코드를 그대로 SKU 코드로 미리 채운
+    /// 새 마스터SKU 등록 창을 띄운다. 사용자가 코드를 바꿔 등록하면 기존 규칙도 새 코드로 옮긴다.
+    /// </summary>
+    private void RegisterOrphanCodeAsMasterSku(string channelCode, string code)
+    {
+        using var dlg = new NewMasterSkuDialog(_orphanProductName, suggestedSku: code);
+        if (FormManager.ShowDialogSafe(dlg, FindForm()) != DialogResult.OK || dlg.ResultSku == null) return;
+
+        var codeChanged = !string.Equals(code, dlg.ResultSku, StringComparison.Ordinal);
+        if (codeChanged) _mappingRepo.RetargetRules(channelCode, code, dlg.ResultSku);
+
+        _statusLabel.ForeColor = Color.DarkGreen;
+        _statusLabel.Text = codeChanged
+            ? $"마스터SKU '{dlg.ResultSku}'를 등록하고 '{code}'를 가리키던 매핑 규칙을 옮겼습니다."
+            : $"'{code}'를 마스터SKU로 등록했습니다.";
         RuleSaved?.Invoke();
     }
 

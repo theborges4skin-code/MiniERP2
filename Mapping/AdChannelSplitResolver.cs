@@ -58,7 +58,11 @@ public class AdChannelSplitResolver
         item.ChannelMatchType = DefaultChannel;
     }
 
-    /// <summary>우선순위대로 첫 번째 비어있지 않은 캠페인 소스 헤더 값을 채택한다(§4.1).</summary>
+    /// <summary>
+    /// 우선순위대로 첫 번째 비어있지 않은 캠페인 소스 헤더 값을 채택한다(§4.1). "-"와 "0"은 값이
+    /// 없다는 표시로 보고 다음 헤더로 넘어간다 — 쿠팡 광고 리포트는 상품 없는 행(성과형 등)의
+    /// "광고집행 옵션ID"를 "-"/0으로 채우므로, 옵션ID를 1순위로 쓰면서 그런 행은 캠페인명으로 분류하기 위함.
+    /// </summary>
     private void DeriveCampaignKey(AdSpendItem item)
     {
         item.CampaignSrc = null;
@@ -67,7 +71,7 @@ public class AdChannelSplitResolver
 
         foreach (var header in _campaignSourceHeaders)
         {
-            if (item.RawValues.TryGetValue(header, out var value) && !string.IsNullOrWhiteSpace(value))
+            if (item.RawValues.TryGetValue(header, out var value) && !IsPlaceholder(value))
             {
                 item.CampaignSrc = header;
                 item.CampaignKey = value;
@@ -75,4 +79,7 @@ public class AdChannelSplitResolver
             }
         }
     }
+
+    private static bool IsPlaceholder(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value.Trim() is "-" or "0";
 }

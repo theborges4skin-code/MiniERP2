@@ -37,6 +37,7 @@ public class MappingForm : Form
     private ComboBox _unifiedFilterChannelCombo = new();
     private ComboBox _unifiedFilterTargetCombo = new();
     private TextBox _unifiedSearchTextBox = new();
+    private CheckBox _unifiedShowMskuDirectCheckBox = new();
     private List<UnifiedRuleRow> _allUnifiedRules = [];
 
     private class UnifiedRuleRow
@@ -49,6 +50,13 @@ public class MappingForm : Form
         public string ChannelName { get; set; } = string.Empty;
         public string Key { get; set; } = string.Empty;
         public string TargetSku { get; set; } = string.Empty;
+
+        /// <summary>
+        /// CSKU 없이 MSKU로 직접 매핑하는 조건부 규칙(Settlement 전용, RuleCondition.TargetMsku)의 대상.
+        /// TargetSku가 비어 있고 이 값만 있는 규칙이 <see cref="IsMskuDirect"/>이다.
+        /// </summary>
+        public string TargetMsku { get; set; } = string.Empty;
+        public bool IsMskuDirect => string.IsNullOrEmpty(TargetSku) && !string.IsNullOrEmpty(TargetMsku);
         public string Detail { get; set; } = string.Empty;
 
         // 아래 4개는 TargetSku(CSKU 코드)로 조회한 ChannelSkuTable 정보로, 여기서 직접 편집하면
@@ -980,6 +988,16 @@ public class MappingForm : Form
         _unifiedSearchTextBox.TextChanged += (s, e) => ApplyUnifiedRuleFilter();
         filterPanel.Controls.Add(_unifiedSearchTextBox);
 
+        _unifiedShowMskuDirectCheckBox = new CheckBox
+        {
+            Text = "MSKU 직접 매핑 표시",
+            Checked = true,
+            AutoSize = true,
+            Padding = new Padding(10, 4, 0, 0),
+        };
+        _unifiedShowMskuDirectCheckBox.CheckedChanged += (s, e) => ApplyUnifiedRuleFilter();
+        filterPanel.Controls.Add(_unifiedShowMskuDirectCheckBox);
+
         _unifiedRulesGrid = new ExcelLikeDataGridView
         {
             Dock = DockStyle.Fill,
@@ -994,6 +1012,7 @@ public class MappingForm : Form
             new DataGridViewTextBoxColumn { Name = "ChannelName", HeaderText = "채널", DataPropertyName = "ChannelName", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "Key", HeaderText = "키", DataPropertyName = "Key", Width = 200, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "TargetSku", HeaderText = "대상 SKU(CSKU)", DataPropertyName = "TargetSku", Width = 130, ReadOnly = true },
+            new DataGridViewTextBoxColumn { Name = "TargetMsku", HeaderText = "대상 MSKU(직접)", DataPropertyName = "TargetMsku", Width = 120, ReadOnly = true },
             new DataGridViewTextBoxColumn { Name = "CskuMsku", HeaderText = "매칭된 마스터SKU", DataPropertyName = "CskuMsku", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "CskuInvoiceDisplayName", HeaderText = "CSKU 송장표시명", DataPropertyName = "CskuInvoiceDisplayName", Width = 140 },
             new DataGridViewTextBoxColumn { Name = "CskuSupplyPrice", HeaderText = "CSKU 납품가", DataPropertyName = "CskuSupplyPrice", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight } },
@@ -1101,15 +1120,17 @@ public class MappingForm : Form
         {
             var csku = ResolveCsku(rule.ChannelCode, rule.TargetSku);
             var detailText = string.Join(" ; ", details.Select(d => $"{d.Logic} {d.HeaderField} {d.Operator} \"{d.TargetValue}\""));
+            var isMskuDirect = string.IsNullOrEmpty(rule.TargetSku) && !string.IsNullOrEmpty(rule.TargetMsku);
             rows.Add(new UnifiedRuleRow
             {
-                TypeLabel = "조건부 매핑",
+                TypeLabel = isMskuDirect ? "조건부(MSKU직접)" : "조건부 매핑",
                 RuleType = MappingRuleType.Condition,
                 RuleId = rule.Id,
                 ChannelCode = rule.ChannelCode,
                 ChannelName = ResolveChannelName(rule.ChannelCode),
                 Key = rule.Key,
                 TargetSku = rule.TargetSku,
+                TargetMsku = rule.TargetMsku,
                 Detail = string.IsNullOrEmpty(detailText) ? "(조건 없음)" : detailText,
                 CskuMsku = csku?.Msku ?? string.Empty,
                 CskuInvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty,
@@ -1136,8 +1157,10 @@ public class MappingForm : Form
         var channelFilter = _unifiedFilterChannelCombo.SelectedItem as string;
         var target = _unifiedFilterTargetCombo.SelectedItem as string ?? "전체";
         var keyword = _unifiedSearchTextBox.Text.Trim();
+        var showMskuDirect = _unifiedShowMskuDirectCheckBox.Checked;
 
         var filtered = _allUnifiedRules
+            .Where(r => showMskuDirect || !r.IsMskuDirect)
             .Where(r => string.IsNullOrEmpty(channelFilter) || channelFilter == "(전체)" || r.ChannelName == channelFilter)
             .Where(r => MatchesUnifiedRuleKeyword(r, target, keyword))
             .ToList();
@@ -1155,9 +1178,9 @@ public class MappingForm : Form
             "타입" => Has(row.TypeLabel),
             "채널" => Has(row.ChannelName),
             "키" => Has(row.Key),
-            "대상 SKU" => Has(row.TargetSku),
+            "대상 SKU" => Has(row.TargetSku) || Has(row.TargetMsku),
             "상세" => Has(row.Detail),
-            _ => Has(row.TypeLabel) || Has(row.ChannelName) || Has(row.Key) || Has(row.TargetSku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
+            _ => Has(row.TypeLabel) || Has(row.ChannelName) || Has(row.Key) || Has(row.TargetSku) || Has(row.TargetMsku) || Has(row.Detail) || Has(row.CskuInvoiceDisplayName),
         };
     }
 
@@ -1184,7 +1207,9 @@ public class MappingForm : Form
             if (string.IsNullOrEmpty(row.TargetSku) || row.TargetSku == SkuMapper.ExcludedTargetSku)
             {
                 _globalStatusLabel.ForeColor = Color.Red;
-                _globalStatusLabel.Text = "이 항목은 CSKU가 연결되어 있지 않아 여기서 수정할 수 없습니다.";
+                _globalStatusLabel.Text = row.IsMskuDirect
+                    ? "MSKU 직접 매핑 규칙은 CSKU가 없어 여기서 수정할 수 없습니다. 바꾸려면 규칙을 삭제 후 다시 매핑하세요."
+                    : "이 항목은 CSKU가 연결되어 있지 않아 여기서 수정할 수 없습니다.";
                 return;
             }
 

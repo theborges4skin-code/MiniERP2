@@ -48,7 +48,9 @@ public class AdMappingEngine
         // 3) 조건부 매핑
         foreach (var (rule, details) in _conditionRules)
         {
-            if (details.Count == 0) continue;
+            // 대상 그룹이 비어 있는 규칙(만들다 만 규칙)은 매핑으로 치지 않는다 — 빈 그룹으로
+            // "매핑(조건)" 처리되면 미매핑 표시에서 빠져 놓치게 된다.
+            if (details.Count == 0 || string.IsNullOrWhiteSpace(rule.TargetGroup)) continue;
             if (AdConditionEvaluator.Matches(details, item))
             {
                 item.MappedGroup = rule.TargetGroup;
