@@ -61,7 +61,7 @@ public class FbaOrderDetailDialog : Form
         {
             if (!boxesBySeq.TryGetValue(item.BoxSeq, out var box)) continue;
             grid.Rows.Add(item.BoxSeq, box.BoxSpecName, $"{box.WidthMm:0}×{box.DepthMm:0}×{box.HeightMm:0}", item.Csku, item.ItemName,
-                item.Qty, item.ExpiryDate, box.WeightG, box.TrackingNo, box.Status);
+                item.Qty, item.ExpiryDate!, box.WeightG, box.TrackingNo!, box.Status);
         }
 
         mainLayout.Controls.Add(infoLabel, 0, 0);

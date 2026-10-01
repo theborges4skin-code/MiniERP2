@@ -66,7 +66,7 @@ public class PurchaseSalesOverviewForm : Form
         );
         foreach (var p in purchases.OrderBy(p => p.PurchasePrice))
         {
-            purchaseGrid.Rows.Add(ChannelLabel(p.ChannelCode), p.PurchasePrice, p.Unit, p.UpdatedAt, p.Note);
+            purchaseGrid.Rows.Add(ChannelLabel(p.ChannelCode), p.PurchasePrice, p.Unit!, p.UpdatedAt!, p.Note!);
         }
         AddPanel(topSplit.Panel1.Controls, "매입처별 매입가", purchaseGrid);
 
@@ -81,7 +81,7 @@ public class PurchaseSalesOverviewForm : Form
         );
         foreach (var s in sales.OrderByDescending(s => s.SupplyPrice))
         {
-            salesGrid.Rows.Add(ChannelLabel(s.ChannelCode), s.CskuCode, s.SupplyPrice, s.Unit, s.UpdatedAt);
+            salesGrid.Rows.Add(ChannelLabel(s.ChannelCode), s.CskuCode, s.SupplyPrice, s.Unit, s.UpdatedAt!);
         }
         AddPanel(topSplit.Panel2.Controls, "판매처별 납품가(CSKU)", salesGrid);
 

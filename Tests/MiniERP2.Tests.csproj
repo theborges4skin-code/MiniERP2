@@ -7,10 +7,15 @@
     <Nullable>enable</Nullable>
     <RootNamespace>MiniERP2.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- MSTEST0037: Assert.AreEqual(n, list.Count) 대신 Assert.HasCount 등을 권하는 스타일 권고일 뿐이라 끈다. -->
+    <NoWarn>$(NoWarn);MSTEST0037</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.0.2" />
+    <!-- EPPlus가 전이로 끌어오는 10.0.7에 보안 취약점(NU1903)이 있어 패치판으로 고정한다.
+         앱 본체는 WindowsDesktop 런타임 내장본을 써서 해당 없음 — 테스트 프로젝트 전용. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

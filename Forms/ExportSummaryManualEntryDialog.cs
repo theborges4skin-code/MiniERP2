@@ -104,7 +104,7 @@ public class ExportSummaryManualEntryDialog : Form
         var saved = _repo.GetByMarket(market.MarketCode);
         PopulateGrid(saved);
         _statusLabel.Text = saved.Count > 0
-            ? $"DB에서 {saved.Count}건 불러옴 ({saved.Max(r => r.SavedAt)[..10]})"
+            ? $"DB에서 {saved.Count}건 불러옴 ({SavedDateText(saved.Max(r => r.SavedAt))})"
             : "저장된 항목 없음";
     }
 
@@ -323,4 +323,8 @@ public class ExportSummaryManualEntryDialog : Form
         "실익액" => "C",
         _ => "B",
     };
+
+    /// <summary>저장시각 앞 10자리(yyyy-MM-dd). 저장시각이 빈 행(구버전 데이터)에서 [..10]이 범위 예외를 내던 문제 방지.</summary>
+    private static string SavedDateText(string? savedAt) =>
+        string.IsNullOrEmpty(savedAt) ? "저장시각 없음" : savedAt.Length >= 10 ? savedAt[..10] : savedAt;
 }

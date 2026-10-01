@@ -74,7 +74,7 @@ public class SettlementLoader
 
             // HeaderRowDetectionColumn이 설정된 경우 지정 컬럼명이 있는 행을 헤더로 자동 탐지한다.
             // 아마존처럼 파일마다 메타 행 수가 달라 헤더 행 위치가 고정되지 않는 채널에 사용한다.
-            if (!string.IsNullOrWhiteSpace(channelConfig.HeaderRowDetectionColumn) && worksheet?.Dimension != null)
+            if (!string.IsNullOrWhiteSpace(channelConfig.HeaderRowDetectionColumn))
             {
                 var target = channelConfig.HeaderRowDetectionColumn;
                 bool detected = false;
@@ -94,8 +94,8 @@ public class SettlementLoader
                     DiagnosticsLogger.Log($"[SettlementLoader] 헤더 행 자동 탐지 실패 — '{target}'을(를) 50행 이내에서 찾지 못함, 설정값({headerRow}행) 사용");
             }
 
-            DiagnosticsLogger.Log($"[SettlementLoader] 시트='{worksheet.Name}' 헤더행={headerRow} 전체범위={worksheet.Dimension?.Address} " +
-                $"(보고된 행수={worksheet.Dimension?.End.Row}, 열수={worksheet.Dimension?.End.Column}) ({stopwatch.Elapsed.TotalSeconds:F2}s)");
+            DiagnosticsLogger.Log($"[SettlementLoader] 시트='{worksheet.Name}' 헤더행={headerRow} 전체범위={worksheet.Dimension.Address} " +
+                $"(보고된 행수={worksheet.Dimension.End.Row}, 열수={worksheet.Dimension.End.Column}) ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
             var headerToIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int col = 1; col <= worksheet.Dimension.End.Column; col++)

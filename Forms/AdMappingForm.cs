@@ -1321,7 +1321,7 @@ public class AdMappingForm : Form
 
     private void OnExceptionRowDeleting(object? sender, DataGridViewRowCancelEventArgs e)
     {
-        if (e.Row.DataBoundItem is not AdExceptionRule rule || rule.Id == 0) return;
+        if (e.Row?.DataBoundItem is not AdExceptionRule rule || rule.Id == 0) return;
         _adMappingRepository.DeleteExceptionRule(rule.Id);
         var channelCode = _selectedChannel?.ChannelCode;
         if (!string.IsNullOrEmpty(channelCode)) ReapplyMapping(channelCode);

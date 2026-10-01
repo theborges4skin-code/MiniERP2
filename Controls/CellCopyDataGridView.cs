@@ -44,7 +44,8 @@ public class CellCopyDataGridView : DataGridView
 
         if (SelectedCells.Count > 0)
         {
-            Clipboard.SetDataObject(GetClipboardContent());
+            var content = GetClipboardContent();
+            if (content != null) Clipboard.SetDataObject(content);
         }
     }
 }

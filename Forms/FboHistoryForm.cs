@@ -707,13 +707,13 @@ public class FboHistoryForm : Form
             // 라인 단위 수정/복사/삭제(§선택 라인 액션)가 이 CSKU 줄 하나를 정확히 지목하는 데
             // 쓴다(FboBoxItem PK 구성요소) — 화면엔 안 보여줘도 됨.
             _grid.Columns.Add("ItemSeq", "ItemSeq");
-            _grid.Columns["ItemSeq"].Visible = false;
+            _grid.Columns["ItemSeq"]!.Visible = false;
 
             foreach (var r in filtered)
             {
                 var channelName = channelNames.TryGetValue(r.ChannelId, out var name) ? name : r.ChannelId;
                 _grid.Rows.Add(r.FboNo, r.OrderDate.ToString("yyyy-MM-dd"), channelName, r.BoxSeq,
-                    r.ReceiverDisplayName, r.Csku, r.ItemName, r.Qty, r.ExpiryDate, r.TrackingNo, r.Status, r.ItemSeq);
+                    r.ReceiverDisplayName, r.Csku, r.ItemName, r.Qty, r.ExpiryDate!, r.TrackingNo!, r.Status, r.ItemSeq);
             }
         }
 

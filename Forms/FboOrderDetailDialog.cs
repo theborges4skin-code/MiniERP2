@@ -60,7 +60,7 @@ public class FboOrderDetailDialog : Form
         {
             if (!boxesBySeq.TryGetValue(item.BoxSeq, out var box)) continue;
             grid.Rows.Add(item.BoxSeq, box.ReceiverDisplayName, item.Csku, item.ItemName, item.Qty,
-                item.ExpiryDate, box.BoxType, box.TrackingNo, box.Status);
+                item.ExpiryDate!, box.BoxType, box.TrackingNo!, box.Status);
         }
 
         mainLayout.Controls.Add(infoLabel, 0, 0);

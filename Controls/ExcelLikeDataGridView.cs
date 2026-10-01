@@ -264,7 +264,8 @@ public class ExcelLikeDataGridView : DataGridView
 
         if (SelectedCells.Count > 0)
         {
-            Clipboard.SetDataObject(GetClipboardContent());
+            var content = GetClipboardContent();
+            if (content != null) Clipboard.SetDataObject(content);
         }
     }
 
@@ -296,7 +297,7 @@ public class ExcelLikeDataGridView : DataGridView
                 if (targetColIndex >= Columns.Count) break;
 
                 var cell = Rows[targetRowIndex].Cells[targetColIndex];
-                if (cell.ReadOnly || !cell.OwningColumn.Visible) continue;
+                if (cell.ReadOnly || cell.OwningColumn?.Visible != true) continue;
 
                 SetCellValue(cell, values[colOffset]);
             }

@@ -385,7 +385,7 @@ public class SelectChannelDialog : Form
             .Where(n => n.Tag is SalesChannel c && c.ChannelCode == channelCode)
             .ToList();
 
-        return matches.FirstOrDefault(n => _expandedGroupKeys.Contains(n.Parent.Name)) ?? matches.FirstOrDefault();
+        return matches.FirstOrDefault(n => _expandedGroupKeys.Contains(n.Parent?.Name ?? "")) ?? matches.FirstOrDefault();
     }
 
     private void ExpandGroupNode(TreeNode? groupNode)
@@ -474,7 +474,7 @@ public class SelectChannelDialog : Form
         using (var bgBrush = new SolidBrush(bgColor))
             g.FillRectangle(bgBrush, e.Bounds);
 
-        if (e.Node.Tag is SalesChannel ch)
+        if (e.Node!.Tag is SalesChannel ch)
         {
             int x = e.Bounds.Left;
             int y = e.Bounds.Top;
@@ -505,13 +505,13 @@ public class SelectChannelDialog : Form
 
     private void OnTreeAfterExpand(object? sender, TreeViewEventArgs e)
     {
-        if (_suppressExpandEvents || e.Node.Parent != null) return;
+        if (_suppressExpandEvents || e.Node!.Parent != null) return;
         _expandedGroupKeys.Add(e.Node.Name);
     }
 
     private void OnTreeAfterCollapse(object? sender, TreeViewEventArgs e)
     {
-        if (_suppressExpandEvents || e.Node.Parent != null) return;
+        if (_suppressExpandEvents || e.Node!.Parent != null) return;
         if (e.Node.Name == _pinnedGroupName)
         {
             // 고정 그룹은 "열린 상태로 고정"이 요구사항이라 접히는 즉시 다시 펼친다.
@@ -525,7 +525,7 @@ public class SelectChannelDialog : Form
 
     private void OnTreeNodeDoubleClick(object? sender, TreeNodeMouseClickEventArgs e)
     {
-        if (e.Node.Tag is SalesChannel) ConfirmSelection();
+        if (e.Node!.Tag is SalesChannel) ConfirmSelection();
         else e.Node.Toggle();
     }
 

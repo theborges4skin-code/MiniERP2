@@ -473,7 +473,7 @@ public class DocLineHistoryForm : Form
             string[] headers = { "채널", "CSKU", "최근 품목명", "문서건수", "최초단가", "최근단가", "증감", "최근발행일" };
             for (int c = 0; c < headers.Length; c++) ws.Cells[1, c + 1].Value = headers[c];
 
-            var rows = ((BindingList<SummaryRow>)_summaryGrid.DataSource).ToList();
+            var rows = ((BindingList<SummaryRow>)_summaryGrid.DataSource!).ToList();
             for (int i = 0; i < rows.Count; i++)
             {
                 var r = rows[i];

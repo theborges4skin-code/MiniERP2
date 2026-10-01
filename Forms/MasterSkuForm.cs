@@ -682,14 +682,14 @@ public class MasterSkuForm : Form
             // 화면에 보이는 순서대로 정렬해 내보낸다.
             return _itemsGrid.Rows.Cast<DataGridViewRow>()
                 .Where(r => !r.IsNewRow && r.Visible && r.Selected && r.DataBoundItem is ItemModel)
-                .Select(r => (ItemModel)r.DataBoundItem)
+                .Select(r => (ItemModel)r.DataBoundItem!)
                 .ToList();
         }
 
         scopeLabel = "현재 검색 결과";
         return _itemsGrid.Rows.Cast<DataGridViewRow>()
             .Where(r => !r.IsNewRow && r.Visible && r.DataBoundItem is ItemModel)
-            .Select(r => (ItemModel)r.DataBoundItem)
+            .Select(r => (ItemModel)r.DataBoundItem!)
             .ToList();
     }
 

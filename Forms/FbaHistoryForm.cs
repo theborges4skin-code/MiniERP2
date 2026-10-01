@@ -526,7 +526,7 @@ public class FbaHistoryForm : Form
             foreach (var g in groups)
             {
                 var trackingStatus = g.TrackedCount == 0 ? "미등록" : g.TrackedCount == g.BoxCount ? "전체등록" : $"{g.TrackedCount}/{g.BoxCount}건 등록";
-                _grid.Rows.Add(g.FbaNo, g.OrderDate.ToString("yyyy-MM-dd"), g.ShipmentId, g.BoxCount, g.TotalQty, trackingStatus);
+                _grid.Rows.Add(g.FbaNo, g.OrderDate.ToString("yyyy-MM-dd"), g.ShipmentId!, g.BoxCount, g.TotalQty, trackingStatus);
             }
         }
         else
@@ -544,8 +544,8 @@ public class FbaHistoryForm : Form
 
             foreach (var r in filtered)
             {
-                _grid.Rows.Add(r.FbaNo, r.OrderDate.ToString("yyyy-MM-dd"), r.ShipmentId, r.BoxSeq,
-                    r.Csku, r.ItemName, r.Qty, r.ExpiryDate, r.TrackingNo, r.Status);
+                _grid.Rows.Add(r.FbaNo, r.OrderDate.ToString("yyyy-MM-dd"), r.ShipmentId!, r.BoxSeq,
+                    r.Csku, r.ItemName, r.Qty, r.ExpiryDate!, r.TrackingNo!, r.Status);
             }
         }
 

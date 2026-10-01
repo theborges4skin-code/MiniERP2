@@ -387,12 +387,12 @@ public class ChannelConfigForm : Form
 
         // 채널유형(특히 쿠팡그로스 ↔ 그 외)에 따라 정산서 매핑의 표준필드 목록 자체가 달라지므로,
         // 유형을 바꾸면 그 즉시 정산서 매핑 그리드를 새 필드 목록으로 다시 그린다.
-        if (e.ChangedItem.PropertyDescriptor?.Name == nameof(ChannelConfig.ChannelType))
+        if (e.ChangedItem?.PropertyDescriptor?.Name == nameof(ChannelConfig.ChannelType))
         {
             _settlementMappingGrid.DataSource = BuildFieldMappingRows(ResolveSettlementMappingFields(_currentConfig), _currentConfig.SettlementFieldMappings);
         }
 
-        if (e.ChangedItem.PropertyDescriptor?.Name != nameof(ChannelConfig.ChannelName)) return;
+        if (e.ChangedItem?.PropertyDescriptor?.Name != nameof(ChannelConfig.ChannelName)) return;
 
         var channel = _channels.FirstOrDefault(c => c.ChannelCode == _currentConfig.ChannelCode);
         if (channel == null) return;
@@ -1237,7 +1237,7 @@ public class ChannelConfigForm : Form
     /// </summary>
     private void OnChannelTreeNodeMouseClick(object? sender, TreeNodeMouseClickEventArgs e)
     {
-        if (e.Node.Tag is not SalesChannel)
+        if (e.Node?.Tag is not SalesChannel)
         {
             if (_selectedChannelNodes.Count > 0)
             {
