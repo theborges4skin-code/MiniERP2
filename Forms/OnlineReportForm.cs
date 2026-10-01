@@ -47,6 +47,7 @@ public class OnlineReportForm : Form
     // 거래처·추가 광고비
     private readonly DataGridView _partnerGrid = NewGrid();
     private readonly DataGridView _extraAdGrid = NewGrid(allowAdd: true);
+    private readonly TextBox _memoBox = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true, Font = new Font("맑은 고딕", 10) };
 
     // 미리보기
     private readonly DataGridView _previewGrid = NewGrid();
@@ -87,6 +88,7 @@ public class OnlineReportForm : Form
         inputTabs.TabPages.Add(BuildFreightTab());
         inputTabs.TabPages.Add(BuildPartnerTab());
         inputTabs.TabPages.Add(BuildExtraAdTab());
+        inputTabs.TabPages.Add(BuildMemoTab());
 
         var previewSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 470 };
         previewSplit.Panel1.Controls.Add(_previewGrid);
@@ -207,6 +209,15 @@ public class OnlineReportForm : Form
         return page;
     }
 
+    private TabPage BuildMemoTab()
+    {
+        var page = new TabPage("메모") { Padding = new Padding(8) };
+        _memoBox.TextChanged += (_, _) => MarkDirty();
+        page.Controls.Add(_memoBox);
+        page.Controls.Add(new Label { Dock = DockStyle.Top, Height = 40, Text = "이 달의 특이사항(단가 인상, 행사, 일회성 비용 등). 요약 페이지 하단 \"G 비고\"란에 그대로 출력됩니다.", ForeColor = Color.DimGray });
+        return page;
+    }
+
     // ───────────────────────────── 기간·입력 ─────────────────────────────
 
     private void OnPeriodChanged()
@@ -234,6 +245,7 @@ public class OnlineReportForm : Form
         {
             _rateBox.Text = _month.ExchangeRate == 0 ? "" : _month.ExchangeRate.ToString("0.##", CultureInfo.InvariantCulture);
             _rateNote.Text = _month.ExchangeRateNote;
+            _memoBox.Text = _month.Memo;
 
             _costGrid.Rows.Clear();
             foreach (var item in _config.CostItems)
@@ -279,6 +291,7 @@ public class OnlineReportForm : Form
     {
         _month.ExchangeRate = ParseDecimal(_rateBox.Text);
         _month.ExchangeRateNote = _rateNote.Text;
+        _month.Memo = _memoBox.Text.Trim();
 
         _month.Costs = [];
         foreach (DataGridViewRow row in _costGrid.Rows)

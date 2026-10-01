@@ -101,6 +101,9 @@ public class OnlineReportMonthInput
 
     /// <summary>밀크런·CJ입고비처럼 광고비 행에 더할 추가 비용(양수 입력 = 비용).</summary>
     public List<OnlineReportExtraAdCost> ExtraAdCosts { get; set; } = [];
+
+    /// <summary>요약 페이지 하단 비고란에 그대로 찍을 이 달의 메모(예: 단가 인상, 이벤트, 특이사항).</summary>
+    public string Memo { get; set; } = string.Empty;
 }
 
 public class OnlineReportExportEntry

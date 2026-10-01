@@ -32,9 +32,10 @@ public static class OnlineReportExcelWriter
     private static readonly Color UpText = Color.FromArgb(31, 111, 58);
     private static readonly Color DownText = Color.FromArgb(192, 0, 0);
     private static readonly Color GridLine = Color.FromArgb(150, 150, 150);
+    private static readonly Color RuleLine = Color.FromArgb(64, 64, 64);
 
     // 채널별 시트 치수(기존 수동 엑셀 2609 시트 값).
-    private const double TitleColumnAWidth = 6.5;
+    private const double TitleColumnAWidth = 7.2; // 기존 6.5에서 10% 넓힘(2026-10-02 요청)
     private const double TitleColumnBWidth = 5.6;
     private const double DataColumnWidth = 12.5;
     private const double TotalColumnWidth = 13.5;
@@ -119,7 +120,11 @@ public static class OnlineReportExcelWriter
             var cell = ws.Cells[3, c];
             cell.Value = headers[c - 1];
             StyleHeader(cell);
+            cell.Style.Border.Left.Style = cell.Style.Border.Right.Style = ExcelBorderStyle.Thin;
+            cell.Style.Border.Left.Color.SetColor(RuleLine);
+            cell.Style.Border.Right.Color.SetColor(RuleLine);
         }
+        ws.Cells[3, 1, 3, headers.Count].Style.Border.BorderAround(ExcelBorderStyle.Medium);
 
         // 블록.
         var row = 4;
@@ -288,16 +293,18 @@ public static class OnlineReportExcelWriter
             ws.Cells[top, totalCol, lastRowOfBlock, totalCol].Style.Fill.BackgroundColor.SetColor(TotalFill);
         }
 
+        // 선: 블록 안 행 구분(수량·매출액…)은 점선, 품목 열 구분은 실선, 채널 블록 경계는 굵은 선.
+        // 판매처 이름 칸(A열 1~4행 병합)과 "광고"/광고비율 칸 사이도 점선으로 둔다.
         var whole = ws.Cells[top, 1, lastRowOfBlock, noteCol];
         whole.Style.Border.Left.Style = ExcelBorderStyle.Thin;
         whole.Style.Border.Right.Style = ExcelBorderStyle.Thin;
-        whole.Style.Border.Top.Style = ExcelBorderStyle.Hair;
-        whole.Style.Border.Bottom.Style = ExcelBorderStyle.Hair;
-        whole.Style.Border.Left.Color.SetColor(GridLine);
-        whole.Style.Border.Right.Color.SetColor(GridLine);
-        whole.Style.Border.Top.Color.SetColor(GridLine);
-        whole.Style.Border.Bottom.Color.SetColor(GridLine);
-        whole.Style.Border.BorderAround(ExcelBorderStyle.Medium);
+        whole.Style.Border.Top.Style = ExcelBorderStyle.Dotted;
+        whole.Style.Border.Bottom.Style = ExcelBorderStyle.Dotted;
+        whole.Style.Border.Left.Color.SetColor(RuleLine);
+        whole.Style.Border.Right.Color.SetColor(RuleLine);
+        whole.Style.Border.Top.Color.SetColor(RuleLine);
+        whole.Style.Border.Bottom.Color.SetColor(RuleLine);
+        whole.Style.Border.BorderAround(ExcelBorderStyle.Medium, Color.Black);
     }
 
     /// <summary>
@@ -520,6 +527,7 @@ public static class OnlineReportExcelWriter
         var changeTop = partnerCells.BottomRow + 2;
         WriteGroupChanges(ws, changeTop, report);
         WriteCskuChanges(ws, changeTop, report);
+        var memoBottom = WriteMemoSection(ws, changeTop + 15, report, lastCol);
 
         var printer = ws.PrinterSettings;
         printer.PaperSize = ePaperSize.A4;
@@ -532,8 +540,28 @@ public static class OnlineReportExcelWriter
         printer.RightMargin = 0.4;
         printer.TopMargin = 0.4;
         printer.BottomMargin = 0.45;
-        printer.PrintArea = ws.Cells[1, 1, Math.Max(changeTop + 13, partnerCells.BottomRow), lastCol];
+        printer.PrintArea = ws.Cells[1, 1, memoBottom, lastCol];
         ws.HeaderFooter.OddFooter.RightAlignedText = "&8MiniERP2 온라인 매출 &P / &N";
+    }
+
+    /// <summary>G 비고 — 마감할 때 보고서 화면 [메모] 탭에 적은 내용(단가 인상 등)을 그대로 찍는다. 비어 있어도 칸은 남긴다.</summary>
+    private static int WriteMemoSection(ExcelWorksheet ws, int top, OnlineReportBuilder.Result report, int lastCol)
+    {
+        SectionTitle(ws, top, 1, "G  비고");
+        var memo = report.Memo.ReplaceLineEndings(((char)10).ToString()); // 엑셀 셀 줄바꿈은 LF
+        var lines = memo.Split((char)10);
+        var rows = Math.Clamp(lines.Length, 3, 8);
+        var box = ws.Cells[top + 1, 1, top + rows, lastCol];
+        box.Merge = true;
+        box.Value = memo;
+        box.Style.WrapText = true;
+        box.Style.Font.Size = 10;
+        box.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
+        box.Style.HorizontalAlignment = ExcelHorizontalAlignment.Left;
+        box.Style.Indent = 1;
+        box.Style.Border.BorderAround(ExcelBorderStyle.Medium, Color.Black);
+        for (int r = top + 1; r <= top + rows; r++) ws.Row(r).Height = 18;
+        return top + rows;
     }
 
     private record PartnerCells(string TotalRevenue, string TotalProfit, int BottomRow);
@@ -825,6 +853,7 @@ public static class OnlineReportExcelWriter
         b.Bottom.Color.SetColor(GridLine);
         b.Left.Color.SetColor(GridLine);
         b.Right.Color.SetColor(GridLine);
+        b.BorderAround(ExcelBorderStyle.Medium, Color.Black); // 섹션 경계는 굵은 선
         for (int r = range.Start.Row; r <= range.End.Row; r++)
             if (range.Worksheet.Row(r).Height < 18) range.Worksheet.Row(r).Height = 18;
     }

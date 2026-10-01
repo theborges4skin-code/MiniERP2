@@ -78,6 +78,7 @@ public static class OnlineReportBuilder
         public required IReadOnlyList<ExportResult> Exports { get; init; }
         public decimal ExchangeRate { get; init; }
         public string ExchangeRateNote { get; init; } = string.Empty;
+        public string Memo { get; init; } = string.Empty;
         public required IReadOnlyList<(string Item, decimal Amount)> Costs { get; init; }
 
         public required IReadOnlyList<ChangeRow> GroupTop { get; init; }
@@ -289,6 +290,7 @@ public static class OnlineReportBuilder
             Exports = exports,
             ExchangeRate = month.ExchangeRate,
             ExchangeRateNote = month.ExchangeRateNote,
+            Memo = month.Memo ?? string.Empty,
             Costs = costs,
             GroupTop = hasPreviousProfit ? groupChanges.Where(r => r.Delta > 0).OrderByDescending(r => r.Delta).Take(3).ToList() : [],
             GroupBottom = hasPreviousProfit ? groupChanges.Where(r => r.Delta < 0).OrderBy(r => r.Delta).Take(3).ToList() : [],
