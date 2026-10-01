@@ -1,6 +1,7 @@
 using MiniERP2.DataLoaders;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.Utils;
 using OfficeOpenXml;
 
 namespace MiniERP2.Tests;
@@ -10,16 +11,18 @@ public class CfsFeeLoaderTests
 {
     private static GrowthCfsFeeConfig DefaultCfg => new();
 
-    // 인메모리 CFS 파일 생성 헬퍼
+    // 인메모리 CFS 파일 생성 헬퍼. 실제 CFS 파일처럼 2단 헤더로 만든다 — 옵션ID 헤더는
+    // CfsOptionIdHeaderRow(7행), 금액 헤더는 Handling/ShippingHeaderRow(8행)에 둔다(8e0b3af 2단헤더 수정 반영).
     private static ExcelPackage MakeCfsPackage(
         IEnumerable<(string OptionId, decimal HandlingRaw)> handlingRows,
         IEnumerable<(string OptionId, decimal ShippingRaw)> shippingRows)
     {
+        ExcelLicense.Ensure();
         var pkg = new ExcelPackage();
         var cfg = DefaultCfg;
 
         var whSheet = pkg.Workbook.Worksheets.Add(cfg.HandlingSheetName);
-        whSheet.Cells[cfg.HandlingHeaderRow, 1].Value = cfg.CfsOptionIdHeader;
+        whSheet.Cells[cfg.CfsOptionIdHeaderRow, 1].Value = cfg.CfsOptionIdHeader;
         whSheet.Cells[cfg.HandlingHeaderRow, 2].Value = cfg.HandlingFeeHeader;
         int r = cfg.HandlingHeaderRow + 1;
         foreach (var (id, val) in handlingRows)
@@ -30,7 +33,7 @@ public class CfsFeeLoaderTests
         }
 
         var shipSheet = pkg.Workbook.Worksheets.Add(cfg.ShippingSheetName);
-        shipSheet.Cells[cfg.ShippingHeaderRow, 1].Value = cfg.CfsOptionIdHeader;
+        shipSheet.Cells[cfg.CfsOptionIdHeaderRow, 1].Value = cfg.CfsOptionIdHeader;
         shipSheet.Cells[cfg.ShippingHeaderRow, 2].Value = cfg.ShippingFeeHeader;
         r = cfg.ShippingHeaderRow + 1;
         foreach (var (id, val) in shippingRows)
@@ -55,7 +58,8 @@ public class CfsFeeLoaderTests
     public void IsCfsFile_ReturnsFalse_WhenNoMatchingSheets()
     {
         var cfg = DefaultCfg;
-        var pkg = new ExcelPackage();
+        ExcelLicense.Ensure();
+        using var pkg = new ExcelPackage();
         pkg.Workbook.Worksheets.Add("주문내역");
         Assert.IsFalse(CfsFeeLoader.IsCfsFile(pkg, cfg));
     }

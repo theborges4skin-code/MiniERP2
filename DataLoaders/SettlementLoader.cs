@@ -65,6 +65,13 @@ public class SettlementLoader
                 throw new FileNotFoundException($"엑셀 파일에서 '{sheetName ?? "첫 번째"}' 시트를 찾을 수 없습니다.");
             }
 
+            // 빈 시트(데이터 0행)는 Dimension이 null이라 아래 헤더 스캔에서 의미 없는 NullReferenceException이
+            // 나던 문제 — 원인을 알 수 있는 메시지로 바꿔 던진다.
+            if (worksheet.Dimension == null)
+            {
+                throw new InvalidDataException($"'{worksheet.Name}' 시트가 비어 있습니다(데이터 없음).");
+            }
+
             // HeaderRowDetectionColumn이 설정된 경우 지정 컬럼명이 있는 행을 헤더로 자동 탐지한다.
             // 아마존처럼 파일마다 메타 행 수가 달라 헤더 행 위치가 고정되지 않는 채널에 사용한다.
             if (!string.IsNullOrWhiteSpace(channelConfig.HeaderRowDetectionColumn) && worksheet?.Dimension != null)
