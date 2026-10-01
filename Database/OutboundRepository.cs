@@ -113,7 +113,13 @@ public class OutboundRepository
     /// <summary>
     /// 선택된 발주이력을 "출고확정"으로 수동 확정합니다(운송장번호를 별도로 받지 않는 수기 발송확인용).
     /// </summary>
-    public void MarkAsShipped(IEnumerable<long> ids)
+    public void MarkAsShipped(IEnumerable<long> ids) => MarkAsShippedOn(ids, null);
+
+    /// <summary>
+    /// <see cref="MarkAsShipped"/>와 같되 출고일을 지정한다(null이면 지금). 거래처 출고 보충에서 운송장
+    /// 접수일로 출고확정할 때 쓴다 — 지금 시각으로 찍으면 다른 달 마감에 잡힐 수 있다.
+    /// </summary>
+    public void MarkAsShippedOn(IEnumerable<long> ids, DateTime? confirmedAt)
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -125,7 +131,7 @@ public class OutboundRepository
         foreach (var id in ids)
         {
             command.Parameters.Clear();
-            command.Parameters.AddWithValue("$confirmedAt", DateTime.Now);
+            command.Parameters.AddWithValue("$confirmedAt", confirmedAt ?? DateTime.Now);
             command.Parameters.AddWithValue("$id", id);
             command.ExecuteNonQuery();
         }
@@ -472,10 +478,13 @@ public class OutboundRepository
                 ? $"수동-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}"
                 : detail.OrderNo;
 
+            // 송장번호가 있으면(거래처 출고 보충 — 운송장 결과 파일에서 찾은 실제 송장) 그대로 쓰고 묶음키도
+            // 송장번호로 한다(같은 송장의 여러 품목 = 한 박스). 없으면 기존처럼 수동입력 표시.
+            var hasTracking = !string.IsNullOrWhiteSpace(detail.TrackingNo);
             channelCodeParam.Value = detail.ChannelCode;
             orderNoParam.Value = orderNo;
-            shipmentGroupKeyParam.Value = orderNo;
-            trackingNoParam.Value = "(수동입력)";
+            shipmentGroupKeyParam.Value = hasTracking ? detail.TrackingNo.Trim() : orderNo;
+            trackingNoParam.Value = hasTracking ? detail.TrackingNo.Trim() : "(수동입력)";
             mskuCodeParam.Value = detail.MskuCode;
             cskuCodeParam.Value = detail.CskuCode;
             qtyParam.Value = detail.Qty;
@@ -674,6 +683,24 @@ public class OutboundRepository
         command.Parameters.AddWithValue("$channelCode", channelCode);
         command.Parameters.AddWithValue("$csku", cskuCode);
         command.Parameters.AddWithValue("$fromDate", fromDateInclusive.ToString("yyyy-MM-dd"));
+    }
+
+    /// <summary>운송장번호로 이력 행을 조회한다(채널·상태 무관). 거래처 출고 보충의 등록/미출고 판정용.</summary>
+    public List<OutboundDetail> GetByTrackingNos(IEnumerable<string> trackingNos)
+    {
+        var all = trackingNos.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).Distinct().ToList();
+        var results = new List<OutboundDetail>();
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        foreach (var chunk in all.Chunk(500))
+        {
+            using var command = connection.CreateCommand();
+            var paramNames = chunk.Select((_, i) => $"$t{i}").ToList();
+            command.CommandText = $"SELECT {ClosingCols} FROM OutboundDetailTable WHERE TrackingNo IN ({string.Join(",", paramNames)})";
+            for (var i = 0; i < chunk.Length; i++) command.Parameters.AddWithValue(paramNames[i], chunk[i]);
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) results.Add(ReadOutboundDetail(reader));
+        }
+        return results;
     }
 
     /// <summary>

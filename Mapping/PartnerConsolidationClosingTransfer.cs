@@ -154,11 +154,7 @@ public class PartnerConsolidationClosingTransfer(PartnerClosingRepository closin
     /// <summary>거래처 1곳을 마감보드로 보낸다. 이미 확정된 마감이면 InvalidOperationException.</summary>
     public PartnerClosing Transfer(string period, PartnerConsolidationClosingPackage package, string sourceFileName, bool confirm)
     {
-        var partyKey = FindPartyKey(package.CompanyName);
-        if (partyKey == null)
-            partyKey = masterRepo.AddManualPartner(package.CompanyName);
-        else
-            masterRepo.SetActive(partyKey, true);
+        var partyKey = masterRepo.GetOrAddManualPartner(package.CompanyName);
 
         var note = $"온라인 거래처 취합: {sourceFileName}";
         return closingRepo.ReplaceManualLines(period, partyKey, package.CompanyName, package.BuildClosingLines(period), note, confirm);

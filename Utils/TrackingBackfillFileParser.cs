@@ -42,12 +42,12 @@ public static class TrackingBackfillFileParser
             var header = worksheet.Cells[headerRow, col].Value?.ToString()?.Trim();
             if (header is null) continue;
             if (recipientHeaderCandidates.Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase))) recipientCol ??= col;
-            if (string.Equals(header, courier.TrackingImportTrackingNoHeader, StringComparison.OrdinalIgnoreCase)) trackingCol ??= col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportOrderNoHeader) && string.Equals(header, courier.TrackingImportOrderNoHeader, StringComparison.OrdinalIgnoreCase)) orderNoCol ??= col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportAddressHeader) && string.Equals(header, courier.TrackingImportAddressHeader, StringComparison.OrdinalIgnoreCase)) addressCol ??= col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportProductNameHeader) && string.Equals(header, courier.TrackingImportProductNameHeader, StringComparison.OrdinalIgnoreCase)) productNameCol ??= col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportReceivedDateHeader) && string.Equals(header, courier.TrackingImportReceivedDateHeader, StringComparison.OrdinalIgnoreCase)) receivedDateCol ??= col;
-            if (!string.IsNullOrWhiteSpace(courier.TrackingImportFreightCostHeader) && string.Equals(header, courier.TrackingImportFreightCostHeader, StringComparison.OrdinalIgnoreCase)) freightCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportTrackingNoHeader)) trackingCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportOrderNoHeader)) orderNoCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportAddressHeader)) addressCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportProductNameHeader)) productNameCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportReceivedDateHeader)) receivedDateCol ??= col;
+            if (HeaderMatches(header, courier.TrackingImportFreightCostHeader)) freightCol ??= col;
         }
 
         if (recipientCol is null || trackingCol is null)
@@ -121,4 +121,13 @@ public static class TrackingBackfillFileParser
         var cleaned = text.Replace(",", "").Replace("₩", "").Replace("원", "").Trim();
         return decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : 0m;
     }
+
+    /// <summary>
+    /// 설정 헤더와 일치하는지. 수령인 헤더처럼 "|"로 여러 후보를 적을 수 있다 — 같은 택배사라도 결과
+    /// 파일 종류(예: CJ 운송장 출력 결과 "상품명" / 운송장이력 조회 "품목명")마다 헤더 이름이 다르다.
+    /// </summary>
+    private static bool HeaderMatches(string header, string? configured) =>
+        !string.IsNullOrWhiteSpace(configured) &&
+        configured.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(h => string.Equals(header, h, StringComparison.OrdinalIgnoreCase));
 }

@@ -218,7 +218,9 @@ public class ManualGrowthClosingForm : Form
         unconfirmBtn.Click += (s, e) => OnUnconfirmClick();
         var deleteBtn = new Button { Text = "삭제", AutoSize = true };
         deleteBtn.Click += (s, e) => OnDeleteHistoryClick();
-        historyButtons.Controls.AddRange([loadHistoryBtn, unconfirmBtn, deleteBtn]);
+        var sendToBoardBtn = new Button { Text = "마감보드 전송", AutoSize = true };
+        sendToBoardBtn.Click += (s, e) => OnSendHistoryToBoardClick();
+        historyButtons.Controls.AddRange([loadHistoryBtn, unconfirmBtn, deleteBtn, sendToBoardBtn]);
         historyPanel.Controls.Add(historyButtons, 0, 0);
         historyPanel.Controls.Add(_historyGrid, 0, 1);
 
@@ -568,6 +570,46 @@ public class ManualGrowthClosingForm : Form
         }
         RefreshHistory();
         _statusLabel.Text = $"마감 확정 완료 — {string.Join(", ", _closings.Select(c => c.Period))}. 필요하면 [리포트 반영]을 누르세요.";
+
+        if (MessageBox.Show("거래처 마감보드에도 확정 상태로 보낼까요?\n(나중에 이력 탭의 [마감보드 전송]으로 보낼 수도 있습니다.)",
+                "거래처 마감보드로 보내기", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            SendToPartnerBoard(_closings);
+    }
+
+    /// <summary>
+    /// 확정된 마감을 거래처 마감보드로 보낸다(채널명과 같은 이름의 수동 거래처, 일자별 라인 그대로).
+    /// 마감보드 쪽이 이미 확정돼 있는 달은 건너뛰고 알려준다.
+    /// </summary>
+    private void SendToPartnerBoard(List<ManualGrowthClosing> closings)
+    {
+        var transfer = new ManualGrowthBoardTransfer(new PartnerClosingRepository(), new PartnerMasterRepository());
+        var done = new List<string>();
+        var skipped = new List<string>();
+        foreach (var closing in closings)
+        {
+            try
+            {
+                var header = transfer.Transfer(closing, CurrentChannelName);
+                done.Add($"{closing.Period}  {header.TotalSupply:N0}원(VAT포함)");
+            }
+            catch (InvalidOperationException ex)
+            {
+                skipped.Add(ex.Message);
+            }
+        }
+
+        var message = $"거래처 마감보드 '{CurrentChannelName}'로 {done.Count}건 보냈습니다(확정).";
+        if (done.Count > 0) message += "\n" + string.Join("\n", done);
+        if (skipped.Count > 0) message += "\n\n건너뜀:\n" + string.Join("\n", skipped);
+        MessageBox.Show(message, "거래처 마감보드로 보내기", MessageBoxButtons.OK, skipped.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+    }
+
+    private void OnSendHistoryToBoardClick()
+    {
+        var selected = SelectedHistory().Where(c => c.Status == ManualGrowthClosing.StatusConfirmed).ToList();
+        if (selected.Count == 0) { _statusLabel.Text = "마감보드로 보낼 확정 상태 마감을 선택하세요."; return; }
+        var full = selected.Select(h => _closingRepo.Get(h.Period, h.ChannelCode)).OfType<ManualGrowthClosing>().ToList();
+        SendToPartnerBoard(full);
     }
 
     private void RefreshHistory()

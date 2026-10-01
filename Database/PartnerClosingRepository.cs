@@ -12,6 +12,9 @@ namespace MiniERP2.Database;
 /// </summary>
 public class PartnerClosingRepository
 {
+    /// <summary>할인·에누리 등 금액만 있는 조정 라인의 CSKU 표식(수량 1, 음수 단가, 원가 0).</summary>
+    public const string AdjustmentLineCode = "조정";
+
     private readonly OutboundRepository _outboundRepo = new();
     private readonly OutboundShipmentRepository _shipmentRepo = new();
     private readonly PartnerMasterRepository _masterRepo = new();
@@ -451,7 +454,7 @@ public class PartnerClosingRepository
 
     /// <summary>
     /// 외부에서 집계해 온 라인(온라인 거래처 취합 파일 등)으로 MANUAL 거래처의 이 기간 라인을 통째로
-    /// 바꾼다. 출고 상세는 DB에 두지 않고 품목별 합계 라인만 저장한다. confirm이면 확정, 아니면
+    /// 바꾼다(조정 라인은 남긴다). 출고 상세는 DB에 두지 않고 품목별 합계 라인만 저장한다. confirm이면 확정, 아니면
     /// 대조중으로 둔다. 이미 확정된 헤더는 덮어쓰지 않는다 — 호출 측이 먼저 확정취소해야 한다.
     /// </summary>
     public PartnerClosing ReplaceManualLines(string period, string partyKey, string partyName,
@@ -460,6 +463,10 @@ public class PartnerClosingRepository
         var header = GetHeader(period, partyKey) ?? new PartnerClosing { Period = period, PartyKey = partyKey };
         if (header.ConfirmedAt != null)
             throw new InvalidOperationException($"'{partyName}' {period} 마감이 이미 확정되어 있습니다. 확정취소 후 다시 시도하세요.");
+
+        // 직접 넣은 할인·에누리 조정 라인은 파일을 다시 보내도 유지한다.
+        if (header.Id != 0)
+            lines = [.. lines, .. GetLinesByClosingId(header.Id).Where(l => l.CskuCode == AdjustmentLineCode)];
 
         header.PartyName = partyName;
         header.IsManual = true;

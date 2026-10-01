@@ -163,13 +163,19 @@ public class DocPartyRepository
     }
 
     /// <summary>CompanyName 그룹의 대표단가 채널 행을 조회한다(온라인 거래처 취합 §5 ResolveSupplyPrice용).</summary>
-    /// <summary>상호명이 같은 거래처 프로필 1개(대표단가 채널 우선). 수동 거래처의 공급받는자 정보 조회용.</summary>
+    /// <summary>
+    /// 수동 거래처 이름으로 거래처 프로필 1개를 찾는다(공급받는자 정보 조회용). 상호명 일치를 먼저
+    /// (대표단가 채널 우선), 없으면 프로필명 일치(예: '이공그로스수동마감' 채널 프로필)를 쓴다.
+    /// </summary>
     public DocParty? FindByCompanyName(string companyName)
     {
         if (string.IsNullOrWhiteSpace(companyName)) return null;
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT {SelectCols} FROM DocPartyTable WHERE CompanyName = $cn ORDER BY IsPriceMaster DESC, Id LIMIT 1";
+        cmd.CommandText = $"""
+            SELECT {SelectCols} FROM DocPartyTable WHERE CompanyName = $cn OR ProfileName = $cn
+            ORDER BY (CompanyName = $cn) DESC, IsPriceMaster DESC, Id LIMIT 1
+            """;
         cmd.Parameters.AddWithValue("$cn", companyName.Trim());
         using var reader = cmd.ExecuteReader();
         return reader.Read() ? Map(reader) : null;

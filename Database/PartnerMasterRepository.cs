@@ -100,6 +100,18 @@ public class PartnerMasterRepository
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// 이름이 같은 수동 거래처의 키(비활성이었으면 다시 활성화). 없으면 새로 등록한다 — 외부 마감
+    /// 파일(온라인 거래처 취합·이공그로스수동마감)을 마감보드로 보낼 때 같은 거래처로 이어 붙이기 위함.
+    /// </summary>
+    public string GetOrAddManualPartner(string partyName)
+    {
+        var existing = GetAll().FirstOrDefault(p => p.IsManual && p.PartyName == partyName);
+        if (existing == null) return AddManualPartner(partyName);
+        if (!existing.IsActive) SetActive(existing.PartyKey, true);
+        return existing.PartyKey;
+    }
+
     /// <summary>새 수동 거래처를 등록하고 `MANUAL:{순번}` 키를 발급한다(§8).</summary>
     public string AddManualPartner(string partyName)
     {

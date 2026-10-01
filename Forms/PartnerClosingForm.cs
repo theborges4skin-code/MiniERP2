@@ -98,8 +98,17 @@ public class PartnerClosingForm : Form
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(110, 28) };
         btnAddManualOrder.Click += OnAddManualOrderClick;
 
+        var btnAddAdjustment = new Button { Text = "할인/에누리", Size = new Size(90, 28) };
+        btnAddAdjustment.Click += OnAddAdjustmentClick;
+
         var btnBulkImport = new Button { Text = "엑셀 일괄 추가", Size = new Size(100, 28) };
         btnBulkImport.Click += OnBulkImportClick;
+
+        var btnShipmentBackfill = new Button { Text = "출고 보충", Size = new Size(80, 28) };
+        btnShipmentBackfill.Click += OnShipmentBackfillClick;
+
+        var btnStatementReconcile = new Button { Text = "마감자료 대조", Size = new Size(100, 28) };
+        btnStatementReconcile.Click += OnStatementReconcileClick;
 
         var btnImportOnlineRollup = new Button { Text = "온라인취합 불러오기", Size = new Size(130, 28) };
         btnImportOnlineRollup.Click += OnImportOnlineRollupClick;
@@ -151,8 +160,11 @@ public class PartnerClosingForm : Form
         row1.Controls.Add(btnAddManual);
         row1.Controls.Add(btnManualEntry);
         row1.Controls.Add(btnAddManualOrder);
+        row1.Controls.Add(btnAddAdjustment);
         row1.Controls.Add(btnBulkImport);
         row1.Controls.Add(btnImportOnlineRollup);
+        row1.Controls.Add(btnShipmentBackfill);
+        row1.Controls.Add(btnStatementReconcile);
         row1.Controls.Add(btnConfirm);
         row1.Controls.Add(btnCancelClosing);
 
@@ -525,6 +537,50 @@ public class PartnerClosingForm : Form
         _statusLabel.Text = $"수동 주문을 추가했습니다({dlg.OrderDate:yyyy-MM-dd}, {dlg.CskuCode} x{dlg.Qty}). ({DateTime.Now:HH:mm:ss})";
     }
 
+    /// <summary>
+    /// 수동 거래처(온라인 거래처 취합으로 들어온 거래처 등)에 금액만 있는 할인·에누리 조정 라인을 넣는다
+    /// (수량 1, 음수 단가, 원가 0 — 이익에서도 그대로 빠진다). 확정 상태도 유지한 채 바로 반영하고,
+    /// 취합 파일을 다시 보내도 이 라인은 남는다. 발행완료 건은 문서와 어긋나므로 막는다.
+    /// </summary>
+    private void OnAddAdjustmentClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1)
+        {
+            MessageBox.Show("할인/에누리를 넣을 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+        if (!row.IsManual)
+        {
+            MessageBox.Show("할인/에누리 라인은 수동 거래처(온라인 거래처 취합 등)에만 넣을 수 있습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (row.Status == "발행완료")
+        {
+            MessageBox.Show("이미 발행완료된 거래처입니다. 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new PartnerAdjustmentDialog(row.PartyName, _vatExcludedCheck.Checked);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        var periodEnd = DateTime.ParseExact(CurrentPeriod, "yyyy-MM", CultureInfo.InvariantCulture).AddMonths(1).AddDays(-1);
+        _closingRepo.AddManualLine(CurrentPeriod, row.PartyKey, row.PartyName, new PartnerClosingLine
+        {
+            LineDate = periodEnd,
+            CskuCode = PartnerClosingRepository.AdjustmentLineCode,
+            ItemName = dlg.ItemName,
+            Qty = 1,
+            UnitPrice = -dlg.AmountVatIncluded,
+            CostPrice = 0,
+            Profit = -dlg.AmountVatIncluded,
+        });
+
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"{row.PartyName}에 '{dlg.ItemName}' -{dlg.AmountVatIncluded:N0}원(VAT포함)을 넣었습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
     private void OnAddManualPartyLineOrder(PartyRow row)
     {
         if (row.Status is "확정" or "발행완료")
@@ -555,6 +611,33 @@ public class PartnerClosingForm : Form
     }
 
     /// <summary>"수동 주문 추가"의 엑셀 일괄 버전. 같은 선택 가드(채널 경유 거래처 1개)를 쓴다.</summary>
+    /// <summary>
+    /// OFS를 거치지 않고 처리된 발주(휴가·출장 중 타인 처리 등)를 운송장 결과 파일 + 발주서 폴더로 찾아
+    /// 출고이력에 보충하는 창을 연다. 채널 경유 거래처를 선택해 두면 그 채널·기간으로 열린다.
+    /// </summary>
+    /// <summary>선택한 채널 경유 거래처의 거래처 마감자료 파일을 이 기간 출고이력과 대조하는 창을 연다.</summary>
+    private void OnStatementReconcileClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1 || selected[0].IsManual)
+        {
+            MessageBox.Show("마감자료를 대조할 채널 경유 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+        using var form = new PartnerStatementReconcileForm(row.PartyKey["CH:".Length..], row.PartyName, CurrentPeriod);
+        FormManager.ShowDialogSafe(form, this);
+    }
+
+    private void OnShipmentBackfillClick(object? sender, EventArgs e)
+    {
+        var row = SelectedPartyRows().FirstOrDefault();
+        var channelCode = row is { IsManual: false } ? row.PartyKey["CH:".Length..] : null;
+        using var form = new PartnerShipmentBackfillForm(channelCode, CurrentPeriod);
+        FormManager.ShowDialogSafe(form, this);
+        RefreshBoardKeepingSelection();
+    }
+
     /// <summary>
     /// 온라인 거래처 취합에서 내보낸 파일을 골라 마감보드로 보낸다(확정 또는 대조중). 취합 직후 바로
     /// 보내지 않고 파일로 먼저 검토한 경우의 경로다. 기본 마감월은 지금 보고 있는 기간.

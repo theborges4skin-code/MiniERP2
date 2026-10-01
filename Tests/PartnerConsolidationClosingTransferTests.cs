@@ -106,4 +106,23 @@ public class PartnerConsolidationClosingTransferTests
 
         Assert.ThrowsExactly<InvalidOperationException>(() => _transfer.Transfer("2026-09", p, "rollup.xlsx", confirm: true));
     }
+
+    [TestMethod]
+    public void Transfer_AgainAfterAdjustment_KeepsAdjustmentLine()
+    {
+        ExportSample();
+        var p = PartnerConsolidationClosingTransfer.ReadFile(_filePath).Packages.Single();
+        var draft = _transfer.Transfer("2026-09", p, "rollup.xlsx", confirm: false);
+        _closingRepo.AddManualLine("2026-09", draft.PartyKey, draft.PartyName, new PartnerClosingLine
+        {
+            LineDate = new DateTime(2026, 9, 30), CskuCode = PartnerClosingRepository.AdjustmentLineCode, ItemName = "광고비 지원", Qty = 1, UnitPrice = -6000m, Profit = -6000m,
+        });
+
+        var again = _transfer.Transfer("2026-09", p, "rollup.xlsx", confirm: true);
+
+        var lines = _closingRepo.GetLinesByClosingId(again.Id);
+        Assert.HasCount(4, lines);
+        Assert.AreEqual(24000m - 6000m, again.TotalSupply);
+        Assert.AreEqual((4000m - 1500m) * 3 - 6000m, again.TotalProfit);
+    }
 }

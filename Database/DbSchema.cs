@@ -459,6 +459,15 @@ public static class DbSchema
 
             CREATE INDEX IF NOT EXISTS IX_PartnerClosingMemo_Period_PartyKey ON PartnerClosingMemoTable (Period, PartyKey);
 
+            -- 거래처 마감자료 대조: 거래처가 보낸 마감자료의 품명 → 우리 CSKU 연결(한 번 지정하면 다음 달부터 자동).
+            CREATE TABLE IF NOT EXISTS PartnerItemNameMapTable (
+                ChannelCode TEXT NOT NULL,
+                PartnerItemName TEXT NOT NULL,
+                CskuCode TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (ChannelCode, PartnerItemName)
+            );
+
             CREATE TABLE IF NOT EXISTS FboCskuMaster (
                 Csku TEXT PRIMARY KEY,
                 FboItemCode TEXT NOT NULL DEFAULT '',
