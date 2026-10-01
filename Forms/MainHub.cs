@@ -160,6 +160,7 @@ public class MainHub : Form
         }),
         ("보고서", new()
         {
+            ("온라인 매출 보고서", (s, e) => FormManager.Show<OnlineReportForm>(), null),
             ("종합보고서", (s, e) => FormManager.Show<ReportForm>(), Keys.Control | Keys.F4),
             ("수출요약보고서", (s, e) => FormManager.Show<ExportSummaryForm>(), Keys.Control | Keys.F8),
             ("CSKU별 통계", (s, e) => FormManager.Show<CskuStatForm>(), null),

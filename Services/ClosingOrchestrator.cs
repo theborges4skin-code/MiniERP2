@@ -288,6 +288,7 @@ public class ClosingOrchestrator
                     Qty = g.Sum(r => r.Qty),
                     Revenue = ProfitCalculator.ToReportCurrency(channelType, g.Sum(r => r.Revenue), exchangeRate),
                     GrossProfit = ProfitCalculator.ToReportCurrency(channelType, g.Sum(r => r.Profit), exchangeRate),
+                    ShippingFee = ProfitCalculator.ToReportCurrency(channelType, g.Sum(r => r.Shipping), exchangeRate),
                 })
                 .ToList();
 

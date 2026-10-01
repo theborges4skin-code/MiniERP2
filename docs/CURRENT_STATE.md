@@ -80,8 +80,9 @@
 | `ClosingRun` | `Id`, `FolderPath`, `Period`("YYYY-MM"), `Status`(draft\|confirmed), `CreatedAt`, `UpdatedAt` | 월별 마감 자동화 실행(run) |
 | `ClosingStagedFile` | `Id`, `RunId`, `ChannelCode`, `ChannelName`, `SourceType`(settlement\|ad), `OriginalPath`, `FileCreatedAt`, `Status`(pending\|processed\|error\|skipped), `RowCount`, `UnmappedCount`, `ErrorMessage` | 마감 실행에 포함된 파일 |
 | `ClosingUnmapped` | `Id`, `RunId`, `ChannelCode`, `SourceKey`("상품명\|옵션명"), `OccurrenceCount`, `SampleAmount`, `MappedSku` | 마감 실행 단위의 미매핑 큐 |
-| `ProfitFactTable` | `Id`, `Period`, `ChannelCode`, `ChannelName`, `ProductGroup`, `Qty`, `Revenue`, `GrossProfit`, `SavedAt` | 종합보고서용 이익 집계 팩트 |
+| `ProfitFactTable` | `Id`, `Period`, `ChannelCode`, `ChannelName`, `ProductGroup`, `Qty`, `Revenue`, `GrossProfit`, `ShippingFee`, `SavedAt` | 종합보고서용 이익 집계 팩트(`ShippingFee` = 고객부담 배송비 정산액, 2026-10-02 추가) |
 | `AdFactTable` | `Id`, `Period`, `ChannelCode`, `ChannelName`, `ProductGroup`, `AdCost`, `SavedAt` | 종합보고서용 광고비 집계 팩트 |
+| `OnlineReportMonthTable` | `Period`(PK, "YYYY-MM"), `Json`, `SavedAt` | 온라인 매출 보고서 월별 수동 입력값(환율·비용·수출·운임표·풀필 건수·거래처 수동값·추가 광고비) |
 
 ### 1.5 기타
 | 테이블 | 핵심 컬럼 | 비고 |
@@ -221,6 +222,7 @@
 - `Forms/CourierExporter.cs` — **Form 아님**, 실제로는 `namespace MiniERP2.Exporters`의 택배사 양식 출력 헬퍼(OFS/OutboundHistoryForm 공용).
 
 ### 4.11 종합보고서 / 수출요약보고서
+- `OnlineReportForm` — **온라인 매출 보고서**(수동 엑셀 "온라인 매출(YY년MM월).xlsx" 대체, 2026-10-02). ProfitFact/AdFact(당월·전월) + 거래처 마감보드 + CSKU별 통계 + 월별 입력값 → `OnlineReportBuilder`(순수 계산) → `OnlineReportExcelWriter`: 1p 요약(A4 가로: 최종결과·비용·수출 / 거래처 / 상품그룹·CSKU 매출변동), 2p~ 채널×상품그룹(A4 세로, 세로 한 장 고정·배율 직접 계산·품목 경계 쪽나눔·A:B 반복), 택배비 근거 시트. 설정은 `online_report_config.json`(`OnlineReportSettingsDialog`: 블록·품목열·거래처·택배단가·글꼴·기준배율 65%). 실택배비 조정 = Σ출고(3,000−운임−부자재 400/1,100) + 풀필×(3,000−4,000); 운임은 `FreightFileAggregator`(CJ 운송장이력 파일, 송장번호 빈 행 제외). 환율은 `HanaExchangeRateClient`(하나은행 월평균·최종). 결과파일 → ProfitFact 보충은 `ProfitResultFileImporter`. PDF는 `ExcelPdfConverter`(설치된 Excel COM).
 - `ReportForm`(748줄) — ProfitFactTable/AdFactTable 기반 기간×채널×상품그룹 피벗 + 지표 7종 + 엑셀 출력(2개월 이상이면 "월별시계열" 시트 추가).
 - `ExportSummaryForm`(639줄) — 수출신고/판매/송금 3트랙 **독립 집계**(서로 대사하지 않는 설계). `SalesFileLoaderDialog`(마켓별 판매파일 로드), `ExportSummaryManualEntryDialog`(수동입력 편집기).
 

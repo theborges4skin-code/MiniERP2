@@ -236,6 +236,13 @@ public static class FeatureIndex
         Sub("정산", "온라인 거래처 취합", "채널 수동 지정", () => FormManager.Show<PartnerConsolidationForm>());
 
         // ── 보고서 ────────────────────────────────────────────────────────
+        Top("보고서", "온라인 매출 보고서", () => FormManager.Show<OnlineReportForm>());
+        Sub("보고서", "온라인 매출 보고서", "운임 파일 불러오기", () => FormManager.Show<OnlineReportForm>());
+        Sub("보고서", "온라인 매출 보고서", "하나은행 월평균 환율 조회", () => FormManager.Show<OnlineReportForm>());
+        Sub("보고서", "온라인 매출 보고서", "이익분석 결과파일 불러오기", () => FormManager.Show<OnlineReportForm>());
+        Sub("보고서", "온라인 매출 보고서", "설정(채널 블록·품목 열·거래처)", () => FormManager.Show<OnlineReportForm>());
+        Sub("보고서", "온라인 매출 보고서", "엑셀/PDF 만들기", () => FormManager.Show<OnlineReportForm>());
+
         Top("보고서", "종합보고서", () => FormManager.Show<ReportForm>());
         Sub("보고서", "종합보고서", "Excel에서 불러오기", () => FormManager.Show<ReportForm>());
         Sub("보고서", "종합보고서", "Excel 내보내기", () => FormManager.Show<ReportForm>());

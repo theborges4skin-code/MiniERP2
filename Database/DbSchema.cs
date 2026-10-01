@@ -306,6 +306,13 @@ public static class DbSchema
                 SavedAt TEXT NOT NULL
             );
 
+            -- 온라인 매출 종합보고서의 월별 수동 입력값(환율·비용·수출·운임표·거래처 수동값 등)을 JSON 한 덩어리로 저장한다.
+            CREATE TABLE IF NOT EXISTS OnlineReportMonthTable (
+                Period  TEXT PRIMARY KEY,
+                Json    TEXT NOT NULL,
+                SavedAt TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS AdFactTable (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Period TEXT NOT NULL,
@@ -864,6 +871,9 @@ public static class DbSchema
             CREATE INDEX IF NOT EXISTS IX_ManualGrowthClosingLine_ClosingId ON ManualGrowthClosingLineTable (ClosingId);
             """;
         command.ExecuteNonQuery();
+
+        // 종합보고서(온라인 매출)의 택배 건수 = 채널별 고객부담 배송비 정산액 ÷ 3,000 — 그 원천값.
+        EnsureColumn(connection, "ProfitFactTable", "ShippingFee", "REAL NOT NULL DEFAULT 0");
 
         // RuleCondition에 TargetMsku 추가 — Settlement 전용 규칙(CSKU 없이 MSKU만 매핑)에 사용한다.
         EnsureColumn(connection, "RuleCondition", "TargetMsku", "TEXT NOT NULL DEFAULT ''");

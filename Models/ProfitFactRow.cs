@@ -11,6 +11,8 @@ public class ProfitFactRow
     public int Qty { get; set; }
     public decimal Revenue { get; set; }
     public decimal GrossProfit { get; set; }
+    /// <summary>고객이 낸 배송비의 정산금액 합계(원화). 종합보고서 택배 건수 = ShippingFee ÷ 3,000.</summary>
+    public decimal ShippingFee { get; set; }
     public string SavedAt { get; set; } = string.Empty;
 }
 

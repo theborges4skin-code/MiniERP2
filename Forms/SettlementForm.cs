@@ -853,6 +853,7 @@ public class SettlementForm : Form
                         Qty = g.Sum(x => x.Qty),
                         Revenue = ProfitCalculator.ToReportCurrency(activeChannelType, g.Sum(x => x.Revenue), exchangeRate),
                         GrossProfit = ProfitCalculator.ToReportCurrency(activeChannelType, g.Sum(x => x.Profit), exchangeRate),
+                        ShippingFee = ProfitCalculator.ToReportCurrency(activeChannelType, g.Sum(x => x.Shipping), exchangeRate),
                     })
                     .ToList();
             });

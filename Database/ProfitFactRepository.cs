@@ -24,8 +24,8 @@ public class ProfitFactRepository
         using var ins = conn.CreateCommand();
         ins.Transaction = tx;
         ins.CommandText = """
-            INSERT INTO ProfitFactTable (Period, ChannelCode, ChannelName, ProductGroup, Qty, Revenue, GrossProfit, SavedAt)
-            VALUES (@period, @channelCode, @channelName, @productGroup, @qty, @revenue, @grossProfit, @savedAt)
+            INSERT INTO ProfitFactTable (Period, ChannelCode, ChannelName, ProductGroup, Qty, Revenue, GrossProfit, ShippingFee, SavedAt)
+            VALUES (@period, @channelCode, @channelName, @productGroup, @qty, @revenue, @grossProfit, @shippingFee, @savedAt)
             """;
         ins.Parameters.Add("@period", SqliteType.Text);
         ins.Parameters.Add("@channelCode", SqliteType.Text);
@@ -34,6 +34,7 @@ public class ProfitFactRepository
         ins.Parameters.Add("@qty", SqliteType.Integer);
         ins.Parameters.Add("@revenue", SqliteType.Real);
         ins.Parameters.Add("@grossProfit", SqliteType.Real);
+        ins.Parameters.Add("@shippingFee", SqliteType.Real);
         ins.Parameters.Add("@savedAt", SqliteType.Text);
 
         foreach (var row in rows)
@@ -45,6 +46,7 @@ public class ProfitFactRepository
             ins.Parameters["@qty"].Value = row.Qty;
             ins.Parameters["@revenue"].Value = (double)row.Revenue;
             ins.Parameters["@grossProfit"].Value = (double)row.GrossProfit;
+            ins.Parameters["@shippingFee"].Value = (double)row.ShippingFee;
             ins.Parameters["@savedAt"].Value = now;
             ins.ExecuteNonQuery();
         }
@@ -57,7 +59,7 @@ public class ProfitFactRepository
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
         var where = BuildWhereClause(periods, channels, groups, cmd);
-        cmd.CommandText = $"SELECT Id,Period,ChannelCode,ChannelName,ProductGroup,Qty,Revenue,GrossProfit,SavedAt FROM ProfitFactTable{where} ORDER BY Period,ChannelCode,ProductGroup";
+        cmd.CommandText = $"SELECT Id,Period,ChannelCode,ChannelName,ProductGroup,Qty,Revenue,GrossProfit,SavedAt,ShippingFee FROM ProfitFactTable{where} ORDER BY Period,ChannelCode,ProductGroup";
         using var reader = cmd.ExecuteReader();
         var result = new List<ProfitFactRow>();
         while (reader.Read())
@@ -73,6 +75,7 @@ public class ProfitFactRepository
                 Revenue = (decimal)reader.GetDouble(6),
                 GrossProfit = (decimal)reader.GetDouble(7),
                 SavedAt = reader.GetString(8),
+                ShippingFee = (decimal)reader.GetDouble(9),
             });
         }
         return result;

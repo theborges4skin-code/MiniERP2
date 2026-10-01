@@ -172,14 +172,14 @@ public class ReportForm : Form
     }
 
     // ──────────────────────────────────────────────
-    // Excel에서 이익분析 결과 직접 불러오기
+    // Excel에서 이익분석 결과 직접 불러오기
     // ──────────────────────────────────────────────
 
     private void OnImportFromExcelClick(object? sender, EventArgs e)
     {
         using var fileDlg = new OpenFileDialog
         {
-            Title = "마감/이익분析 결과 Excel 파일 선택",
+            Title = "마감/이익분석 결과 Excel 파일 선택",
             Filter = "Excel 파일|*.xlsx;*.xls",
             Multiselect = false,
         };
@@ -194,8 +194,8 @@ public class ReportForm : Form
             ExcelLicense.Ensure();
             using var package = new ExcelPackage(new FileInfo(fileDlg.FileName));
 
-            // 분析요약(상품그룹별) 시트 우선, 없으면 첫 번째 시트
-            var sheet = package.Workbook.Worksheets["분析요약(상품그룹별)"]
+            // 분석요약(상품그룹별) 시트 우선, 없으면 첫 번째 시트
+            var sheet = package.Workbook.Worksheets["분석요약(상품그룹별)"]
                 ?? package.Workbook.Worksheets.FirstOrDefault()
                 ?? throw new InvalidOperationException("시트를 찾을 수 없습니다.");
 
@@ -203,7 +203,7 @@ public class ReportForm : Form
             // 헤더행 자동 탐지: 1행에 "상품그룹" 있으면 2행부터, 없으면 에러
             int headerRow = 1;
             if (!string.Equals(sheet.Cells[1, 1].Text?.Trim(), "상품그룹", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("A1 셀이 '상품그룹'이 아닙니다. 마감/이익분析 내보내기 파일의 '분析요약(상품그룹별)' 시트를 선택하세요.");
+                throw new InvalidOperationException("A1 셀이 '상품그룹'이 아닙니다. 마감/이익분석 내보내기 파일의 '분석요약(상품그룹별)' 시트를 선택하세요.");
 
             int colQty = FindHeaderCol(sheet, headerRow, "수량");
             int colRevenue = FindHeaderCol(sheet, headerRow, "매출액");

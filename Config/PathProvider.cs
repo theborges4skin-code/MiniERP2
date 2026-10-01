@@ -17,6 +17,8 @@ public static class PathProvider
 
     public static string ExportSummaryConfigFilePath => Path.Combine(AppDataFolder, "export_summary_config.json");
 
+    public static string OnlineReportConfigFilePath => Path.Combine(AppDataFolder, "online_report_config.json");
+
     public static string WindowBoundsFilePath => Path.Combine(AppDataFolder, "window_bounds.json");
 
     /// <summary>메인 허브 메뉴/버튼별 누적 사용 횟수·마지막 사용 시각(자주 쓰는 기능 파악용).</summary>
