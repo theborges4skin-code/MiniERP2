@@ -19,7 +19,7 @@ public class PartnerClosing
 
     public bool IsManual { get; set; }
 
-    /// <summary>미확인 / 대조중 / 확정 / 발행완료.</summary>
+    /// <summary>미확인 / 대조중 / 확정 / 출력완료.</summary>
     public string Status { get; set; } = "미확인";
 
     public decimal TotalQty { get; set; }

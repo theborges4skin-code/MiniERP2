@@ -1,4 +1,4 @@
-namespace MiniERP2.Models;
+﻿namespace MiniERP2.Models;
 
 /// <summary>
 /// CSKU별통계_개발기획서.md §1.3의 8종 상태 문자열을 3분류한 결과.
@@ -39,6 +39,10 @@ public class CskuStatSourceRow
     public decimal Profit { get; set; }
 
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>원본이 이미 알고 있는 MSKU(거래처 마감 라인의 MasterSku). 파일에서 읽은 행은 비어 있고,
+    /// 집계 후 ChannelSkuTable 조회가 실패할 때의 대체값으로만 쓴다.</summary>
+    public string Msku { get; set; } = string.Empty;
 
     public CskuStatRowClass RowClass { get; set; }
 }

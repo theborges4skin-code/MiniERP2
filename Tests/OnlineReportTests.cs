@@ -141,7 +141,7 @@ public class OnlineReportTests
         Assert.IsTrue(report.Warnings.Any(w => w.Contains("쿠팡:") && w.Contains("데이터가 없습니다")));
         Assert.IsTrue(report.Warnings.Any(w => w.Contains("새채널(ZZ9)")));
         Assert.IsFalse(report.Warnings.Any(w => w.Contains("이공그로스수동마감") || w.Contains("온_한결_스마트")));
-        Assert.IsTrue(report.Warnings.Any(w => w.Contains("오늘의집") && w.Contains("연결된 채널이 없습니다")));
+        Assert.IsTrue(report.Warnings.Any(w => w.Contains("오늘의집:") && w.Contains("데이터가 없습니다")));
     }
 
     [TestMethod]

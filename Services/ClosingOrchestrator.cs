@@ -298,8 +298,10 @@ public class ClosingOrchestrator
 
     private static string ResolveGroup(SettlementData row, ChannelType? channelType)
     {
+        // 아마존은 마스터 상품그룹이 채널 단위(41.아마존미국) 하나뿐이라 아마존상품그룹으로 나눈다 —
+        // 광고매핑도 같은 아마존상품그룹을 TargetGroup으로 쓰므로 보고서에서 이익·광고비가 같은 키로 맞물린다.
         if (channelType == ChannelType.AmazonUs || channelType == ChannelType.AmazonJp)
-            return row.ProductGroup ?? row.Msku ?? "(미지정)";
+            return !string.IsNullOrWhiteSpace(row.AmazonGroup) ? row.AmazonGroup! : row.Msku ?? "(미지정)";
 
         return row.ProductGroup ?? "(미지정)";
     }

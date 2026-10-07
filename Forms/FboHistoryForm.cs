@@ -61,6 +61,7 @@ public class FboHistoryForm : Form
 
         _channels = [new FboChannelConfigModel { ChannelId = "", ChannelName = "(전체)" }, .. _channelConfigRepository.GetAll()];
         _channelCombo = new ComboBox { Size = new Size(160, 25), DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_channelCombo);
         _channelCombo.DataSource = _channels;
         _channelCombo.DisplayMember = nameof(FboChannelConfigModel.ChannelName);
         _channelCombo.ValueMember = nameof(FboChannelConfigModel.ChannelId);

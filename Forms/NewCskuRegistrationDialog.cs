@@ -72,6 +72,7 @@ public class NewCskuRegistrationDialog : Form
         form.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         _channelCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_channelCombo);
         var channels = _channelRepository.GetAll().OrderBy(c => c.ChannelName).ToList();
         _channelCombo.DataSource = channels;
         _channelCombo.DisplayMember = nameof(SalesChannel.ChannelName);

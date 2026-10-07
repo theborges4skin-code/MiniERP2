@@ -1837,6 +1837,7 @@ public class AdMappingForm : Form
         var summaryPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
         _channelSplitPriorityInput = new NumericUpDown { Width = 60, Minimum = 0, Maximum = 9999 };
         _channelSplitPreruleTargetChannelCombo = new ComboBox { Width = 110, DropDownStyle = ComboBoxStyle.DropDownList, DataSource = GetChannelSplitTargetOptions() };
+        ChannelPickerPopup.Attach(_channelSplitPreruleTargetChannelCombo);
         _channelSplitPreruleNoteTextBox = new TextBox { Width = 160 };
         _channelSplitPreruleEnabledCheckBox = new CheckBox { Text = "사용", AutoSize = true, Checked = true, Padding = new Padding(6, 4, 0, 0) };
         var btnSaveSummary = new Button { Text = "규칙 정보 저장", Size = new Size(110, 28) };

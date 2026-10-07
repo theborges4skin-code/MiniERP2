@@ -81,6 +81,7 @@ public class ChannelCskuForm : Form
         var buttonRow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 3), Margin = Padding.Empty, WrapContents = false };
 
         _channelCombo = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(SalesChannel.ChannelName) };
+        ChannelPickerPopup.Attach(_channelCombo);
         _channelCombo.SelectedIndexChanged += (s, e) => LoadData();
 
         _searchBox = new TextBox { Width = 220, PlaceholderText = "CSKU/마스터SKU/송장표시명/비고 검색" };

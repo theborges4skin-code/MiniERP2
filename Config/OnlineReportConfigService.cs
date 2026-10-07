@@ -38,7 +38,7 @@ public class OnlineReportConfigService
 
     /// <summary>
     /// 채널코드는 이 PC의 channels_config.json 기준(스마트 1F80429D, 쿠팡일반 443F05E4, 쿠팡로켓 4D4A484A,
-    /// 쿠팡그로스 CH004, 기타_11번가 9A2C5962, ESM 275B7A29, 기타_수동 CH074). 오늘의집은 채널 등록 전이라 비워둔다.
+    /// 쿠팡그로스 CH004, 기타_11번가 9A2C5962, ESM 275B7A29, 기타_수동 CH074, 오늘의집 CH066).
     /// </summary>
     public static OnlineReportConfig CreateDefault() => new()
     {
@@ -49,7 +49,7 @@ public class OnlineReportConfigService
             new() { Name = "쿠팡로켓", ChannelCodes = ["4D4A484A"], CountShipping = false, IsRocketGrowth = true },
             new() { Name = "쿠팡그로스", ChannelCodes = ["CH004"], CountShipping = false, IsRocketGrowth = true },
             new() { Name = "기타", ChannelCodes = ["9A2C5962", "275B7A29", "CH074"] },
-            new() { Name = "오늘의집", ChannelCodes = [] },
+            new() { Name = "오늘의집", ChannelCodes = ["CH066"] },
         ],
         GroupColumns =
         [

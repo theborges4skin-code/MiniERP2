@@ -46,6 +46,13 @@ public class ChannelConfig
         "채널). 실배송비만 청구하는 온라인 거래처 채널에 씁니다. 0이면 사용하지 않습니다.")]
     public decimal ActualShippingFeePerShipment { get; set; }
 
+    [Category("기본 정보")]
+    [DisplayName("연결행 기준 컬럼명")]
+    [Description("정산서에서 매핑에 실패한 행이 이 컬럼 값이 같은 다른 행(이미 매핑된 상품 행)을 가지면, " +
+        "그 행과 같은 CSKU로 수량 0 매핑합니다(금액은 그대로 이익에 반영). 오늘의집 '혜택정산' 쿠폰 행처럼 " +
+        "상품명 대신 쿠폰명만 있고 주문옵션번호로 상품 행과 이어지는 행에 씁니다. (예: 주문옵션번호) 비워두면 사용하지 않습니다.")]
+    public string LinkedRowKeyHeader { get; set; } = string.Empty;
+
     // 채널설정 창의 "발주서 매핑"/"정산서 매핑" 전용 탭에서 편집한다(PropertyGrid는 Dictionary를 지원하지 않음).
     [Browsable(false)]
     public Dictionary<StdField, FieldMapping> OrderFieldMappings { get; set; } = new();

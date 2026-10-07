@@ -53,7 +53,7 @@ public class PartnerClosingForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
@@ -68,14 +68,16 @@ public class PartnerClosingForm : Form
 
     private Control BuildToolbar()
     {
-        // 버튼이 계속 늘어 한 줄로는 창 너비를 넘어서므로(엑셀 일괄 추가 추가 시점) 조회/입력 계열과
-        // 출력/기타 계열 두 줄로 나눈다(사용자 요청).
-        var container = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        container.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        container.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        // 버튼이 계속 늘어 창 너비를 넘지 않도록 세 줄로 나눈다(사용자 요청): 1줄 조회·외부자료(보충/대조/
+        // 취합), 2줄 입력·확정, 3줄 문서 출력·기타.
+        var container = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 33.3f));
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 33.3f));
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 33.4f));
 
-        var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 5, 0) };
-        var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 4) };
+        var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 4, 5, 0), WrapContents = false };
+        var rowInput = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0), WrapContents = false };
+        var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 4), WrapContents = false };
 
         _periodCombo = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDown };
         var now = DateTime.Today;
@@ -97,6 +99,9 @@ public class PartnerClosingForm : Form
 
         var btnAddManualOrder = new Button { Text = "수동 주문 추가", Size = new Size(110, 28) };
         btnAddManualOrder.Click += OnAddManualOrderClick;
+
+        var btnAddShipping = new Button { Text = "배송비 추가", Size = new Size(90, 28) };
+        btnAddShipping.Click += OnAddShippingClick;
 
         var btnAddAdjustment = new Button { Text = "할인/에누리", Size = new Size(90, 28) };
         btnAddAdjustment.Click += OnAddAdjustmentClick;
@@ -120,8 +125,8 @@ public class PartnerClosingForm : Form
         btnCancelClosing.Click += OnCancelClosingClick;
 
         // 명세표/매출장 공통 VAT 기준 — 이전에는 미리보기/발행마다 매번 물었으나(명세표만, 매출장은
-        // 항상 VAT별도로 고정), 한 번 골라두면 계속 유지되는 체크박스로 바꿨다(사용자 요청).
-        _vatExcludedCheck = new CheckBox { Text = "VAT 별도", AutoSize = true, Checked = true, Padding = new Padding(10, 5, 0, 0) };
+        // 항상 VAT별도로 고정), 한 번 골라두면 계속 유지되는 체크박스로 바꿨다(사용자 요청). 기본값은 VAT포함(체크 해제) — 2026-10 사용자 요청.
+        _vatExcludedCheck = new CheckBox { Text = "VAT 별도", AutoSize = true, Checked = false, Padding = new Padding(10, 5, 0, 0) };
         // 명세표/매출장 발행뿐 아니라 좌측 거래처 목록(공급가/이익)과 우측 라인 상세(단가/원가/이익)도
         // 이 체크박스 기준으로 즉시 다시 보여준다(사용자 요청). 전체 재조회(RefreshBoard) 대신
         // 그리드만 다시 그려서, 토글해도 현재 선택된 거래처가 풀리지 않게 한다.
@@ -133,14 +138,20 @@ public class PartnerClosingForm : Form
         var btnPreviewLedger = new Button { Text = "매출장 미리보기", Size = new Size(100, 28) };
         btnPreviewLedger.Click += (s, e) => OnPreviewClick(isLedger: true);
 
-        var btnPublishStatement = new Button { Text = "명세표 발행", Size = new Size(90, 28) };
+        var btnPublishStatement = new Button { Text = "명세표 저장", Size = new Size(90, 28) };
         btnPublishStatement.Click += (s, e) => OnPublishClick(isLedger: false);
 
-        var btnPublishLedger = new Button { Text = "매출장 발행", Size = new Size(90, 28) };
+        var btnPublishLedger = new Button { Text = "매출장 저장", Size = new Size(90, 28) };
         btnPublishLedger.Click += (s, e) => OnPublishClick(isLedger: true);
 
         var btnExportBoard = new Button { Text = "현황판 엑셀저장", Size = new Size(110, 28) };
         btnExportBoard.Click += OnExportBoardClick;
+
+        var btnBulkExport = new Button { Text = "마감자료 일괄내보내기", Size = new Size(140, 28) };
+        btnBulkExport.Click += OnBulkExportClick;
+
+        var btnCskuStat = new Button { Text = "CSKU별 통계", Size = new Size(95, 28) };
+        btnCskuStat.Click += OnCskuStatClick;
 
         // 샘플발송이력관리_개발기획서.md §6.2: 마감 집계에서 빠지는 샘플·CS 발송을 별도 화면에서
         // 추적한다. 기존 그리드를 토글로 재활용하지 않는 이유는 그 다이얼로그 클래스 주석 참고.
@@ -157,16 +168,19 @@ public class PartnerClosingForm : Form
         row1.Controls.Add(_periodCombo);
         row1.Controls.Add(btnRefresh);
         row1.Controls.Add(_includeAllCheck);
-        row1.Controls.Add(btnAddManual);
-        row1.Controls.Add(btnManualEntry);
-        row1.Controls.Add(btnAddManualOrder);
-        row1.Controls.Add(btnAddAdjustment);
-        row1.Controls.Add(btnBulkImport);
-        row1.Controls.Add(btnImportOnlineRollup);
         row1.Controls.Add(btnShipmentBackfill);
         row1.Controls.Add(btnStatementReconcile);
-        row1.Controls.Add(btnConfirm);
-        row1.Controls.Add(btnCancelClosing);
+        row1.Controls.Add(btnImportOnlineRollup);
+        row1.Controls.Add(_statusSummaryLabel);
+
+        rowInput.Controls.Add(btnAddManual);
+        rowInput.Controls.Add(btnManualEntry);
+        rowInput.Controls.Add(btnAddManualOrder);
+        rowInput.Controls.Add(btnAddShipping);
+        rowInput.Controls.Add(btnAddAdjustment);
+        rowInput.Controls.Add(btnBulkImport);
+        rowInput.Controls.Add(btnConfirm);
+        rowInput.Controls.Add(btnCancelClosing);
 
         row2.Controls.Add(_vatExcludedCheck);
         row2.Controls.Add(btnPreviewStatement);
@@ -174,11 +188,13 @@ public class PartnerClosingForm : Form
         row2.Controls.Add(btnPublishStatement);
         row2.Controls.Add(btnPublishLedger);
         row2.Controls.Add(btnExportBoard);
+        row2.Controls.Add(btnBulkExport);
+        row2.Controls.Add(btnCskuStat);
         row2.Controls.Add(btnNonSale);
-        row2.Controls.Add(_statusSummaryLabel);
 
         container.Controls.Add(row1, 0, 0);
-        container.Controls.Add(row2, 0, 1);
+        container.Controls.Add(rowInput, 0, 1);
+        container.Controls.Add(row2, 0, 2);
         return container;
     }
 
@@ -384,7 +400,7 @@ public class PartnerClosingForm : Form
         {
             "대조중" => (Color.LightYellow, Color.Black),
             "확정" => (Color.FromArgb(220, 245, 220), Color.Black),
-            "발행완료" => (Color.Gainsboro, Color.Black),
+            "출력완료" => (Color.Gainsboro, Color.Black),
             _ => (_partyGrid.DefaultCellStyle.BackColor, _partyGrid.DefaultCellStyle.ForeColor),
         };
         _partyGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = back;
@@ -421,7 +437,7 @@ public class PartnerClosingForm : Form
         _lineGrid.DataSource = null;
 
         var counts = rows.GroupBy(r => r.Status).ToDictionary(g => g.Key, g => g.Count());
-        _statusSummaryLabel.Text = $"상태요약: 미확인 {counts.GetValueOrDefault("미확인")} / 대조중 {counts.GetValueOrDefault("대조중")} / 확정 {counts.GetValueOrDefault("확정")} / 발행완료 {counts.GetValueOrDefault("발행완료")}";
+        _statusSummaryLabel.Text = $"상태요약: 미확인 {counts.GetValueOrDefault("미확인")} / 대조중 {counts.GetValueOrDefault("대조중")} / 확정 {counts.GetValueOrDefault("확정")} / 출력완료 {counts.GetValueOrDefault("출력완료")}";
         _statusLabel.Text = $"{period} 거래처 {rows.Count}건 조회됨. ({DateTime.Now:HH:mm:ss})";
     }
 
@@ -470,7 +486,7 @@ public class PartnerClosingForm : Form
             return;
         }
         var row = selected[0];
-        if (row.Status is "확정" or "발행완료")
+        if (row.Status is "확정" or "출력완료")
         {
             MessageBox.Show("이미 확정된 거래처입니다. 수정하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -538,9 +554,79 @@ public class PartnerClosingForm : Form
     }
 
     /// <summary>
+    /// 배송비 라인을 추가한다(단가 VAT포함, 기본 3,000원 × 적용 수량, 일자 = 마감월 말일). 채널 경유
+    /// 거래처는 그 채널의 배송비 CSKU(마스터SKU 'shipping', 없으면 새로 만듦)로 출고이력에 넣고,
+    /// 수동 거래처는 '택배비' 라인(원가=단가, 이익 0)으로 넣는다. 수량 기본값은 이번 달 송장 수.
+    /// </summary>
+    private void OnAddShippingClick(object? sender, EventArgs e)
+    {
+        var selected = SelectedPartyRows();
+        if (selected.Count != 1)
+        {
+            MessageBox.Show("배송비를 추가할 거래처 1개를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var row = selected[0];
+        if (row.Status is "확정" or "출력완료")
+        {
+            MessageBox.Show("이미 확정된 거래처입니다. 배송비를 추가하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var period = CurrentPeriod;
+        var periodEnd = DateTime.ParseExact(period, "yyyy-MM", CultureInfo.InvariantCulture).AddMonths(1).AddDays(-1);
+        string? channelCode = row.IsManual ? null : row.PartyKey["CH:".Length..];
+        var shippingCskus = channelCode == null ? [] : _channelSkuRepo.GetAllByChannel(channelCode).Where(c => c.Msku == "shipping").ToList();
+
+        var suggested = 0;
+        if (channelCode != null)
+        {
+            var shippingCodes = shippingCskus.Select(c => c.CskuCode).ToHashSet(StringComparer.Ordinal);
+            suggested = _outboundRepo.GetForClosingPeriod(channelCode, period)
+                .Where(d => !shippingCodes.Contains(string.IsNullOrWhiteSpace(d.CskuCode) ? d.MskuCode : d.CskuCode!))
+                .Select(d => string.IsNullOrWhiteSpace(d.ShipmentGroupKey) ? $"#{d.Id}" : d.ShipmentGroupKey)
+                .Distinct().Count();
+        }
+
+        using var dlg = new PartnerShippingFeeDialog(row.PartyName, period, suggested);
+        if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+
+        if (channelCode == null)
+        {
+            _closingRepo.AddManualLine(period, row.PartyKey, row.PartyName, new PartnerClosingLine
+            {
+                LineDate = periodEnd, CskuCode = "택배비", ItemName = "택배비",
+                Qty = dlg.Qty, UnitPrice = dlg.UnitPrice, CostPrice = dlg.UnitPrice, Profit = 0,
+            });
+        }
+        else
+        {
+            var csku = shippingCskus.FirstOrDefault();
+            if (csku == null)
+            {
+                csku = new ChannelSkuModel
+                {
+                    ChannelCode = channelCode, CskuCode = $"{row.PartyName}_ship", Msku = "shipping",
+                    SupplyPrice = dlg.UnitPrice, InvoiceDisplayName = "배송비",
+                };
+                _channelSkuRepo.Upsert(csku, "거래처 마감보드 배송비 추가 — 배송비 CSKU 자동 생성");
+            }
+            _outboundRepo.AddManualEntry(new OutboundDetail
+            {
+                ChannelCode = channelCode, MskuCode = csku.CskuCode, CskuCode = csku.CskuCode,
+                Qty = dlg.Qty, SupplyPrice = dlg.UnitPrice, ProductName = string.IsNullOrWhiteSpace(csku.InvoiceDisplayName) ? "배송비" : csku.InvoiceDisplayName!,
+                Remark = "배송비 추가", ConfirmedAt = periodEnd,
+            });
+        }
+
+        RefreshBoardKeepingSelection();
+        _statusLabel.Text = $"{row.PartyName}에 배송비 {dlg.Qty}건 × {dlg.UnitPrice:N0}원(VAT포함) = {dlg.Qty * dlg.UnitPrice:N0}원을 추가했습니다. ({DateTime.Now:HH:mm:ss})";
+    }
+
+    /// <summary>
     /// 수동 거래처(온라인 거래처 취합으로 들어온 거래처 등)에 금액만 있는 할인·에누리 조정 라인을 넣는다
     /// (수량 1, 음수 단가, 원가 0 — 이익에서도 그대로 빠진다). 확정 상태도 유지한 채 바로 반영하고,
-    /// 취합 파일을 다시 보내도 이 라인은 남는다. 발행완료 건은 문서와 어긋나므로 막는다.
+    /// 취합 파일을 다시 보내도 이 라인은 남는다. 출력완료 건은 문서와 어긋나므로 막는다.
     /// </summary>
     private void OnAddAdjustmentClick(object? sender, EventArgs e)
     {
@@ -556,9 +642,9 @@ public class PartnerClosingForm : Form
             MessageBox.Show("할인/에누리 라인은 수동 거래처(온라인 거래처 취합 등)에만 넣을 수 있습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (row.Status == "발행완료")
+        if (row.Status == "출력완료")
         {
-            MessageBox.Show("이미 발행완료된 거래처입니다. 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("이미 출력완료된 거래처입니다. 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -583,7 +669,7 @@ public class PartnerClosingForm : Form
 
     private void OnAddManualPartyLineOrder(PartyRow row)
     {
-        if (row.Status is "확정" or "발행완료")
+        if (row.Status is "확정" or "출력완료")
         {
             MessageBox.Show("이미 확정된 거래처입니다. 라인을 추가하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -697,7 +783,7 @@ public class PartnerClosingForm : Form
             MessageBox.Show("마감확정할 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (MessageBox.Show($"{selected.Count}건을 마감확정하시겠습니까?\n확정 후에는 원본 라인이 바뀌어도 발행 내용에는 영향이 없습니다.", "마감확정 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        if (MessageBox.Show($"{selected.Count}건을 마감확정하시겠습니까?\n확정 후에는 원본 라인이 바뀌어도 저장한 명세표·매출장 내용에는 영향이 없습니다.", "마감확정 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
         var period = CurrentPeriod;
@@ -741,8 +827,8 @@ public class PartnerClosingForm : Form
             MessageBox.Show("확정취소할, 이미 확정된 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        var publishedCount = selected.Count(r => r.Status == "발행완료");
-        var warning = publishedCount > 0 ? $"\n⚠ {publishedCount}건은 이미 발행완료 상태입니다(발행 문서 자체는 이력에 남습니다)." : "";
+        var publishedCount = selected.Count(r => r.Status == "출력완료");
+        var warning = publishedCount > 0 ? $"\n⚠ {publishedCount}건은 이미 출력완료 상태입니다(저장된 명세표·매출장 파일은 문서이력에 남습니다)." : "";
         if (MessageBox.Show($"{selected.Count}건의 마감확정을 취소하시겠습니까?{warning}", "확정취소 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
@@ -804,18 +890,18 @@ public class PartnerClosingForm : Form
     /// <summary>
     /// 명세표/매출장 발행(§9). DocsForm의 그리드 주입 방식 대신 DocumentExporter를 헤드리스로 직접
     /// 호출한다 — 선택 1건이면 SaveFileDialog로 파일명을 묻고, 여러 건이면(배치) 폴더 하나만 골라
-    /// "{거래처명}_{기간}_{문서}.xlsx"로 자동 저장한다. 확정(§상태=확정/발행완료) 상태인 거래처만 대상.
+    /// "{거래처명}_{기간}_{문서}.xlsx"로 자동 저장한다. 확정(§상태=확정/출력완료) 상태인 거래처만 대상.
     /// 매출장은 여러 거래처를 골랐을 때 "통합 출력"(현황표 시트 + 확정 거래처별 시트를 파일 1개로)도
     /// 고를 수 있다(RunCombinedLedgerExport).
     /// </summary>
     private void OnPublishClick(bool isLedger)
     {
         var allSelected = SelectedPartyRows();
-        var selected = allSelected.Where(r => r.Status is "확정" or "발행완료").ToList();
+        var selected = allSelected.Where(r => r.Status is "확정" or "출력완료").ToList();
         var skippedNotConfirmed = allSelected.Count - selected.Count;
         if (allSelected.Count == 0)
         {
-            MessageBox.Show("발행할 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("저장할 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -826,20 +912,20 @@ public class PartnerClosingForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("저장할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
         }
         else
         {
-            var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 발행 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            var groupChoice = MessageBox.Show("날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (groupChoice == DialogResult.Cancel) return;
             ignoreDateForLedger = groupChoice == DialogResult.No;
 
             if (allSelected.Count > 1)
             {
                 var combineChoice = MessageBox.Show(
-                    "여러 거래처를 골랐습니다. 현황표(전체 거래처 마감확정 여부)+확정된 거래처별 매출장 시트를 파일 1개로 통합 출력하시겠습니까?\n(아니오 = 거래처별 개별 파일, 취소 = 발행 중단)",
+                    "여러 거래처를 골랐습니다. 현황표(전체 거래처 마감확정 여부)+확정된 거래처별 매출장 시트를 파일 1개로 통합 출력하시겠습니까?\n(아니오 = 거래처별 개별 파일, 취소 = 중단)",
                     "매출장 출력 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (combineChoice == DialogResult.Cancel) return;
                 if (combineChoice == DialogResult.Yes)
@@ -851,7 +937,7 @@ public class PartnerClosingForm : Form
 
             if (selected.Count == 0)
             {
-                MessageBox.Show("발행할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("저장할 확정 상태 거래처를 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
         }
@@ -867,7 +953,7 @@ public class PartnerClosingForm : Form
         if (selected.Count > 1)
         {
             var lastFolder = _settingsService.GetLastFolder("PartnerClosingPublish");
-            using var fbd = new FolderBrowserDialog { Description = "발행 파일을 저장할 폴더를 선택하세요." };
+            using var fbd = new FolderBrowserDialog { Description = "명세표/매출장 파일을 저장할 폴더를 선택하세요." };
             if (!string.IsNullOrEmpty(lastFolder) && Directory.Exists(lastFolder)) fbd.SelectedPath = lastFolder;
             if (fbd.ShowDialog(this) != DialogResult.OK) return;
             folder = fbd.SelectedPath;
@@ -881,12 +967,6 @@ public class PartnerClosingForm : Form
 
         foreach (var row in selected)
         {
-            // 채널에 공급받는자 프로필이 연결되어 있지 않아도 발행 자체는 막지 않는다(사용자 요청) —
-            // 미리보기(위 OnPreviewClick)와 같은 방식으로 거래처명만 채운 빈 프로필로 대체한다.
-            var buyer = row.IsManual
-                ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
-                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
-
             var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
             var fileName = PartnerClosingDocumentBuilder.DefaultFileName(summary, docLabel);
 
@@ -906,38 +986,7 @@ public class PartnerClosingForm : Form
 
             try
             {
-                var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
-                decimal totalAmount;
-                if (isLedger)
-                {
-                    var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos);
-                    DocumentExporter.ExportSalesLedger(doc, filePath);
-                    totalAmount = doc.TotalSupply;
-                }
-                else
-                {
-                    var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer, memos);
-                    DocumentExporter.ExportTradeStatement(doc, filePath);
-                    totalAmount = doc.GrandTotal;
-                }
-
-                byte[]? fileBytes = null;
-                try { fileBytes = File.ReadAllBytes(filePath); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
-
-                var docHistoryId = _docHistoryRepo.Add(new DocHistoryRecord
-                {
-                    DocType = isLedger ? "SalesLedger" : docType.ToString(),
-                    IssueDate = DateTime.Today,
-                    BuyerName = buyer.CompanyName,
-                    TotalAmount = totalAmount,
-                    FilePath = filePath,
-                    CreatedAt = DateTime.Now,
-                    FileBytes = fileBytes,
-                    ChannelCode = row.IsManual ? "" : row.PartyKey["CH:".Length..],
-                    Period = CurrentPeriod,
-                });
-
-                if (row.ClosingId != null) _closingRepo.MarkPublished(row.ClosingId.Value, docHistoryId);
+                ExportPartyDocument(row, summary, isLedger, supplier, docType, ignoreDateForLedger, vatExcluded, filePath, filePath);
                 successCount++;
                 lastFilePath = filePath;
             }
@@ -954,10 +1003,206 @@ public class PartnerClosingForm : Form
             ExportHelper.ShowPostExportDialog(this, lastFilePath);
         }
 
-        var msg = $"{successCount}건 발행 완료.";
+        var msg = $"{successCount}건 저장 완료(상태: 출력완료).";
         if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
         if (skippedNotConfirmed > 0) msg += $" ({skippedNotConfirmed}건은 미확정이라 제외)";
         _statusLabel.Text = msg;
+    }
+
+    /// <summary>
+    /// 채널에 공급받는자 프로필이 연결되어 있지 않아도 저장 자체는 막지 않는다(사용자 요청) —
+    /// 미리보기(위 OnPreviewClick)와 같은 방식으로 거래처명만 채운 빈 프로필로 대체한다.
+    /// </summary>
+    private DocParty ResolveBuyer(PartyRow row) => row.IsManual
+        ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
+        : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
+
+    /// <summary>
+    /// 거래처 1곳의 명세표/매출장을 filePath에 쓰고 문서이력에 남긴 뒤 마감 상태를 출력완료로 바꾼다.
+    /// historyFilePath는 문서이력에 기록할 경로 — 일괄내보내기를 압축파일로 받으면 개별 파일은 임시폴더에
+    /// 쓰였다 지워지므로 zip 경로를 남긴다(파일 내용 자체는 FileBytes로 백업된다).
+    /// </summary>
+    private void ExportPartyDocument(PartyRow row, PartnerClosingSummary summary, bool isLedger, DocParty supplier,
+        MiniERP2.Models.DocType docType, bool ignoreDateForLedger, bool vatExcluded, string filePath, string historyFilePath)
+    {
+        var buyer = ResolveBuyer(row);
+        var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
+        decimal totalAmount;
+        if (isLedger)
+        {
+            var doc = PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos);
+            DocumentExporter.ExportSalesLedger(doc, filePath);
+            totalAmount = doc.TotalSupply;
+        }
+        else
+        {
+            var doc = PartnerClosingDocumentBuilder.BuildTradeStatement(summary, docType, supplier, buyer, memos);
+            DocumentExporter.ExportTradeStatement(doc, filePath);
+            totalAmount = doc.GrandTotal;
+        }
+
+        byte[]? fileBytes = null;
+        try { fileBytes = File.ReadAllBytes(filePath); } catch { /* 백업 실패해도 이력 저장은 계속 */ }
+
+        var docHistoryId = _docHistoryRepo.Add(new DocHistoryRecord
+        {
+            DocType = isLedger ? "SalesLedger" : docType.ToString(),
+            IssueDate = DateTime.Today,
+            BuyerName = buyer.CompanyName,
+            TotalAmount = totalAmount,
+            FilePath = historyFilePath,
+            CreatedAt = DateTime.Now,
+            FileBytes = fileBytes,
+            ChannelCode = row.IsManual ? "" : row.PartyKey["CH:".Length..],
+            Period = CurrentPeriod,
+        });
+
+        if (row.ClosingId != null) _closingRepo.MarkPublished(row.ClosingId.Value, docHistoryId);
+    }
+
+    /// <summary>
+    /// 마감자료 일괄내보내기: 현황판 1장 + 확정(확정/출력완료) 거래처별 매출장 파일을 한꺼번에 만든다.
+    /// 대상은 선택한 거래처(2곳 이상 선택 시) 또는 목록 전체. 폴더(새 하위폴더) 또는 zip 1개로 받는다.
+    /// 미확정 거래처는 현황판에만 나오고 매출장은 만들지 않는다. 현황판은 매출장 저장 뒤 상태
+    /// (출력완료)가 반영된 값으로 쓴다.
+    /// </summary>
+    private void OnBulkExportClick(object? sender, EventArgs e)
+    {
+        if (_partyGrid.DataSource is not BindingList<PartyRow> allRows || allRows.Count == 0)
+        {
+            MessageBox.Show("거래처 목록이 비어 있습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var targets = SelectedPartyRows();
+        if (targets.Count <= 1)
+        {
+            var single = targets.Count == 1 ? $"아니오 = 선택한 '{targets[0].PartyName}' 1곳만" : "아니오 = 취소";
+            var choice = MessageBox.Show(
+                $"일부 거래처만 내보내려면 Ctrl/Shift로 여러 개 선택하세요.\n\n목록 전체({allRows.Count}곳)를 내보낼까요?\n예 = 목록 전체, {single}",
+                "마감자료 일괄내보내기", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (choice == DialogResult.Cancel || (choice == DialogResult.No && targets.Count == 0)) return;
+            if (choice == DialogResult.Yes) targets = allRows.ToList();
+        }
+
+        var confirmed = targets.Where(r => r.Status is "확정" or "출력완료").ToList();
+        var vatExcluded = _vatExcludedCheck.Checked;
+        var ignoreDateForLedger = false;
+        DocParty? supplier = null;
+        if (confirmed.Count > 0)
+        {
+            var groupChoice = MessageBox.Show("매출장: 날짜별로 구분해서 CSKU를 합산하시겠습니까?\n(아니오 = 날짜 무관 CSKU 전체합산, 취소 = 중단)", "매출장 집계 방식", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (groupChoice == DialogResult.Cancel) return;
+            ignoreDateForLedger = groupChoice == DialogResult.No;
+
+            supplier = _docPartyRepo.GetDefaultSupplier();
+            if (supplier == null)
+            {
+                MessageBox.Show("공급자(기본 거래처) 프로필이 설정되어 있지 않습니다. 문서관리 화면에서 먼저 등록하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+        }
+        else if (MessageBox.Show($"대상 {targets.Count}곳 중 마감확정된 거래처가 없어 매출장은 만들지 않고 현황판만 저장합니다. 계속할까요?",
+                     "마감자료 일괄내보내기", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var zipChoice = MessageBox.Show(
+            $"현황판 1개 + 매출장 {confirmed.Count}개를 저장합니다.\n\n압축파일(zip) 1개로 받으시겠습니까?\n예 = zip 파일, 아니오 = 폴더(새 하위폴더에 개별 파일), 취소 = 중단",
+            "마감자료 일괄내보내기", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        if (zipChoice == DialogResult.Cancel) return;
+        var asZip = zipChoice == DialogResult.Yes;
+
+        var period = CurrentPeriod;
+        var baseName = $"거래처마감_{period}_{DateTime.Now:yyyyMMdd}";
+        var lastFolder = _settingsService.GetLastFolder("PartnerClosingPublish") ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+        string workDir;
+        string? zipPath = null;
+        if (asZip)
+        {
+            zipPath = ExportHelper.ShowSaveFileDialog(this, "Zip Files (*.zip)|*.zip", baseName + ".zip", lastFolder);
+            if (zipPath == null) return;
+            _settingsService.SetLastFolder("PartnerClosingPublish", Path.GetDirectoryName(zipPath)!);
+            workDir = Path.Combine(Path.GetTempPath(), "MiniERP2_" + baseName + "_" + Guid.NewGuid().ToString("N")[..8]);
+        }
+        else
+        {
+            using var fbd = new FolderBrowserDialog { Description = "마감자료를 저장할 폴더를 선택하세요(그 안에 새 하위폴더를 만듭니다)." };
+            if (Directory.Exists(lastFolder)) fbd.SelectedPath = lastFolder;
+            if (fbd.ShowDialog(this) != DialogResult.OK) return;
+            _settingsService.SetLastFolder("PartnerClosingPublish", fbd.SelectedPath);
+            workDir = Path.Combine(fbd.SelectedPath, baseName);
+            if (Directory.Exists(workDir)) workDir += $"_{DateTime.Now:HHmmss}";
+        }
+
+        var errors = new List<string>();
+        var ledgerCount = 0;
+        string boardPath;
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            Directory.CreateDirectory(workDir);
+            var docType = vatExcluded ? MiniERP2.Models.DocType.TradeStatementVatExcl : MiniERP2.Models.DocType.TradeStatementVatIncl;
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in confirmed)
+            {
+                try
+                {
+                    var summary = _closingRepo.GetSummary(period, row.PartyKey, row.PartyName);
+                    var baseFileName = PartnerClosingDocumentBuilder.DefaultFileName(summary, "매출장");
+                    var fileName = baseFileName;
+                    for (var n = 2; !usedNames.Add(fileName); n++)
+                        fileName = Path.GetFileNameWithoutExtension(baseFileName) + $"_{n}.xlsx";
+                    var filePath = Path.Combine(workDir, fileName);
+                    ExportPartyDocument(row, summary, isLedger: true, supplier!, docType, ignoreDateForLedger, vatExcluded, filePath, zipPath ?? filePath);
+                    ledgerCount++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{row.PartyName}: {ExportHelper.DescribeSaveError(ex)}");
+                }
+            }
+
+            // 매출장 저장으로 바뀐 상태(출력완료)를 현황판에 반영하려고 다시 읽은 뒤, 대상 거래처만 원래 순서대로 쓴다.
+            var targetKeys = targets.Select(r => r.PartyKey).ToList();
+            RefreshBoard();
+            var refreshed = (_partyGrid.DataSource as BindingList<PartyRow>)?.ToDictionary(r => r.PartyKey) ?? new Dictionary<string, PartyRow>();
+            var boardRows = targetKeys.Select(k => refreshed.GetValueOrDefault(k)).Where(r => r != null).Cast<PartyRow>().ToList();
+            boardPath = Path.Combine(workDir, $"00_거래처마감현황_{period}.xlsx");
+            WriteBoardWorkbook(boardRows, boardPath);
+
+            if (zipPath != null)
+            {
+                if (File.Exists(zipPath)) File.Delete(zipPath);
+                System.IO.Compression.ZipFile.CreateFromDirectory(workDir, zipPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Cursor = Cursors.Default;
+            MessageBox.Show($"마감자료 내보내기 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            RefreshBoard();
+            return;
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+            if (zipPath != null)
+            {
+                try { Directory.Delete(workDir, recursive: true); } catch { /* 임시폴더 정리 실패는 무시 */ }
+            }
+        }
+
+        ExportHelper.ShowPostExportDialog(this, zipPath ?? boardPath);
+
+        var msg = $"마감자료 내보내기 완료 — 현황판 1개(거래처 {targets.Count}곳), 매출장 {ledgerCount}개(상태: 출력완료).";
+        var skipped = targets.Count - confirmed.Count;
+        if (skipped > 0) msg += $" 미확정 {skipped}곳은 현황판에만 포함.";
+        if (errors.Count > 0) msg += " 실패: " + string.Join(" / ", errors);
+        _statusLabel.Text = msg;
+        if (errors.Count > 0) MessageBox.Show(msg, "일부 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     /// <summary>
@@ -988,7 +1233,7 @@ public class PartnerClosingForm : Form
         foreach (var row in allSelected)
         {
             var summary = _closingRepo.GetSummary(CurrentPeriod, row.PartyKey, row.PartyName);
-            var isConfirmed = row.Status is "확정" or "발행완료";
+            var isConfirmed = row.Status is "확정" or "출력완료";
             // 같은 파일의 개별 매출장 시트가 vatExcluded 기준으로 변환되므로, "현황" 시트 합계도
             // 같은 기준으로 맞춰야 두 시트를 비교할 때 금액이 어긋나 보이지 않는다.
             overviewRows.Add(new SalesLedgerOverviewRow
@@ -1002,10 +1247,7 @@ public class PartnerClosingForm : Form
             });
             if (!isConfirmed) continue;
 
-            // 위 OnPublishClick과 동일하게, 프로필 미연결이 발행 자체를 막지 않게 빈 프로필로 대체한다.
-            var buyer = row.IsManual
-                ? _docPartyRepo.FindByCompanyName(row.PartyName) ?? new DocParty { CompanyName = row.PartyName }
-                : _docPartyRepo.GetByChannelCode(row.PartyKey["CH:".Length..]) ?? new DocParty { CompanyName = row.PartyName };
+            var buyer = ResolveBuyer(row);
 
             var memos = _memoRepo.GetForParty(CurrentPeriod, row.PartyKey);
             ledgers.Add((row.PartyName, PartnerClosingDocumentBuilder.BuildSalesLedger(summary, supplier, buyer, ignoreDateForLedger, vatExcluded, memos)));
@@ -1076,39 +1318,7 @@ public class PartnerClosingForm : Form
 
         try
         {
-            ExcelLicense.Ensure();
-
-            using var package = new ExcelPackage();
-            var worksheet = package.Workbook.Worksheets.Add("거래처마감현황");
-
-            var headers = new[] { "★", "거래처", "출고건", "수량", "공급가합", "이익", "마진율", "상태", "미출고건", "경고", "비고" };
-            for (var i = 0; i < headers.Length; i++) worksheet.Cells[1, i + 1].Value = headers[i];
-
-            var vatExcluded = _vatExcludedCheck.Checked;
-            for (var i = 0; i < rows.Count; i++)
-            {
-                var row = rows[i];
-                var r = i + 2;
-                worksheet.Cells[r, 1].Value = row.FavoriteMark;
-                worksheet.Cells[r, 2].Value = row.PartyName;
-                worksheet.Cells[r, 3].Value = row.OutboundCount;
-                worksheet.Cells[r, 4].Value = row.TotalQty;
-                worksheet.Cells[r, 5].Value = VatCalculator.ToDisplay(row.TotalSupply, vatExcluded);
-                worksheet.Cells[r, 6].Value = VatCalculator.ToDisplay(row.TotalProfit, vatExcluded);
-                // 마진율은 VAT 기준과 무관하게 같은 값이라 환산하지 않는다(분자·분모가 함께 환산됨).
-                if (row.MarginRate is { } marginRate) worksheet.Cells[r, 7].Value = marginRate;
-                worksheet.Cells[r, 8].Value = row.Status;
-                worksheet.Cells[r, 9].Value = row.UnshippedCount;
-                worksheet.Cells[r, 10].Value = row.Warning;
-                worksheet.Cells[r, 11].Value = row.ReconcileNote;
-            }
-
-            worksheet.Cells[1, 1, 1, headers.Length].Style.Font.Bold = true;
-            worksheet.Cells[2, 5, rows.Count + 1, 6].Style.Numberformat.Format = "#,##0";
-            worksheet.Cells[2, 7, rows.Count + 1, 7].Style.Numberformat.Format = "0.0%";
-            worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
-            ExportHelper.SaveExcel(package, filePath);
-
+            WriteBoardWorkbook(rows.ToList(), filePath);
             ExportHelper.ShowPostExportDialog(this, filePath);
             _statusLabel.Text = $"현황판을 엑셀로 저장했습니다({rows.Count}건). ({DateTime.Now:HH:mm:ss})";
         }
@@ -1116,6 +1326,73 @@ public class PartnerClosingForm : Form
         {
             MessageBox.Show($"엑셀 저장 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    /// <summary>
+    /// 현황판 1장을 엑셀로 쓴다(★/거래처/출고건/수량/공급가합/이익/마진율/상태/미출고건/경고/비고,
+    /// VAT별도 체크박스 기준 환산 포함). [현황판 엑셀저장]과 [마감자료 일괄내보내기]가 함께 쓴다.
+    /// </summary>
+    private void WriteBoardWorkbook(IReadOnlyList<PartyRow> rows, string filePath)
+    {
+        ExcelLicense.Ensure();
+
+        using var package = new ExcelPackage();
+        var worksheet = package.Workbook.Worksheets.Add("거래처마감현황");
+
+        var headers = new[] { "★", "거래처", "출고건", "수량", "공급가합", "이익", "마진율", "상태", "미출고건", "경고", "비고" };
+        for (var i = 0; i < headers.Length; i++) worksheet.Cells[1, i + 1].Value = headers[i];
+
+        var vatExcluded = _vatExcludedCheck.Checked;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var r = i + 2;
+            worksheet.Cells[r, 1].Value = row.FavoriteMark;
+            worksheet.Cells[r, 2].Value = row.PartyName;
+            worksheet.Cells[r, 3].Value = row.OutboundCount;
+            worksheet.Cells[r, 4].Value = row.TotalQty;
+            worksheet.Cells[r, 5].Value = VatCalculator.ToDisplay(row.TotalSupply, vatExcluded);
+            worksheet.Cells[r, 6].Value = VatCalculator.ToDisplay(row.TotalProfit, vatExcluded);
+            // 마진율은 VAT 기준과 무관하게 같은 값이라 환산하지 않는다(분자·분모가 함께 환산됨).
+            if (row.MarginRate is { } marginRate) worksheet.Cells[r, 7].Value = marginRate;
+            worksheet.Cells[r, 8].Value = row.Status;
+            worksheet.Cells[r, 9].Value = row.UnshippedCount;
+            worksheet.Cells[r, 10].Value = row.Warning;
+            worksheet.Cells[r, 11].Value = row.ReconcileNote;
+        }
+
+        worksheet.Cells[1, 1, 1, headers.Length].Style.Font.Bold = true;
+        worksheet.Cells[2, 5, rows.Count + 1, 6].Style.Numberformat.Format = "#,##0";
+        worksheet.Cells[2, 7, rows.Count + 1, 7].Style.Numberformat.Format = "0.0%";
+        worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
+        ExportHelper.SaveExcel(package, filePath);
+    }
+
+    /// <summary>
+    /// 고른 거래처들의 마감 라인을 CSKU별로 합산해 품목별 이익을 본다(<see cref="PartnerCskuStatDialog"/>).
+    /// 1곳만 선택된 상태면(보통 그냥 커서만 있는 상태) 목록 전체로 할지 묻는다.
+    /// </summary>
+    private void OnCskuStatClick(object? sender, EventArgs e)
+    {
+        if (_partyGrid.DataSource is not BindingList<PartyRow> allRows || allRows.Count == 0)
+        {
+            MessageBox.Show("거래처 목록이 비어 있습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var selected = SelectedPartyRows();
+        if (selected.Count <= 1)
+        {
+            var single = selected.Count == 1 ? $"아니오 = 선택한 '{selected[0].PartyName}' 1곳만" : "아니오 = 취소";
+            var choice = MessageBox.Show(
+                $"여러 거래처를 묶으려면 Ctrl/Shift로 거래처를 여러 개 선택하세요.\n\n목록 전체({allRows.Count}곳)로 통계를 낼까요?\n예 = 목록 전체, {single}",
+                "CSKU별 통계", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (choice == DialogResult.Cancel || (choice == DialogResult.No && selected.Count == 0)) return;
+            if (choice == DialogResult.Yes) selected = allRows.ToList();
+        }
+
+        using var dialog = new PartnerCskuStatDialog(CurrentPeriod, selected.Select(r => r.Source).ToList(), _vatExcludedCheck.Checked);
+        FormManager.ShowDialogSafe(dialog, this);
     }
 
     private void OnToggleFavoriteClick(object? sender, EventArgs e)
@@ -1221,7 +1498,7 @@ public class PartnerClosingForm : Form
     /// <summary>수동(미경유) 거래처 라인 삭제 — OutboundDetailId가 없어 위 일반 경로를 못 쓴다.</summary>
     private void OnDeleteManualLinesClick(PartyRow partyRow)
     {
-        if (partyRow.Status is "확정" or "발행완료")
+        if (partyRow.Status is "확정" or "출력완료")
         {
             MessageBox.Show("이미 확정된 거래처입니다. 라인을 삭제하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -1371,7 +1648,7 @@ public class PartnerClosingForm : Form
             MessageBox.Show("수동 거래처의 라인만 여기서 수정할 수 있습니다(채널 경유 거래처는 위 CSKU/품목/수량/단가 수정 메뉴를 이용하세요).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (partyRow.Status is "확정" or "발행완료")
+        if (partyRow.Status is "확정" or "출력완료")
         {
             MessageBox.Show("이미 확정된 거래처입니다. 라인을 수정하려면 먼저 [확정취소]를 하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;

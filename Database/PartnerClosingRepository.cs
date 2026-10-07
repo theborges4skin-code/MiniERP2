@@ -501,7 +501,7 @@ public class PartnerClosingRepository
     }
 
     /// <summary>
-    /// 확정을 취소한다: 상태를 대조중으로 되돌린다(§7). 이미 발행완료였어도 진행하며(발행 문서
+    /// 확정을 취소한다: 상태를 대조중으로 되돌린다(§7). 이미 출력완료였어도 진행하며(발행 문서
     /// 자체는 DocHistoryTable에 남는다), 그 경고는 호출 측(UI)의 책임이다. 채널 경유 거래처는
     /// 라인 스냅샷을 지운다(재확정 시 OutboundDetailTable에서 다시 라이브로 뜬다) — 하지만 MANUAL
     /// 거래처는 라인이 원본 자체(AddManualLine으로 직접 쌓은 것)라 여기서 지우면 데이터가 영구
@@ -557,12 +557,12 @@ public class PartnerClosingRepository
         SetReconcileNote(header.Id, note);
     }
 
-    /// <summary>발행 완료 처리: DocHistoryId를 연결하고 상태를 발행완료로 바꾼다(§9).</summary>
+    /// <summary>명세표/매출장 출력 처리: DocHistoryId를 연결하고 상태를 출력완료로 바꾼다(§9). 홈택스 세금계산서 발행과는 무관하다(발행은 수동).</summary>
     public void MarkPublished(long closingId, long docHistoryId)
     {
         using var conn = SqliteConnectionFactory.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE PartnerClosingTable SET Status = '발행완료', DocHistoryId = $docId WHERE Id = $id";
+        cmd.CommandText = "UPDATE PartnerClosingTable SET Status = '출력완료', DocHistoryId = $docId WHERE Id = $id";
         cmd.Parameters.AddWithValue("$docId", docHistoryId);
         cmd.Parameters.AddWithValue("$id", closingId);
         cmd.ExecuteNonQuery();

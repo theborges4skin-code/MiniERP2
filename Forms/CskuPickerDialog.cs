@@ -79,6 +79,7 @@ public class CskuPickerDialog : Form
 
         var searchBar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(6) };
         _channelCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 180 };
+        ChannelPickerPopup.Attach(_channelCombo);
         _searchBox = new TextBox { Width = 220, PlaceholderText = "품목명 / CSKU / MSKU 검색" };
         _channelCombo.SelectedIndexChanged += (s, e) => ApplyFilter();
         _searchBox.TextChanged += (s, e) => ApplyFilter();

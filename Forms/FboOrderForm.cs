@@ -102,6 +102,7 @@ public class FboOrderForm : Form
         _orderDatePicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
         _orderDatePicker.ValueChanged += OnOrderDateChanged;
         _channelCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 180 };
+        ChannelPickerPopup.Attach(_channelCombo);
         _channelCombo.SelectedIndexChanged += OnChannelComboChanged;
         _receiverInfoLabel = new Label { Text = "채널을 먼저 선택하세요", AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(6, 3, 0, 0) };
         row1.Controls.AddRange(

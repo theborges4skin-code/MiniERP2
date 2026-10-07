@@ -47,6 +47,7 @@ public class OutboundHistoryPickerDialog : Form
 
         var searchBar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(6) };
         _channelCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+        ChannelPickerPopup.Attach(_channelCombo);
         _fromPicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
         _toPicker = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 100 };
         var btnQuickDate = DateRangeQuickSelect.CreateButton(_fromPicker, _toPicker);

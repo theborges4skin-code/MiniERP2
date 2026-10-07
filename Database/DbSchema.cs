@@ -909,6 +909,7 @@ public static class DbSchema
         EnsureColumn(connection, "ItemTable", "Reserve2", "TEXT");
         EnsureColumn(connection, "ItemTable", "Reserve3", "TEXT");
         EnsureColumn(connection, "ItemTable", "ProductGroup", "TEXT");
+        EnsureColumn(connection, "ItemTable", "AmazonGroup", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "InvoiceDisplayName", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "Note", "TEXT");
         EnsureColumn(connection, "ChannelSkuTable", "UpdatedAt", "TEXT");
@@ -1012,6 +1013,7 @@ public static class DbSchema
         // 발주/출고 이력 관리창의 상태 콤보(두 값만 허용)에서 DataGridViewComboBoxCell 오류가 난다.
         // 기동 시마다 실행해도 안전한 정규화(이미 새 값이면 매치 없음 → no-op)이다.
         NormalizeLegacyOutboundStatus(connection);
+        RenamePartnerClosingPublishedStatus(connection);
 
         // 옛 버전이 OutboundDetailTable.CskuCode를 nullable("TEXT")로 추가해둔 DB가 있다. 이후
         // EnsureColumn 선언이 "TEXT NOT NULL DEFAULT ''"로 바뀌어도 이미 있는 열은 건드리지 않으므로
@@ -1043,6 +1045,18 @@ public static class DbSchema
             UPDATE OutboundDetailTable SET Status = '발주확정' WHERE Status = '발송대기';
             UPDATE OutboundDetailTable SET Status = '출고확정' WHERE Status = '발송완료';
             """;
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 거래처 마감보드 상태 "발행완료"를 "출력완료"로 바꾼다(2026-10). 명세표/매출장 파일을 저장했다는
+    /// 뜻인데 "발행"이 홈택스 전자세금계산서 발행과 헷갈렸다 — 이 프로그램은 마감(자료 출력)까지만
+    /// 하고, 세금계산서 발행은 다른 직원이 홈택스에서 수동으로 한다.
+    /// </summary>
+    private static void RenamePartnerClosingPublishedStatus(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE PartnerClosingTable SET Status = '출력완료' WHERE Status = '발행완료'";
         command.ExecuteNonQuery();
     }
 

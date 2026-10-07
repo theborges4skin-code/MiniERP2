@@ -172,6 +172,7 @@ public class SettlementForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "매핑유무", Name = "Status", DataPropertyName = "Status", Width = 100, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "채널", Name = "ChannelCode", DataPropertyName = "ChannelCode", Width = 80 },
             new DataGridViewTextBoxColumn { HeaderText = "상품그룹", Name = "ProductGroup", DataPropertyName = "ProductGroup", Width = 100, ReadOnly = true },
+            new DataGridViewTextBoxColumn { HeaderText = "아마존상품그룹", Name = "AmazonGroup", DataPropertyName = "AmazonGroup", Width = 100, ReadOnly = true, Visible = false },
             new DataGridViewTextBoxColumn { HeaderText = "매핑 SKU", Name = "Msku", DataPropertyName = "Msku", Width = 130 },
             new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 220 },
             new DataGridViewTextBoxColumn { HeaderText = "옵션명", Name = "OptionName", DataPropertyName = "OptionName", Width = 180 },
@@ -342,8 +343,11 @@ public class SettlementForm : Form
         DiagnosticsLogger.Log($"[SettlementForm] 데이터 바인딩 완료 ({bindStopwatch.Elapsed.TotalSeconds:F2}s)");
 
         var summaryStopwatch = Stopwatch.StartNew();
+        var amazonGroupMode = UsesAmazonGroup(_activeChannelType);
+        _settlementGrid.Columns["AmazonGroup"]!.Visible = amazonGroupMode;
+        _summaryGrid.Columns["ProductGroup"]!.HeaderText = amazonGroupMode ? "아마존상품그룹" : "상품그룹";
         var groups = _settlementRows
-            .GroupBy(d => ResolveProductGroupLabel(d, _activeChannelType))
+            .GroupBy(d => ResolveSummaryGroupLabel(d, _activeChannelType))
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,
@@ -510,6 +514,22 @@ public class SettlementForm : Form
     /// 아마존 채널: 상품그룹 미지정 시 Msku(=asku)를 그룹 키로 써서 개별 행으로 표시.
     /// 일반 채널: 상품그룹 미지정 시 "(미지정)"으로 한 데 묶음.
     /// </summary>
+    private static bool UsesAmazonGroup(ChannelType? channelType) =>
+        channelType is ChannelType.AmazonUs or ChannelType.AmazonJp;
+
+    /// <summary>
+    /// 분석요약(화면 요약 패널·엑셀 "분석요약" 시트)의 그룹 키. 아마존 채널은 마스터 상품그룹이 채널 단위
+    /// (41.아마존미국) 하나뿐이라 요약이 한 줄로 뭉치므로 아마존상품그룹(ItemModel.AmazonGroup) 기준으로 나눈다.
+    /// 아마존상품그룹이 비어 있는 품목은 매핑SKU로 따로 표시해 누락을 바로 알아볼 수 있게 한다.
+    /// 보고서 저장(ProfitFact)은 다른 보고서와 맞추기 위해 계속 ResolveProductGroupLabel(마스터 상품그룹)을 쓴다.
+    /// </summary>
+    private static string ResolveSummaryGroupLabel(SettlementData data, ChannelType? channelType)
+    {
+        if (!UsesAmazonGroup(channelType)) return ResolveProductGroupLabel(data, channelType);
+        if (string.IsNullOrWhiteSpace(data.Msku)) return "(미매핑)";
+        return !string.IsNullOrWhiteSpace(data.AmazonGroup) ? data.AmazonGroup! : data.Msku!;
+    }
+
     private static string ResolveProductGroupLabel(SettlementData data, ChannelType? channelType = null)
     {
         if (string.IsNullOrWhiteSpace(data.Msku)) return "(미매핑)";
@@ -845,7 +865,8 @@ public class SettlementForm : Form
             var facts = await Task.Run(() =>
             {
                 return rows
-                    .GroupBy(d => ResolveProductGroupLabel(d, activeChannelType))
+                    // 아마존은 아마존상품그룹 기준(광고매핑 TargetGroup과 같은 키라 보고서에서 광고비와 맞물린다).
+                    .GroupBy(d => ResolveSummaryGroupLabel(d, activeChannelType))
                     .Where(g => g.Key != TotalRowLabel)
                     .Select(g => new ProfitFactRow
                     {
@@ -928,6 +949,10 @@ public class SettlementForm : Form
 
                 WriteDetailSheet(package, "분석결과상세", rowsSnapshot, exportChannelType);
                 DiagnosticsLogger.Log("[이익분석 내보내기] 분석결과상세 시트 완료");
+                // 아마존: 아마존상품그룹별 요약을 앞에 추가한다. "분석요약(상품그룹별)" 시트는 보고서 화면·
+                // ProfitResultFileImporter가 시트명/A1="상품그룹"으로 읽으므로 형식 그대로 유지한다.
+                if (UsesAmazonGroup(exportChannelType))
+                    WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(아마존상품그룹별)"), rowsSnapshot, shipmentCount, isEstimated, exportChannelType, byAmazonGroup: true);
                 WriteSummarySheet(package.Workbook.Worksheets.Add("분석요약(상품그룹별)"), rowsSnapshot, shipmentCount, isEstimated, exportChannelType);
                 DiagnosticsLogger.Log("[이익분析 내보내기] 분析요약 시트 완료");
                 if (exportChannelType == ChannelType.CoupangRocket)
@@ -978,27 +1003,37 @@ public class SettlementForm : Form
     private static void WriteDetailSheet(ExcelPackage package, string sheetName, IReadOnlyList<SettlementData> rows, ChannelType? channelType = null)
     {
         var sheet = package.Workbook.Worksheets.Add(sheetName);
-        for (int i = 0; i < DetailHeaders.Length; i++) sheet.Cells[1, i + 1].Value = DetailHeaders[i];
+
+        // 아마존 채널(또는 아마존상품그룹이 지정된 품목이 섞인 경우)만 상품그룹 바로 뒤에 "아마존상품그룹" 열을
+        // 끼워 넣는다. CSKU별 통계 등 이 시트를 읽는 쪽은 헤더명으로 열을 찾으므로 열이 밀려도 무관하다.
+        var includeAmazonGroup = channelType is ChannelType.AmazonUs or ChannelType.AmazonJp
+            || rows.Any(d => !string.IsNullOrWhiteSpace(d.AmazonGroup));
+        var headers = includeAmazonGroup
+            ? [.. DetailHeaders[..2], "아마존상품그룹", .. DetailHeaders[2..]]
+            : DetailHeaders;
+        for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         int row = 2;
         foreach (var data in rows)
         {
-            sheet.Cells[row, 1].Value = data.ChannelCode;
-            sheet.Cells[row, 2].Value = ResolveProductGroupLabel(data, channelType);
-            sheet.Cells[row, 3].Value = data.ProductName;
-            sheet.Cells[row, 4].Value = data.OptionName;
-            sheet.Cells[row, 5].Value = data.Msku;
-            sheet.Cells[row, 6].Value = data.Qty;
-            sheet.Cells[row, 7].Value = data.Revenue;
-            sheet.Cells[row, 8].Value = data.Settlement;
-            sheet.Cells[row, 9].Value = data.Shipping;
-            sheet.Cells[row, 10].Value = data.Fee;
-            sheet.Cells[row, 11].Value = data.Profit;
-            sheet.Cells[row, 12].Value = data.Status;
+            int col = 1;
+            sheet.Cells[row, col++].Value = data.ChannelCode;
+            sheet.Cells[row, col++].Value = ResolveProductGroupLabel(data, channelType);
+            if (includeAmazonGroup) sheet.Cells[row, col++].Value = data.AmazonGroup;
+            sheet.Cells[row, col++].Value = data.ProductName;
+            sheet.Cells[row, col++].Value = data.OptionName;
+            sheet.Cells[row, col++].Value = data.Msku;
+            sheet.Cells[row, col++].Value = data.Qty;
+            sheet.Cells[row, col++].Value = data.Revenue;
+            sheet.Cells[row, col++].Value = data.Settlement;
+            sheet.Cells[row, col++].Value = data.Shipping;
+            sheet.Cells[row, col++].Value = data.Fee;
+            sheet.Cells[row, col++].Value = data.Profit;
+            sheet.Cells[row, col].Value = data.Status;
             row++;
         }
         // 헤더 행만 기준으로 AutoFit(최대 50) — 전체 행 스캔 대비 쿠팡로켓 수천 행에서 수십 배 빠름
-        sheet.Cells[1, 1, 1, DetailHeaders.Length].AutoFitColumns(8, 50);
+        sheet.Cells[1, 1, 1, headers.Length].AutoFitColumns(8, 50);
     }
 
     private static readonly string[] RocketDetailHeaders =
@@ -1035,13 +1070,13 @@ public class SettlementForm : Form
         sheet.Cells[1, 1, 1, RocketDetailHeaders.Length].AutoFitColumns(8, 50);
     }
 
-    private static void WriteSummarySheet(ExcelWorksheet sheet, IReadOnlyList<SettlementData> rows, int shipmentCount, bool isEstimated, ChannelType? channelType = null)
+    private static void WriteSummarySheet(ExcelWorksheet sheet, IReadOnlyList<SettlementData> rows, int shipmentCount, bool isEstimated, ChannelType? channelType = null, bool byAmazonGroup = false)
     {
-        string[] headers = ["상품그룹", "건수", "수량", "매출액", "배송비", "입출고비", "순이익"];
+        string[] headers = [byAmazonGroup ? "아마존상품그룹" : "상품그룹", "건수", "수량", "매출액", "배송비", "입출고비", "순이익"];
         for (int i = 0; i < headers.Length; i++) sheet.Cells[1, i + 1].Value = headers[i];
 
         var groups = rows
-            .GroupBy(d => ResolveProductGroupLabel(d, channelType))
+            .GroupBy(d => byAmazonGroup ? ResolveSummaryGroupLabel(d, channelType) : ResolveProductGroupLabel(d, channelType))
             .Select(g => new ProfitGroupSummary
             {
                 ProductGroup = g.Key,
@@ -1320,6 +1355,7 @@ public class SettlementForm : Form
         var channelSkuRepository = _channelSkuRepository;
         var itemRepository = _itemRepository;
         var channelCode = data.ChannelCode;
+        var allRows = _settlementRows.ToList();
 
         // SkuMapper 생성자는 DB 쿼리를 6회 실행한다(OnLoadSettlementClick에서 먼저 겪은 것과 같은
         // 문제) — 매핑 규칙/CSKU가 쌓인 채널일수록 한 행만 다시 매핑하는 이 경로도 UI 스레드에서
@@ -1328,6 +1364,8 @@ public class SettlementForm : Form
         {
             var skuMapper = new SkuMapper(mappingRepository, channelCode, channelSkuRepository);
             SettlementLoader.ApplyMappingAndProfit(data, skuMapper, itemRepository, channelConfig, channelSkuRepository);
+            // 이 행이 연결 대상(상품 행)이거나 연결행 자체일 수 있으므로 채널 전체 연결을 다시 맞춘다.
+            SettlementLoader.ApplyLinkedRowMapping(allRows, channelConfig);
         });
 
         // 파일을 다시 읽은 게 아니라 원본 열 구성이 바뀌지 않으므로, ReapplyMappingForAllRows와
@@ -1389,6 +1427,10 @@ public class SettlementForm : Form
 
                     SettlementLoader.ApplyMappingAndProfit(data, entry.Mapper, itemRepo, entry.Config, channelSkuRepo, itemCache, cskuCache);
                 }
+
+                // 행별 재매핑이 연결행(쿠폰 행 등)을 매핑 실패로 되돌리므로 채널별로 다시 연결한다.
+                foreach (var (_, config) in mapperCache.Values)
+                    SettlementLoader.ApplyLinkedRowMapping(snapshot, config);
             });
 
             // 매핑 재적용 후에는 원본 열 구성이 바뀌지 않으므로(파일을 새로 읽은 게 아님)
@@ -1582,6 +1624,7 @@ public class SettlementForm : Form
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
 
         _reconcileChannelComboBox = new ComboBox { Size = new Size(160, 25), DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_reconcileChannelComboBox);
         _reconcileChannelComboBox.DataSource = _salesChannelRepository.GetAll();
         _reconcileChannelComboBox.DisplayMember = "ChannelName";
         _reconcileChannelComboBox.ValueMember = "ChannelCode";

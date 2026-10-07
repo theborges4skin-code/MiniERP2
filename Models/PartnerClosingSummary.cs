@@ -15,7 +15,7 @@ public class PartnerClosingSummary
     /// <summary>이미 PartnerClosingTable에 헤더 행이 있으면 그 Id, 없으면 null(라이브 집계 상태).</summary>
     public long? ClosingId { get; set; }
 
-    /// <summary>미확인 / 대조중 / 확정 / 발행완료.</summary>
+    /// <summary>미확인 / 대조중 / 확정 / 출력완료.</summary>
     public string Status { get; set; } = "미확인";
 
     public decimal TotalQty { get; set; }

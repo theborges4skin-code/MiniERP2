@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
@@ -22,10 +23,15 @@ public class CskuStatForm : Form
     private readonly ChannelConfigService _channelConfigService = new();
     private readonly ChannelSkuRepository _channelSkuRepo = new();
     private readonly SettingsService _settingsService = new();
+    private readonly ItemRepository _itemRepo = new();
     private List<ChannelConfig> _channelConfigs = [];
 
     private readonly BindingList<LoadedFileRow> _loadedFiles = [];
     private readonly BindingList<CskuStatLine> _aggregatedLines = [];
+    private readonly BindingList<CskuStatMskuRow> _mskuRows = [];
+
+    /// <summary>거래처 마감에서 불러온 행이 이미 알고 있는 MSKU — (채널, CSKU) → MSKU. ChannelSkuTable 조회 실패 시 대체값.</summary>
+    private readonly Dictionary<(string Channel, string Csku), string> _knownMsku = [];
 
     private decimal _currentExchangeRate;
     private bool _amazonRateAutoFilled;
@@ -39,6 +45,8 @@ public class CskuStatForm : Form
     private TextBox _memoBox = new();
     private ExcelLikeDataGridView _fileGrid = new();
     private ExcelLikeDataGridView _lineGrid = new();
+    private ExcelLikeDataGridView _mskuGrid = new();
+    private ComboBox _viewCombo = new();
     private Label _totalsLabel = new();
     private Label _statusLabel = new();
 
@@ -98,8 +106,11 @@ public class CskuStatForm : Form
         _amazonCheck.CheckedChanged += (s, e) => { if (_amazonCheck.Checked) _rocketCheck.Checked = false; };
         _rocketCheck.CheckedChanged += (s, e) => { if (_rocketCheck.Checked) _amazonCheck.Checked = false; };
         btnAddFiles.Click += (s, e) => AddFiles();
+        var btnAddPartner = new Button { Text = "거래처 마감 불러오기", Size = new Size(140, 30) };
+        btnAddPartner.Click += (s, e) => AddPartnerClosings();
 
         paramPanel.Controls.Add(btnAddFiles);
+        paramPanel.Controls.Add(btnAddPartner);
         paramPanel.Controls.Add(_amazonCheck);
         paramPanel.Controls.Add(_rocketCheck);
         paramPanel.Controls.Add(periodLabel);
@@ -152,6 +163,15 @@ public class CskuStatForm : Form
         actionPanel.Controls.Add(btnExport);
         actionPanel.Controls.Add(_includeRawCheck);
 
+        // 같은 선물세트라도 채널마다 CSKU가 달라 "채널·CSKU별"로는 흩어진다 — MSKU로 다시 합쳐
+        // 온라인+거래처 판매를 한 줄로 보는 보기를 따로 둔다.
+        _viewCombo = new ComboBox { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(4, 5, 0, 0) };
+        _viewCombo.Items.AddRange(["채널·CSKU별", "MSKU별 합산"]);
+        _viewCombo.SelectedIndex = 0;
+        _viewCombo.SelectedIndexChanged += (s, e) => ApplyView();
+        actionPanel.Controls.Add(new Label { Text = "보기:", AutoSize = true, Margin = new Padding(20, 9, 0, 0) });
+        actionPanel.Controls.Add(_viewCombo);
+
         // ── 4행: 총계 3종 ─────────────────────────────────────────────────
         _totalsLabel = new Label
         {
@@ -190,6 +210,37 @@ public class CskuStatForm : Form
         _lineGrid.DataSource = _aggregatedLines;
         _lineGrid.CellDoubleClick += OnLineGridDoubleClick;
 
+        _mskuGrid = new ExcelLikeDataGridView
+        {
+            Dock = DockStyle.Fill,
+            PersistenceKey = "CskuStatForm.MskuGrid",
+            AutoGenerateColumns = false,
+            SelectionMode = DataGridViewSelectionMode.RowHeaderSelect,
+            MultiSelect = true,
+            ReadOnly = true,
+            Visible = false,
+        };
+        var n0 = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight };
+        _mskuGrid.Columns.AddRange(
+            new DataGridViewTextBoxColumn { HeaderText = "MSKU", Name = "Msku", DataPropertyName = "Msku", Width = 140 },
+            new DataGridViewTextBoxColumn { HeaderText = "상품명", Name = "ProductName", DataPropertyName = "ProductName", Width = 200 },
+            new DataGridViewTextBoxColumn { HeaderText = "온라인수량", Name = "OnlineQty", DataPropertyName = "OnlineQty", Width = 75, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "거래처수량", Name = "PartnerQty", DataPropertyName = "PartnerQty", Width = 75, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "합계수량", Name = "Qty", DataPropertyName = "Qty", Width = 75, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "매출액(원)", Name = "Revenue", DataPropertyName = "Revenue", Width = 105, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "온라인이익", Name = "OnlineProfit", DataPropertyName = "OnlineProfit", Width = 95, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "거래처이익", Name = "PartnerProfit", DataPropertyName = "PartnerProfit", Width = 95, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "이익액(원)", Name = "Profit", DataPropertyName = "Profit", Width = 105, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "마진율", Name = "MarginRate", DataPropertyName = "MarginRate", Width = 65, DefaultCellStyle = new DataGridViewCellStyle { Format = "0.0%", Alignment = DataGridViewContentAlignment.MiddleRight } },
+            new DataGridViewTextBoxColumn { HeaderText = "채널수", Name = "ChannelCount", DataPropertyName = "ChannelCount", Width = 55, DefaultCellStyle = n0 },
+            new DataGridViewTextBoxColumn { HeaderText = "채널/거래처", Name = "Channels", DataPropertyName = "Channels", Width = 250 },
+            new DataGridViewTextBoxColumn { HeaderText = "CSKU", Name = "CskuCodes", DataPropertyName = "CskuCodes", Width = 200 }
+        );
+        _mskuGrid.DataSource = _mskuRows;
+        var gridHost = new Panel { Dock = DockStyle.Fill };
+        gridHost.Controls.Add(_lineGrid);
+        gridHost.Controls.Add(_mskuGrid);
+
         // ── 6행: 상태표시줄 ───────────────────────────────────────────────
         _statusLabel = new Label { Dock = DockStyle.Fill, Text = "파일을 추가하세요.", Padding = new Padding(6, 4, 0, 0) };
 
@@ -198,7 +249,7 @@ public class CskuStatForm : Form
         mainLayout.Controls.Add(fileToolPanel, 0, 2);
         mainLayout.Controls.Add(actionPanel, 0, 3);
         mainLayout.Controls.Add(_totalsLabel, 0, 4);
-        mainLayout.Controls.Add(_lineGrid, 0, 5);
+        mainLayout.Controls.Add(gridHost, 0, 5);
         mainLayout.Controls.Add(_statusLabel, 0, 6);
 
         Controls.Add(mainLayout);
@@ -314,6 +365,7 @@ public class CskuStatForm : Form
 
         var allRows = validFiles.SelectMany(f => f.Rows).ToList();
         var lines = CskuStatAggregator.Aggregate(allRows, ResolveChannelName);
+        foreach (var row in allRows.Where(r => r.Msku.Length > 0)) _knownMsku[(row.ChannelCode, row.CskuCode)] = row.Msku;
         foreach (var l in lines) FillChannelSkuInfo(l);
 
         _aggregatedLines.Clear();
@@ -322,6 +374,7 @@ public class CskuStatForm : Form
         _loadedBatchId = null;
 
         UpdateTotalsLabel();
+        RefreshMskuRows();
 
         var warnCount = validFiles.Sum(f => f.Warnings.Count);
         var excludedCount = allRows.Count(r => r.RowClass == CskuStatRowClass.Excluded);
@@ -340,6 +393,13 @@ public class CskuStatForm : Form
     {
         var csku = _channelSkuRepo.GetByChannelAndCskuCode(line.ChannelCode, line.CskuCode);
         line.Msku = csku?.Msku ?? string.Empty;
+        // 미등록 CSKU(주로 수동 거래처 라인 — 채널이 없어 ChannelSkuTable에 없음)는 원본이 알려준 MSKU,
+        // 그것도 없으면 CSKU 자체가 마스터 품목 코드인지 확인해 대체한다.
+        if (line.Msku.Length == 0)
+        {
+            if (_knownMsku.TryGetValue((line.ChannelCode, line.CskuCode), out var known)) line.Msku = known;
+            else if (line.FileKind == CskuFileKind.Partner && _itemRepo.GetBySku(line.CskuCode) != null) line.Msku = line.CskuCode;
+        }
         line.InvoiceDisplayName = csku?.InvoiceDisplayName ?? string.Empty;
     }
 
@@ -391,6 +451,7 @@ public class CskuStatForm : Form
             FillChannelSkuInfo(l);
             _aggregatedLines.Add(l);
         }
+        RefreshMskuRows();
 
         _loadedFiles.Clear();
         foreach (var f in _repo.GetFiles(batchId))
@@ -408,6 +469,51 @@ public class CskuStatForm : Form
 
         UpdateTotalsLabel();
         _statusLabel.Text = $"배치 #{batchId} ({batch.Period}) 불러옴 — 저장된 집계 결과(스냅샷)입니다. 원본 행이 없어 엑셀 내보내기의 예외·미매핑/원본행 시트는 비어 있습니다.";
+    }
+
+    // ── 거래처 마감 불러오기 / MSKU별 보기 ───────────────────────────────
+
+    /// <summary>
+    /// 거래처 마감보드 라인을 DB에서 바로 불러와 거래처 1곳 = 로드 목록 1행으로 추가한다(구분 "거래처").
+    /// 매출장 파일 대신 DB를 쓰므로 CSKU·원가가 이미 붙어 있다. 같은 거래처를 다시 불러오면 교체한다.
+    /// </summary>
+    private void AddPartnerClosings()
+    {
+        var initialPeriod = Regex.IsMatch(_periodBox.Text.Trim(), @"^\d{4}-\d{2}$")
+            ? _periodBox.Text.Trim()
+            : DateTime.Today.AddMonths(-1).ToString("yyyy-MM");
+        using var picker = new PartnerClosingPickerDialog(initialPeriod);
+        if (FormManager.ShowDialogSafe(picker, this) != DialogResult.OK) return;
+
+        var added = 0;
+        foreach (var summary in picker.SelectedSummaries)
+        {
+            var name = $"[거래처마감 {picker.Period}] {summary.PartyName}";
+            foreach (var old in _loadedFiles.Where(f => f.FilePath == name).ToList()) _loadedFiles.Remove(old);
+            _loadedFiles.Add(new LoadedFileRow
+            {
+                FilePath = name,
+                FileKind = CskuFileKind.Partner,
+                Rows = PartnerCskuStatSource.ToSourceRows(summary, name),
+            });
+            added++;
+        }
+
+        if (string.IsNullOrWhiteSpace(_periodBox.Text)) _periodBox.Text = picker.Period;
+        _statusLabel.Text = $"거래처 마감 {added}곳 추가됨 — [집계 실행]을 누르세요. (택배비·할인 라인은 예외로 빠지고, 거래처별 배부운임은 반영되지 않습니다)";
+    }
+
+    private void RefreshMskuRows()
+    {
+        _mskuRows.Clear();
+        foreach (var r in CskuStatMskuSummarizer.Summarize(_aggregatedLines, _currentExchangeRate)) _mskuRows.Add(r);
+    }
+
+    private void ApplyView()
+    {
+        var mskuView = _viewCombo.SelectedIndex == 1;
+        _mskuGrid.Visible = mskuView;
+        _lineGrid.Visible = !mskuView;
     }
 
     // ── 엑셀 내보내기 ────────────────────────────────────────────────────

@@ -266,6 +266,8 @@ public class SettlementLoader
 
             DiagnosticsLogger.Log($"[SettlementLoader] 행 순회 완료 — {rows.Count}건 적재 ({stopwatch.Elapsed.TotalSeconds:F2}s)");
 
+            ApplyLinkedRowMapping(rows, channelConfig);
+
             // 기획서 5.6절 특수 규칙: 채널별 행 필터 및 배송비 후처리
             ProfitCalculator.ApplyCoupangRocketFilter(channelConfig.ChannelType, rows);
             ProfitCalculator.ApplyElevenStreetFilter(channelConfig.ChannelType, rows);
@@ -276,6 +278,57 @@ public class SettlementLoader
         });
 
         return rows;
+    }
+
+    public const string LinkedRowStatus = "매핑(연결행)";
+
+    /// <summary>
+    /// 연결행 매핑(<see cref="ChannelConfig.LinkedRowKeyHeader"/>): 매핑 실패 행이 같은 기준 컬럼 값을 가진
+    /// 매핑된 행을 가지면 그 행의 CSKU로 수량 0 매핑한다 — 오늘의집 쿠폰 행(상품명=쿠폰명)을 주문옵션번호로
+    /// 실제 상품 CSKU에 붙여 CSKU별 이익에 쿠폰 비용이 들어가게 한다. 행별 매핑을 다시 돌린 뒤에도 호출해야
+    /// 하므로, 이전에 연결된 행도 다시 평가한다(연결 대상이 사라지면 매핑 실패로 되돌림).
+    /// </summary>
+    public static void ApplyLinkedRowMapping(List<SettlementData> rows, ChannelConfig channelConfig)
+    {
+        var keyHeader = channelConfig.LinkedRowKeyHeader;
+        if (string.IsNullOrWhiteSpace(keyHeader)) return;
+
+        static bool IsCandidate(SettlementData r) =>
+            r.Status == LinkedRowStatus || (r.Status == "매핑 실패" && string.IsNullOrWhiteSpace(r.Msku));
+
+        string? KeyOf(SettlementData r) => r.RawValues?.GetValueOrDefault(keyHeader)?.Trim();
+
+        var sources = new Dictionary<string, SettlementData>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (row.ChannelCode != channelConfig.ChannelCode || IsCandidate(row) || string.IsNullOrWhiteSpace(row.Msku)) continue;
+            var key = KeyOf(row);
+            if (!string.IsNullOrEmpty(key)) sources.TryAdd(key, row);
+        }
+
+        var cfsMode = channelConfig.GrowthCfsFee != null && channelConfig.ChannelType == ChannelType.CoupangGrowth;
+        foreach (var row in rows)
+        {
+            if (row.ChannelCode != channelConfig.ChannelCode || !IsCandidate(row)) continue;
+            var key = KeyOf(row);
+            if (!string.IsNullOrEmpty(key) && sources.TryGetValue(key, out var source))
+            {
+                row.Msku = source.Msku;
+                row.ProductGroup = source.ProductGroup;
+                row.AmazonGroup = source.AmazonGroup;
+                row.Status = LinkedRowStatus;
+                // 수량 0 — 원가 차감 없이 행 금액(쿠폰 등)만 이익에 반영된다.
+                row.Profit = ProfitCalculator.Calculate(channelConfig.ChannelType, row.Settlement, 0m, 0, row.Shipping, row.Fee, cfsMode);
+            }
+            else if (row.Status == LinkedRowStatus)
+            {
+                row.Msku = null;
+                row.ProductGroup = null;
+                row.AmazonGroup = null;
+                row.Status = "매핑 실패";
+                row.Profit = 0m;
+            }
+        }
     }
 
     /// <summary>
@@ -318,6 +371,7 @@ public class SettlementLoader
         {
             data.Profit = 0m;
             data.ProductGroup = null;
+            data.AmazonGroup = null;
             return;
         }
 
@@ -348,6 +402,7 @@ public class SettlementLoader
         }
 
         data.ProductGroup = item?.ProductGroup;
+        data.AmazonGroup = item?.AmazonGroup;
         if (item == null)
         {
             data.Status = "원가 정보 없음";

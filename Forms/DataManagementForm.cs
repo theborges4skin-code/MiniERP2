@@ -1005,6 +1005,7 @@ public class DataManagementForm : Form
         var channels = new List<SalesChannel> { new() { ChannelCode = "", ChannelName = "(채널 선택)" } };
         channels.AddRange(_salesChannelRepository.GetAll());
         _adImportChannelCombo = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_adImportChannelCombo);
         _adImportChannelCombo.DataSource = channels;
         _adImportChannelCombo.DisplayMember = "ChannelName";
         _adImportChannelCombo.ValueMember = "ChannelCode";

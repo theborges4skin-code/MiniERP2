@@ -12,6 +12,7 @@ namespace MiniERP2.Services;
 public static class ProfitResultFileImporter
 {
     public const string SummarySheetName = "분석요약(상품그룹별)";
+    public const string AmazonSummarySheetName = "분석요약(아마존상품그룹별)";
 
     public record Result(string ChannelCode, string ChannelName, IReadOnlyList<ProfitFactRow> Facts, string FileName);
 
@@ -34,9 +35,12 @@ public static class ProfitResultFileImporter
         if (string.IsNullOrWhiteSpace(channelCode))
             throw new InvalidOperationException($"{fileName}: _META에 channel_code가 없습니다.");
 
-        var sheet = package.Workbook.Worksheets[SummarySheetName]
+        // 아마존 결과파일은 아마존상품그룹별 요약을 우선 쓴다(마감·이익분석의 보고서 저장과 같은 그룹 키).
+        var amazonSheet = package.Workbook.Worksheets[AmazonSummarySheetName];
+        var useAmazon = amazonSheet?.Cells[1, 1].Text?.Trim() == "아마존상품그룹";
+        var sheet = useAmazon ? amazonSheet! : package.Workbook.Worksheets[SummarySheetName]
             ?? throw new InvalidOperationException($"{fileName}: '{SummarySheetName}' 시트가 없습니다.");
-        if (sheet.Cells[1, 1].Text?.Trim() != "상품그룹")
+        if (!useAmazon && sheet.Cells[1, 1].Text?.Trim() != "상품그룹")
             throw new InvalidOperationException($"{fileName}: '{SummarySheetName}' 시트 A1이 '상품그룹'이 아닙니다.");
 
         int Find(string header)

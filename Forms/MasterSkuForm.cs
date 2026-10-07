@@ -109,6 +109,9 @@ public class MasterSkuForm : Form
             new DataGridViewTextBoxColumn { Name = "ItemName", HeaderText = "상품명", DataPropertyName = "ItemName", Width = 250 },
             new DataGridViewTextBoxColumn { Name = "CostPrice", HeaderText = "원가", DataPropertyName = "CostPrice", Width = 100 },
             new DataGridViewTextBoxColumn { Name = "ProductGroup", HeaderText = "상품그룹", DataPropertyName = "ProductGroup", Width = 120 },
+            // 빈 칸으로 지우면 null 대신 ""로 저장 — ItemRepository.Upsert는 null을 "기존 값 유지"로 취급한다.
+            new DataGridViewTextBoxColumn { Name = "AmazonGroup", HeaderText = "아마존상품그룹", DataPropertyName = "AmazonGroup", Width = 110,
+                DefaultCellStyle = new DataGridViewCellStyle { DataSourceNullValue = string.Empty } },
             new DataGridViewTextBoxColumn { Name = "Reserve1", HeaderText = "예비1", DataPropertyName = "Reserve1", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve2", HeaderText = "예비2", DataPropertyName = "Reserve2", Width = 120 },
             new DataGridViewTextBoxColumn { Name = "Reserve3", HeaderText = "예비3", DataPropertyName = "Reserve3", Width = 120 },
@@ -751,13 +754,22 @@ public class MasterSkuForm : Form
             for (var rowIndex = 0; rowIndex < exportItems.Count; rowIndex++)
             {
                 var item = exportItems[rowIndex];
-                worksheet.Cells[rowIndex + 2, 1].Value = item.Sku;
-                worksheet.Cells[rowIndex + 2, 2].Value = item.ItemName;
-                worksheet.Cells[rowIndex + 2, 3].Value = item.CostPrice;
-                worksheet.Cells[rowIndex + 2, 4].Value = item.ProductGroup;
-                worksheet.Cells[rowIndex + 2, 5].Value = item.Reserve1;
-                worksheet.Cells[rowIndex + 2, 6].Value = item.Reserve2;
-                worksheet.Cells[rowIndex + 2, 7].Value = item.Reserve3;
+                // 헤더를 보이는 열 순서대로 썼으므로 값도 같은 열 순서로 채운다(열 숨김/순서 변경 시 어긋나지 않게).
+                for (var colIndex = 0; colIndex < visibleColumns.Count; colIndex++)
+                {
+                    worksheet.Cells[rowIndex + 2, colIndex + 1].Value = visibleColumns[colIndex].Name switch
+                    {
+                        "Sku" => item.Sku,
+                        "ItemName" => item.ItemName,
+                        "CostPrice" => item.CostPrice,
+                        "ProductGroup" => item.ProductGroup,
+                        "AmazonGroup" => item.AmazonGroup,
+                        "Reserve1" => item.Reserve1,
+                        "Reserve2" => item.Reserve2,
+                        "Reserve3" => item.Reserve3,
+                        _ => null,
+                    };
+                }
             }
 
             worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();

@@ -38,6 +38,9 @@ public class SettlementData
     /// <summary>매핑된 마스터SKU의 상품그룹(채널의 CSKU 코드 해석 결과). 그리드에 바로 표시하기 위해 매핑 시점에 캐싱한다.</summary>
     public string? ProductGroup { get; set; }
 
+    /// <summary>매핑된 마스터SKU의 아마존상품그룹(ItemModel.AmazonGroup). ProductGroup과 같은 시점에 캐싱한다.</summary>
+    public string? AmazonGroup { get; set; }
+
     /// <summary>
     /// 정산 파일 원본 행의 (헤더명 -> 값) 전체. "원본데이터" 시트 내보내기 및 추후 디버깅용으로
     /// SettlementLoader가 채워준다. 표준 필드로 매핑되지 않은 열도 모두 포함된다.

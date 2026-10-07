@@ -30,8 +30,8 @@ public class ItemRepository
             using var upsertCommand = connection.CreateCommand();
             upsertCommand.Transaction = transaction;
             upsertCommand.CommandText = """
-                INSERT INTO ItemTable (Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit)
-                VALUES ($sku, $itemName, $costPrice, $reserve1, $reserve2, $reserve3, $productGroup, $unit)
+                INSERT INTO ItemTable (Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit, AmazonGroup)
+                VALUES ($sku, $itemName, $costPrice, $reserve1, $reserve2, $reserve3, $productGroup, $unit, $amazonGroup)
                 ON CONFLICT(Sku) DO UPDATE SET
                     ItemName = excluded.ItemName,
                     CostPrice = excluded.CostPrice,
@@ -39,7 +39,10 @@ public class ItemRepository
                     Reserve2 = excluded.Reserve2,
                     Reserve3 = excluded.Reserve3,
                     ProductGroup = excluded.ProductGroup,
-                    Unit = excluded.Unit
+                    Unit = excluded.Unit,
+                    -- 아마존상품그룹을 모르는 호출부(신규 품목 다이얼로그·레거시 이관 등)가 null로 덮어써 지우지 않도록,
+                    -- null이면 기존 값을 유지한다. 지우려면 빈 문자열을 넘긴다.
+                    AmazonGroup = COALESCE(excluded.AmazonGroup, ItemTable.AmazonGroup)
                 """;
             upsertCommand.Parameters.AddWithValue("$sku", item.Sku);
             upsertCommand.Parameters.AddWithValue("$itemName", item.ItemName);
@@ -49,6 +52,7 @@ public class ItemRepository
             upsertCommand.Parameters.AddWithValue("$reserve3", (object?)item.Reserve3 ?? DBNull.Value);
             upsertCommand.Parameters.AddWithValue("$productGroup", (object?)item.ProductGroup ?? DBNull.Value);
             upsertCommand.Parameters.AddWithValue("$unit", item.Unit);
+            upsertCommand.Parameters.AddWithValue("$amazonGroup", (object?)item.AmazonGroup ?? DBNull.Value);
             upsertCommand.ExecuteNonQuery();
 
             transaction.Commit();
@@ -157,7 +161,7 @@ public class ItemRepository
     {
         using var connection = SqliteConnectionFactory.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit FROM ItemTable";
+        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit, AmazonGroup FROM ItemTable";
 
         var items = new List<ItemModel>();
         using var reader = command.ExecuteReader();
@@ -199,7 +203,7 @@ public class ItemRepository
     private static ItemModel? GetBySku(SqliteConnection connection, string sku)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit FROM ItemTable WHERE Sku = $sku";
+        command.CommandText = "SELECT Sku, ItemName, CostPrice, Reserve1, Reserve2, Reserve3, ProductGroup, Unit, AmazonGroup FROM ItemTable WHERE Sku = $sku";
         command.Parameters.AddWithValue("$sku", sku);
 
         using var reader = command.ExecuteReader();
@@ -216,5 +220,6 @@ public class ItemRepository
         Reserve3 = reader.IsDBNull(5) ? null : reader.GetString(5),
         ProductGroup = reader.IsDBNull(6) ? null : reader.GetString(6),
         Unit = reader.IsDBNull(7) ? "kg" : reader.GetString(7),
+        AmazonGroup = reader.IsDBNull(8) ? null : reader.GetString(8),
     };
 }

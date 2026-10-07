@@ -28,7 +28,7 @@ public class OnlineReportDataSource
 
         // 마감보드에서 아직 확정되지 않은 거래처가 보고서에 들어갔으면 알려준다.
         var draft = closings
-            .Where(c => c.Status is not ("확정" or "발행완료"))
+            .Where(c => c.Status is not ("확정" or "출력완료"))
             .Where(c => config.Partners.Any(p => p.PartyNameKeywords.Any(k => !string.IsNullOrWhiteSpace(k) && c.PartyName.Contains(k, StringComparison.OrdinalIgnoreCase))))
             .Select(c => $"{c.PartyName}({c.Status})")
             .ToList();

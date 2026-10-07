@@ -112,6 +112,7 @@ public class ManualGrowthClosingForm : Form
         var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         row1.Controls.Add(new Label { Text = "채널:", AutoSize = true, Margin = new Padding(3, 8, 0, 0) });
         _channelCombo = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(SalesChannel.ChannelName) };
+        ChannelPickerPopup.Attach(_channelCombo);
         _channelCombo.SelectedIndexChanged += (s, e) => OnChannelChanged();
         row1.Controls.Add(_channelCombo);
         var createChannelBtn = new Button { Text = $"'{DefaultChannelName}' 채널 등록", AutoSize = true };

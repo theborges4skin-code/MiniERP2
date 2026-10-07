@@ -68,6 +68,7 @@ public class PartnerShipmentBackfillForm : Form
         var row1 = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
         row1.Controls.Add(L("채널:"));
         row1.Controls.Add(_channelCombo);
+        ChannelPickerPopup.Attach(_channelCombo);
         row1.Controls.Add(L("마감월:"));
         row1.Controls.Add(_periodCombo);
         row1.Controls.Add(L("택배사:"));

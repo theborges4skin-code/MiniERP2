@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
 
@@ -59,6 +60,7 @@ public class ChannelTransferDialog : Form
         layout.Controls.Add(new Label { Text = "대상 채널", AutoSize = true, Margin = new Padding(0, 4, 0, 2) });
         var channels = _channelRepo.GetAll();
         _targetChannelCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_targetChannelCombo);
         _targetChannelCombo.DataSource = channels;
         _targetChannelCombo.DisplayMember = nameof(SalesChannel.ChannelName);
         _targetChannelCombo.ValueMember = nameof(SalesChannel.ChannelCode);

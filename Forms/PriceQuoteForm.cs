@@ -147,6 +147,7 @@ public class PriceQuoteForm : Form
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(6, 4, 0, 0) };
 
         _filterChannelCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+        ChannelPickerPopup.Attach(_filterChannelCombo);
         _filterChannelCombo.SelectedIndexChanged += (s, e) => RefreshList();
 
         _filterPriceKindCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90 };
@@ -223,6 +224,7 @@ public class PriceQuoteForm : Form
 
         _quoteNoText = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
         _channelCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_channelCombo);
         _channelCombo.SelectedIndexChanged += (s, e) => UpdateChannelHint();
         var channelPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         channelPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));

@@ -179,6 +179,7 @@ public class OutboundHistoryForm : Form
         channels.AddRange(_salesChannelRepository.GetAll());
         RefreshChannelNameCache();
         _channelComboBox = new ComboBox { Size = new Size(160, 25), DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_channelComboBox);
         _channelComboBox.DataSource = channels;
         _channelComboBox.DisplayMember = "ChannelName";
         _channelComboBox.ValueMember = "ChannelCode";

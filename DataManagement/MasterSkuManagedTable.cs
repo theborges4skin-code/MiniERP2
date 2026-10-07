@@ -19,6 +19,7 @@ public class MasterSkuManagedTable : IManagedDataTable
         table.Columns.Add("ItemName", typeof(string));
         table.Columns.Add("CostPrice", typeof(decimal));
         table.Columns.Add("ProductGroup", typeof(string));
+        table.Columns.Add("AmazonGroup", typeof(string));
         table.Columns.Add("Reserve1", typeof(string));
         table.Columns.Add("Reserve2", typeof(string));
         table.Columns.Add("Reserve3", typeof(string));
@@ -26,7 +27,7 @@ public class MasterSkuManagedTable : IManagedDataTable
 
         foreach (var item in _repository.GetAll())
         {
-            table.Rows.Add(item.Sku, item.ItemName, item.CostPrice, item.ProductGroup, item.Reserve1, item.Reserve2, item.Reserve3);
+            table.Rows.Add(item.Sku, item.ItemName, item.CostPrice, item.ProductGroup, item.AmazonGroup, item.Reserve1, item.Reserve2, item.Reserve3);
         }
         table.AcceptChanges();
         return table;
@@ -50,6 +51,7 @@ public class MasterSkuManagedTable : IManagedDataTable
             ItemName = row["ItemName"] as string ?? string.Empty,
             CostPrice = ToDecimal(row["CostPrice"]),
             ProductGroup = row["ProductGroup"] as string,
+            AmazonGroup = row["AmazonGroup"] as string ?? string.Empty,
             Reserve1 = row["Reserve1"] as string,
             Reserve2 = row["Reserve2"] as string,
             Reserve3 = row["Reserve3"] as string,

@@ -1,4 +1,5 @@
 using MiniERP2.Models;
+using MiniERP2.Services;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 
@@ -44,6 +45,15 @@ public static class CskuStatExporter
         {
             WriteAggregateSheet(package, "아마존", batch, lines.Where(l => l.FileKind == CskuFileKind.Amazon).ToList(), isAmazon: true);
         }
+
+        if (lines.Any(l => l.FileKind == CskuFileKind.Partner))
+        {
+            WriteAggregateSheet(package, "거래처", batch, lines.Where(l => l.FileKind == CskuFileKind.Partner).ToList(), isAmazon: false);
+        }
+
+        // 온라인(일반·로켓그로스·아마존 원화환산)+거래처를 MSKU 단위로 합친 시트 — 같은 선물세트가 채널마다
+        // CSKU가 달라도 한 줄로 모아 본다.
+        WriteMskuSheet(package, batch, CskuStatMskuSummarizer.Summarize(lines, batch.ExchangeRate));
 
         WriteExceptionSheet(package, sourceRows.Where(r => r.RowClass != CskuStatRowClass.Normal).ToList(), resolveChannelName);
 
@@ -107,6 +117,46 @@ public static class CskuStatExporter
         }
 
         sheet.Cells[1, 1, 1, headers.Length].AutoFitColumns(8, 50);
+    }
+
+    private static readonly string[] MskuHeaders =
+        ["기간", "MSKU", "상품명", "온라인수량", "거래처수량", "합계수량", "온라인매출(원)", "거래처매출(원)", "매출액(원)", "온라인이익(원)", "거래처이익(원)", "이익액(원)", "마진율", "채널수", "채널/거래처", "CSKU"];
+
+    private static void WriteMskuSheet(ExcelPackage package, CskuStatBatch batch, IReadOnlyList<CskuStatMskuRow> rows)
+    {
+        var sheet = package.Workbook.Worksheets.Add("MSKU합산");
+        for (int i = 0; i < MskuHeaders.Length; i++) sheet.Cells[1, i + 1].Value = MskuHeaders[i];
+
+        int row = 2;
+        foreach (var r in rows)
+        {
+            int col = 1;
+            sheet.Cells[row, col++].Value = batch.Period;
+            sheet.Cells[row, col++].Value = r.Msku;
+            sheet.Cells[row, col++].Value = r.ProductName;
+            sheet.Cells[row, col++].Value = r.OnlineQty;
+            sheet.Cells[row, col++].Value = r.PartnerQty;
+            sheet.Cells[row, col++].Value = r.Qty;
+            foreach (var v in new[] { r.OnlineRevenue, r.PartnerRevenue, r.Revenue, r.OnlineProfit, r.PartnerProfit, r.Profit })
+            {
+                sheet.Cells[row, col].Value = v;
+                sheet.Cells[row, col].Style.Numberformat.Format = "#,##0";
+                col++;
+            }
+            if (r.MarginRate.HasValue)
+            {
+                sheet.Cells[row, col].Value = r.MarginRate.Value;
+                sheet.Cells[row, col].Style.Numberformat.Format = "0.0%";
+            }
+            col++;
+            sheet.Cells[row, col++].Value = r.ChannelCount;
+            sheet.Cells[row, col++].Value = r.Channels;
+            sheet.Cells[row, col].Value = r.CskuCodes;
+            row++;
+        }
+
+        sheet.Cells[1, 1, 1, MskuHeaders.Length].Style.Font.Bold = true;
+        sheet.Cells[1, 1, 1, MskuHeaders.Length].AutoFitColumns(8, 50);
     }
 
     private static void WriteExceptionSheet(ExcelPackage package, IReadOnlyList<CskuStatSourceRow> rows, Func<string, string> resolveChannelName)

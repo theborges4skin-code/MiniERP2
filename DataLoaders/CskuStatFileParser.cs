@@ -117,7 +117,7 @@ public static class CskuStatFileParser
     /// <summary>§1.3 — 상태 문자열만으로 판정한다(매핑SKU 공백 여부로 판정하지 않음).</summary>
     private static CskuStatRowClass ClassifyStatus(string status) => status switch
     {
-        "매핑(1:1)" or "매핑(조건)" or "매핑(임시)" or "매핑(예외)" => CskuStatRowClass.Normal,
+        "매핑(1:1)" or "매핑(조건)" or "매핑(임시)" or "매핑(예외)" or "매핑(연결행)" => CskuStatRowClass.Normal,
         "제외(배송비 등)" => CskuStatRowClass.Excluded,
         "매핑 키 없음" or "매핑 실패" or "원가 정보 없음" => CskuStatRowClass.Unmapped,
         _ => CskuStatRowClass.Unmapped,

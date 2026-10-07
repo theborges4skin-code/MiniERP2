@@ -152,6 +152,7 @@ public class MappingForm : Form
 
         var channelLabel = new Label { Text = "채널:", Anchor = AnchorStyles.Left, AutoSize = true, Padding = new Padding(0, 5, 0, 0) };
         _channelComboBox = new ComboBox { Size = new Size(200, 25), DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_channelComboBox);
         _channelComboBox.SelectedIndexChanged += OnChannelComboBoxSelectedIndexChanged;
 
         var btnSave = new Button { Text = "저장", Size = new Size(100, 30) };
@@ -973,6 +974,7 @@ public class MappingForm : Form
 
         filterPanel.Controls.Add(new Label { Text = "채널:", AutoSize = true, Padding = new Padding(10, 6, 2, 0) });
         _unifiedFilterChannelCombo = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+        ChannelPickerPopup.Attach(_unifiedFilterChannelCombo);
         _unifiedFilterChannelCombo.SelectedIndexChanged += (s, e) => ApplyUnifiedRuleFilter();
         filterPanel.Controls.Add(_unifiedFilterChannelCombo);
 

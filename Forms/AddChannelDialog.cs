@@ -1,3 +1,4 @@
+using MiniERP2.Controls;
 using MiniERP2.Models;
 
 namespace MiniERP2.Forms;
@@ -52,6 +53,7 @@ public class AddChannelDialog : Form
         }
         _cmbCopyFrom.DisplayMember = "ChannelName";
         _cmbCopyFrom.SelectedIndex = 0;
+        ChannelPickerPopup.Attach(_cmbCopyFrom);
 
         var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var btnOk = new Button { Text = "확인", Width = 80 };

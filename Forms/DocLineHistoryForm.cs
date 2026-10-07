@@ -84,6 +84,7 @@ public class DocLineHistoryForm : Form
         var toolStrip = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
 
         _channelCombo = new ComboBox { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = nameof(SalesChannel.ChannelName) };
+        ChannelPickerPopup.Attach(_channelCombo);
         // 전화주문 등 1회성 거래처도 실제 채널로 등록하는 걸 권장하기로 했으나(사용자 상담), 그러면
         // 채널 목록이 계속 늘어나 콤보가 지저분해질 수 있다는 우려가 있었다 — 문서 1건뿐인(=한 번도
         // 재주문이 없었던) 채널을 걸러 보여주는 체크박스로 대응한다(GetDocCountByChannel 참고).
