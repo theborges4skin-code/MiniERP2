@@ -5,6 +5,7 @@ using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Services;
 using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -556,7 +557,9 @@ public class PartnerClosingForm : Form
     /// <summary>
     /// 배송비 라인을 추가한다(단가 VAT포함, 기본 3,000원 × 적용 수량, 일자 = 마감월 말일). 채널 경유
     /// 거래처는 그 채널의 배송비 CSKU(마스터SKU 'shipping', 없으면 새로 만듦)로 출고이력에 넣고,
-    /// 수동 거래처는 '택배비' 라인(원가=단가, 이익 0)으로 넣는다. 수량 기본값은 이번 달 송장 수.
+    /// 수동 거래처는 '택배비' 라인(원가=단가, 이익 0)으로 넣는다. 채널 쪽도 원가=단가(매입가)로 넣어 이익 0
+    /// — 배송비는 손익 계산 없이 그대로 비용으로 본다. 수량 기본값은 이번 달 송장 중 아직 배송비가 청구되지
+    /// 않은 송장 수(OFS에서 송장별로 청구한 묶음과, 이미 이 버튼으로 추가한 수량을 뺀 값 — 이중 청구 방지).
     /// </summary>
     private void OnAddShippingClick(object? sender, EventArgs e)
     {
@@ -576,16 +579,21 @@ public class PartnerClosingForm : Form
         var period = CurrentPeriod;
         var periodEnd = DateTime.ParseExact(period, "yyyy-MM", CultureInfo.InvariantCulture).AddMonths(1).AddDays(-1);
         string? channelCode = row.IsManual ? null : row.PartyKey["CH:".Length..];
-        var shippingCskus = channelCode == null ? [] : _channelSkuRepo.GetAllByChannel(channelCode).Where(c => c.Msku == "shipping").ToList();
+        var shippingFeeLines = new ShippingFeeLineService(_channelSkuRepo);
 
         var suggested = 0;
         if (channelCode != null)
         {
-            var shippingCodes = shippingCskus.Select(c => c.CskuCode).ToHashSet(StringComparer.Ordinal);
-            suggested = _outboundRepo.GetForClosingPeriod(channelCode, period)
-                .Where(d => !shippingCodes.Contains(string.IsNullOrWhiteSpace(d.CskuCode) ? d.MskuCode : d.CskuCode!))
-                .Select(d => string.IsNullOrWhiteSpace(d.ShipmentGroupKey) ? $"#{d.Id}" : d.ShipmentGroupKey)
-                .Distinct().Count();
+            var shippingCodes = shippingFeeLines.GetShippingCskuCodes(channelCode);
+            var lines = _outboundRepo.GetForClosingPeriod(channelCode, period);
+            bool IsShipping(OutboundDetail d) => shippingCodes.Contains(string.IsNullOrWhiteSpace(d.CskuCode) ? d.MskuCode : d.CskuCode!);
+            static string GroupOf(OutboundDetail d) => string.IsNullOrWhiteSpace(d.ShipmentGroupKey) ? $"#{d.Id}" : d.ShipmentGroupKey;
+
+            var productGroups = lines.Where(d => !IsShipping(d)).Select(GroupOf).ToHashSet();
+            var shippingLines = lines.Where(IsShipping).ToList();
+            var chargedGroups = shippingLines.Select(GroupOf).Where(productGroups.Contains).ToHashSet();
+            var manualShippingQty = shippingLines.Where(d => !productGroups.Contains(GroupOf(d))).Sum(d => d.Qty);
+            suggested = Math.Max(0, productGroups.Count - chargedGroups.Count - manualShippingQty);
         }
 
         using var dlg = new PartnerShippingFeeDialog(row.PartyName, period, suggested);
@@ -601,20 +609,12 @@ public class PartnerClosingForm : Form
         }
         else
         {
-            var csku = shippingCskus.FirstOrDefault();
-            if (csku == null)
-            {
-                csku = new ChannelSkuModel
-                {
-                    ChannelCode = channelCode, CskuCode = $"{row.PartyName}_ship", Msku = "shipping",
-                    SupplyPrice = dlg.UnitPrice, InvoiceDisplayName = "배송비",
-                };
-                _channelSkuRepo.Upsert(csku, "거래처 마감보드 배송비 추가 — 배송비 CSKU 자동 생성");
-            }
+            var csku = shippingFeeLines.EnsureShippingCsku(channelCode, row.PartyName, dlg.UnitPrice, "거래처 마감보드 배송비 추가 — 배송비 CSKU 자동 생성");
             _outboundRepo.AddManualEntry(new OutboundDetail
             {
                 ChannelCode = channelCode, MskuCode = csku.CskuCode, CskuCode = csku.CskuCode,
-                Qty = dlg.Qty, SupplyPrice = dlg.UnitPrice, ProductName = string.IsNullOrWhiteSpace(csku.InvoiceDisplayName) ? "배송비" : csku.InvoiceDisplayName!,
+                Qty = dlg.Qty, SupplyPrice = dlg.UnitPrice, PurchasePrice = dlg.UnitPrice,
+                ProductName = ShippingFeeLineService.DisplayName(csku),
                 Remark = "배송비 추가", ConfirmedAt = periodEnd,
             });
         }

@@ -46,6 +46,24 @@ public class ChannelConfig
         "채널). 실배송비만 청구하는 온라인 거래처 채널에 씁니다. 0이면 사용하지 않습니다.")]
     public decimal ActualShippingFeePerShipment { get; set; }
 
+    [Category("거래처 마감 배송비")]
+    [DisplayName("OFS 배송비 청구 — 기본 체크")]
+    [Description("체크하면 OFS 택배사 출력 미리보기에서 이 채널의 송장마다 '배송비 청구'가 기본으로 체크됩니다" +
+        "(투유처럼 송장마다 청구하는 거래처). 체크하지 않으면 기본 꺼짐이고 필요한 송장만 직접 체크합니다(푸디처럼 " +
+        "건마다 판단하는 거래처). 체크된 송장은 발주확정 시 배송비 라인 1줄이 함께 저장돼 거래처 마감보드 금액에 " +
+        "자동으로 들어갑니다(원가 = 청구액, 이익 0).")]
+    public bool OfsChargeShippingFeeByDefault { get; set; }
+
+    [Category("거래처 마감 배송비")]
+    [DisplayName("OFS 배송비 청구 — 기본 금액(원, VAT포함)")]
+    [Description("OFS에서 배송비 청구 송장에 기본으로 들어가는 금액. 송장마다 미리보기에서 바꿀 수 있습니다.")]
+    public decimal OfsShippingFeeAmount { get; set; } = 3000m;
+
+    [Category("거래처 마감 배송비")]
+    [DisplayName("OFS 배송비 청구 — 금액 선택지")]
+    [Description("OFS 미리보기 오른쪽 클릭 메뉴에 나오는 청구액 선택지(쉼표로 구분). 예: 3000,4500(중량물)")]
+    public string OfsShippingFeePresets { get; set; } = "3000,4500";
+
     [Category("기본 정보")]
     [DisplayName("연결행 기준 컬럼명")]
     [Description("정산서에서 매핑에 실패한 행이 이 컬럼 값이 같은 다른 행(이미 매핑된 상품 행)을 가지면, " +

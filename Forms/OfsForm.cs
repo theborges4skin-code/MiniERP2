@@ -7,6 +7,7 @@ using MiniERP2.Database;
 using MiniERP2.Exporters;
 using MiniERP2.Mapping;
 using MiniERP2.Models;
+using MiniERP2.Services;
 using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -27,6 +28,7 @@ public class OfsForm : Form
     private readonly CourierExporter _courierExporter = new();
     private readonly OrderLoader _orderLoader = new();
     private readonly ItemRepository _itemRepository = new();
+    private readonly ShippingFeeLineService _shippingFeeLines = new();
 
     private ExcelLikeDataGridView _ordersGrid = new();
     private ExcelLikeDataGridView _previewGrid = new();
@@ -744,6 +746,8 @@ public class OfsForm : Form
             var outboundDetails = new List<OutboundDetail>();
             var failedOrders = new List<OfsOrderItem>();
             var saveConflicts = new List<OutboundSaveConflict>();
+            var shippingResult = (Charged: 0, Amount: 0m, Removed: 0);
+            var channelConfigsByCode = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
 
             await Task.Run(() =>
             {
@@ -785,6 +789,7 @@ public class OfsForm : Form
                 if (outboundDetails.Any())
                 {
                     saveConflicts = _outboundRepository.SaveOutbound(outboundDetails);
+                    shippingResult = SaveShippingFeeLines(ordersToSave, outboundDetails, channelConfigsByCode);
                 }
             });
 
@@ -803,6 +808,11 @@ public class OfsForm : Form
 
             // 저장 성공/실패에 따라 UI 업데이트
             UpdateOrderStatusAfterSave(outboundDetails, failedOrders);
+            if (shippingResult.Charged > 0 || shippingResult.Removed > 0)
+            {
+                var removedNote = shippingResult.Removed > 0 ? $", 청구 해제로 기존 배송비 라인 {shippingResult.Removed}건 삭제" : "";
+                _statusLabel.Text += $"  |  배송비 청구 {shippingResult.Charged}건 {shippingResult.Amount:N0}원{removedNote}";
+            }
             return true;
         }
         catch (Exception ex)
@@ -815,6 +825,67 @@ public class OfsForm : Form
         {
             Cursor = Cursors.Default;
         }
+    }
+
+    /// <summary>
+    /// 발주확정된 송장(묶음)마다 배송비 청구 여부를 보고, 청구하는 송장엔 배송비 라인 1줄(채널 배송비 CSKU,
+    /// 수량 1, 납품가=원가=청구액)을 같은 묶음키로 저장하고, 청구하지 않는 송장엔 예전에 저장해 둔 배송비
+    /// 라인이 있으면 지운다(청구를 끄고 다시 발주확정한 경우). 묶음키+CSKU가 같으면 SaveOutbound가 덮어쓰므로
+    /// 다시 저장해도 중복되지 않는다. 백그라운드 스레드에서 호출된다(UI 접근 금지).
+    /// </summary>
+    private (int Charged, decimal Amount, int Removed) SaveShippingFeeLines(
+        List<OfsOrderItem> savedOrders, List<OutboundDetail> savedDetails, Dictionary<string, ChannelConfig> configsByCode)
+    {
+        var savedGroupKeys = savedDetails.Select(d => (d.ChannelCode, d.ShipmentGroupKey)).ToHashSet();
+        var groups = savedOrders
+            .Where(o => !string.IsNullOrEmpty(o.ChannelCode))
+            .GroupBy(o => (ChannelCode: o.ChannelCode!, GroupKey: ShipmentGrouping.GetEffectiveGroupId(o)))
+            .Where(g => savedGroupKeys.Contains((g.Key.ChannelCode, g.Key.GroupKey)))
+            .ToList();
+
+        var lines = new List<OutboundDetail>();
+        var removed = 0;
+        foreach (var channelGroups in groups.GroupBy(g => g.Key.ChannelCode))
+        {
+            var channelCode = channelGroups.Key;
+            var channelName = configsByCode.GetValueOrDefault(channelCode)?.ChannelName ?? channelCode;
+            var decided = channelGroups.Select(g => (Group: g, Fee: ResolveShippingFee(g.ToList(), configsByCode))).ToList();
+
+            var uncharged = decided.Where(x => !x.Fee.Charge).Select(x => x.Group.Key.GroupKey).ToList();
+            if (uncharged.Count > 0)
+            {
+                var shippingCodes = _shippingFeeLines.GetShippingCskuCodes(channelCode);
+                removed += _outboundRepository.DeleteShippingFeeLines(channelCode, uncharged, shippingCodes);
+            }
+
+            var charged = decided.Where(x => x.Fee.Charge).ToList();
+            if (charged.Count == 0) continue;
+            var csku = _shippingFeeLines.EnsureShippingCsku(channelCode, channelName, charged[0].Fee.Amount, "OFS 배송비 청구 — 배송비 CSKU 자동 생성");
+            foreach (var (group, fee) in charged)
+            {
+                var first = group.First();
+                lines.Add(new OutboundDetail
+                {
+                    ChannelCode = channelCode,
+                    OrderNo = first.OrderNo ?? string.Empty,
+                    ShipmentGroupKey = group.Key.GroupKey,
+                    TrackingNo = group.Select(o => o.TrackingNo).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)) ?? string.Empty,
+                    MskuCode = csku.CskuCode,
+                    Qty = 1,
+                    SupplyPrice = fee.Amount,
+                    // 배송비는 손익 계산 없이 그대로 비용으로 본다 — 원가 = 청구액(이익 0).
+                    PurchasePrice = fee.Amount,
+                    Recipient = first.Recipient ?? string.Empty,
+                    Phone = first.Phone ?? string.Empty,
+                    Address = first.Address ?? string.Empty,
+                    ProductName = ShippingFeeLineService.DisplayName(csku),
+                    Remark = "OFS 배송비 청구",
+                });
+            }
+        }
+
+        if (lines.Count > 0) _outboundRepository.SaveOutbound(lines);
+        return (lines.Count, lines.Sum(l => l.SupplyPrice), removed);
     }
 
     private void UpdateOrderStatusAfterSave(List<OutboundDetail> savedDetails, List<OfsOrderItem> failedOrders)
@@ -1584,11 +1655,13 @@ public class OfsForm : Form
             }
 
             ClearStaleInvoiceLabelOverrides(selected);
+            var shippingFeeDecision = DecideMergedShippingFee(selected);
             var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0]);
             foreach (var item in selected)
             {
                 item.ShipmentGroupId = groupId;
             }
+            ApplyMergedShippingFee(groupId, shippingFeeDecision);
             // 다시 한 송장으로 합쳐졌으니, 분리배송 때 붙였을 수 있는 수취인명 번호(1,2,3...)를 뗀다.
             ShipmentGrouping.RenumberSplitRecipients([selected]);
             _ordersGrid.Invalidate();
@@ -1608,6 +1681,7 @@ public class OfsForm : Form
             }
 
             ClearStaleInvoiceLabelOverrides(selected);
+            ResetShippingFeeForSplit(selected);
             // "분리배송"은 선택한 줄들을 하나로 묶는 게 아니라 각 줄을 서로 다른 송장으로 떼어내는
             // 기능이다(합포장의 반대). 예전엔 선택 전체에 같은 newGroupId 하나를 부여해 오히려
             // 여러 줄이 한 그룹으로 합쳐지는 버그가 있었다 — 줄마다 개별 고유 groupId를 부여한다.
@@ -1636,6 +1710,7 @@ public class OfsForm : Form
             }
 
             ClearStaleInvoiceLabelOverrides(selected);
+            ResetShippingFeeForSplit(selected);
             foreach (var item in selected)
             {
                 item.ShipmentGroupId = null;
@@ -1684,6 +1759,95 @@ public class OfsForm : Form
     private class ShipmentPreviewRow
     {
         public required List<OfsOrderItem> Items { get; init; }
+    }
+
+    // 택배사 헤더와 별개로 항상 맨 앞에 붙는 "마감 시 배송비 청구" 열(송장 단위). 택배사 양식으로는
+    // 나가지 않고, 발주확정 시 묶음당 배송비 라인 1줄로 저장된다(ShippingFeeLineService 참고).
+    private const string PreviewShipChargeColumn = "__shipCharge";
+    private const string PreviewShipFeeColumn = "__shipFee";
+    private const decimal FallbackShippingFee = 3000m;
+
+    /// <summary>
+    /// 묶음의 배송비 청구 여부·금액. 줄마다 값이 다를 수 있으면(분리배송 직후 등) 값이 지정된 첫 줄을 따르고,
+    /// 아무 줄에도 없으면 채널 설정 기본값. 비매출(샘플/CS 등)만 있는 묶음과 SAMPLE 채널은 청구하지 않는다.
+    /// </summary>
+    private static (bool Charge, decimal Amount) ResolveShippingFee(IReadOnlyList<OfsOrderItem> items, IReadOnlyDictionary<string, ChannelConfig> configsByCode)
+    {
+        var channelCode = items[0].ChannelCode;
+        var config = string.IsNullOrEmpty(channelCode) ? null : configsByCode.GetValueOrDefault(channelCode);
+        var defaultAmount = config is { OfsShippingFeeAmount: > 0 } ? config.OfsShippingFeeAmount : FallbackShippingFee;
+        var amount = items.Select(i => i.ShippingFeeAmount).FirstOrDefault(v => v.HasValue) ?? defaultAmount;
+
+        if (channelCode == "SAMPLE" || items.All(i => !string.IsNullOrEmpty(i.LineKind))) return (false, amount);
+        var charge = items.Select(i => i.ChargeShippingFee).FirstOrDefault(v => v.HasValue) ?? (config?.OfsChargeShippingFeeByDefault ?? false);
+        return (charge, amount);
+    }
+
+    private static void SetShippingFee(IEnumerable<OfsOrderItem> items, bool? charge, decimal? amount)
+    {
+        foreach (var item in items)
+        {
+            item.ChargeShippingFee = charge;
+            item.ShippingFeeAmount = amount;
+        }
+    }
+
+    /// <summary>
+    /// 합포장 직전에 호출 — 합쳐질 묶음 중 하나라도 청구 중이면 합친 묶음도 청구(금액은 그중 큰 값),
+    /// 하나도 없으면 청구 안 함으로 고정한다(사용자 확정 규칙 2026-10-07).
+    /// </summary>
+    private (bool Charge, decimal Amount) DecideMergedShippingFee(IEnumerable<OfsOrderItem> itemsAboutToMerge)
+    {
+        var configs = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+        var resolved = GroupsContaining(itemsAboutToMerge).Select(g => ResolveShippingFee(g, configs)).ToList();
+        var charged = resolved.Where(r => r.Charge).ToList();
+        if (charged.Count > 0) return (true, charged.Max(r => r.Amount));
+        return (false, resolved.Count > 0 ? resolved[0].Amount : FallbackShippingFee);
+    }
+
+    /// <summary>
+    /// 분리배송/묶음해제 직전에 호출 — 원래 묶음에 남는 줄(다 떨어져 나가면 맨 앞 줄)은 지금의 청구 여부·
+    /// 금액을 그대로 고정해 들고 가고, 새로 떨어져 나가는 줄은 채널 기본값으로 되돌린다(사용자 확정 규칙
+    /// 2026-10-07: "나누면 새로 생긴 묶음은 채널 기본값").
+    /// </summary>
+    private void ResetShippingFeeForSplit(IReadOnlyCollection<OfsOrderItem> movingItems)
+    {
+        var configs = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+        var moving = new HashSet<OfsOrderItem>(movingItems);
+        foreach (var group in GroupsContaining(movingItems))
+        {
+            var (charge, amount) = ResolveShippingFee(group, configs);
+            var stayers = group.Where(i => !moving.Contains(i)).ToList();
+            var keeper = stayers.Count > 0 ? null : group[0];
+            SetShippingFee(stayers, charge, amount);
+            foreach (var item in group.Where(moving.Contains))
+            {
+                if (item == keeper) SetShippingFee([item], charge, amount);
+                else SetShippingFee([item], null, null);
+            }
+        }
+    }
+
+    /// <summary>묶음의 지금 청구 여부·금액을 그 줄들에 명시값으로 고정한다(복제 전에 — 복제본만 기본값으로 돌리기 위해).</summary>
+    private void PinShippingFee(IReadOnlyList<OfsOrderItem> groupItems)
+    {
+        if (groupItems.Count == 0) return;
+        var (charge, amount) = ResolveShippingFee(groupItems, _channelConfigService.Load().ToDictionary(c => c.ChannelCode));
+        SetShippingFee(groupItems, charge, amount);
+    }
+
+    /// <summary>합포장 직후 — 새 묶음(groupId)의 모든 줄에 <see cref="DecideMergedShippingFee"/> 결과를 넣는다.</summary>
+    private void ApplyMergedShippingFee(string groupId, (bool Charge, decimal Amount) decision) =>
+        SetShippingFee(_orders.Where(o => ShipmentGrouping.GetEffectiveGroupId(o) == groupId), decision.Charge, decision.Amount);
+
+    /// <summary>현재 _orders에서 주어진 줄들이 속한 묶음 전체(묶음 단위 판단용).</summary>
+    private List<IReadOnlyList<OfsOrderItem>> GroupsContaining(IEnumerable<OfsOrderItem> items)
+    {
+        var groupIds = items.Select(ShipmentGrouping.GetEffectiveGroupId).ToHashSet();
+        return _orders.Where(o => groupIds.Contains(ShipmentGrouping.GetEffectiveGroupId(o)))
+            .GroupBy(ShipmentGrouping.GetEffectiveGroupId)
+            .Select(g => (IReadOnlyList<OfsOrderItem>)g.ToList())
+            .ToList();
     }
 
     private Control CreateExportPreviewPanel()
@@ -1786,6 +1950,13 @@ public class OfsForm : Form
         var isOverflow = ShipmentGrouping.CountDescriptionLines(row.Items) > 4;
         _previewGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = isOverflow ? Color.MistyRose : _previewGrid.DefaultCellStyle.BackColor;
         _previewGrid.Rows[e.RowIndex].DefaultCellStyle.ForeColor = isOverflow ? Color.Black : _previewGrid.DefaultCellStyle.ForeColor;
+
+        // 청구하지 않는 송장의 청구액은 흐리게(값은 남겨두되 저장되지 않는다는 표시).
+        if (e.ColumnIndex >= 0 && _previewGrid.Columns[e.ColumnIndex].Name == PreviewShipFeeColumn
+            && _previewGrid.Rows[e.RowIndex].Cells[PreviewShipChargeColumn].Value is not true)
+        {
+            e.CellStyle!.ForeColor = Color.Silver;
+        }
     }
 
     /// <summary>
@@ -1801,6 +1972,12 @@ public class OfsForm : Form
 
         var columnName = _previewGrid.Columns[e.ColumnIndex].Name;
         if (columnName == "__rowIndex") return;
+
+        if (columnName is PreviewShipChargeColumn or PreviewShipFeeColumn)
+        {
+            OnPreviewShippingFeeCellChanged(e.RowIndex, columnName);
+            return;
+        }
 
         var row = GetPreviewRowModel(e.RowIndex);
         var entry = _previewHeaderEntries.FirstOrDefault(en => en.Header == columnName);
@@ -1822,8 +1999,107 @@ public class OfsForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("수령인 중복회피(선택한 묶음에 새 번호 부여)", null, OnAvoidRecipientDuplicateClick);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("배송비 청구 — 선택 송장 켜기", null, (_, _) => SetSelectedPreviewShippingFee(true, null));
+        menu.Items.Add("배송비 청구 — 선택 송장 끄기", null, (_, _) => SetSelectedPreviewShippingFee(false, null));
+        var feeMenu = new ToolStripMenuItem("배송비 청구액 지정(선택 송장, 청구 켜짐)");
+        menu.Items.Add(feeMenu);
+        // 선택지는 선택한 송장들의 채널 설정(OFS 배송비 청구 — 금액 선택지)에서 그때그때 만든다.
+        menu.Opening += (_, _) => RebuildShippingFeePresetMenu(feeMenu);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("실행취소", null, OnUndoPreviewEditClick);
         _previewGrid.ContextMenuStrip = menu;
+
+        // 체크박스는 셀을 벗어나야 값이 커밋되는 게 기본이라, 누르자마자 반영되게 바로 커밋한다.
+        _previewGrid.CurrentCellDirtyStateChanged += (_, _) =>
+        {
+            if (_previewGrid.IsCurrentCellDirty && _previewGrid.CurrentCell?.OwningColumn?.Name == PreviewShipChargeColumn)
+                _previewGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
+    }
+
+    private void RebuildShippingFeePresetMenu(ToolStripMenuItem feeMenu)
+    {
+        feeMenu.DropDownItems.Clear();
+        var configs = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+        var channelCodes = GetSelectedPreviewRows().Select(r => r.Items[0].ChannelCode).Where(c => !string.IsNullOrEmpty(c)).Distinct().ToList();
+        var presets = channelCodes
+            .SelectMany(c => configs.TryGetValue(c!, out var cfg) ? ShippingFeeLineService.ParsePresets(cfg.OfsShippingFeePresets) : [])
+            .DefaultIfEmpty(FallbackShippingFee)
+            .Distinct().OrderBy(v => v).ToList();
+        foreach (var amount in presets)
+        {
+            var value = amount;
+            feeMenu.DropDownItems.Add($"{value:N0}원", null, (_, _) => SetSelectedPreviewShippingFee(true, value));
+        }
+        feeMenu.DropDownItems.Add(new ToolStripSeparator());
+        var initial = presets[0];
+        feeMenu.DropDownItems.Add("직접 입력...", null, (_, _) => BeginInvoke(() =>
+        {
+            using var dlg = new SimpleTextPromptDialog("배송비 청구액", "청구액(원, VAT포함)을 입력하세요.", initial.ToString("0"));
+            if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
+            if (!decimal.TryParse(dlg.Value.Replace(",", "").Replace("원", "").Trim(), out var typed) || typed <= 0)
+            {
+                MessageBox.Show("0보다 큰 금액을 숫자로 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SetSelectedPreviewShippingFee(true, typed);
+        }));
+    }
+
+    /// <summary>선택한 송장들의 배송비 청구 여부(와 금액 — null이면 금액은 그대로)를 바꾼다.</summary>
+    private void SetSelectedPreviewShippingFee(bool charge, decimal? amount)
+    {
+        var selected = GetSelectedPreviewRows();
+        BeginInvoke(() =>
+        {
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("배송비 청구를 바꿀 송장(행)을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            PushPreviewUndoSnapshot();
+            var configs = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+            foreach (var row in selected)
+            {
+                var current = ResolveShippingFee(row.Items, configs);
+                SetShippingFee(row.Items, charge, amount ?? current.Amount);
+            }
+            RefreshExportPreview();
+            var amountNote = amount is { } a ? $" {a:N0}원" : "";
+            _statusLabel.Text = $"송장 {selected.Count}건의 배송비 청구를 {(charge ? "켰습니다" : "껐습니다")}{amountNote}. ({DateTime.Now:HH:mm:ss})";
+        });
+    }
+
+    /// <summary>미리보기의 배송비청구 체크/청구액 셀을 직접 고쳤을 때 그 송장의 모든 줄에 반영한다.</summary>
+    private void OnPreviewShippingFeeCellChanged(int rowIndex, string columnName)
+    {
+        var row = GetPreviewRowModel(rowIndex);
+        if (row == null) return;
+
+        var configs = _channelConfigService.Load().ToDictionary(c => c.ChannelCode);
+        var current = ResolveShippingFee(row.Items, configs);
+        var cell = _previewGrid.Rows[rowIndex].Cells[columnName];
+
+        if (columnName == PreviewShipChargeColumn)
+        {
+            SetShippingFee(row.Items, cell.Value is true, current.Amount);
+        }
+        else
+        {
+            var text = Convert.ToString(cell.Value)?.Replace(",", "").Replace("원", "").Trim();
+            if (decimal.TryParse(text, out var amount) && amount > 0)
+            {
+                // 금액을 적으면 청구하겠다는 뜻으로 보고 체크도 같이 켠다.
+                SetShippingFee(row.Items, true, amount);
+            }
+            else
+            {
+                _statusLabel.Text = "청구액은 0보다 큰 숫자로 입력하세요 — 이전 값으로 되돌립니다.";
+            }
+        }
+        // 셀 편집 이벤트 도중 DataSource를 갈아끼우지 않도록 다음 틱에 다시 그린다.
+        BeginInvoke(RefreshExportPreview);
     }
 
     /// <summary>
@@ -1864,11 +2140,13 @@ public class OfsForm : Form
 
             var itemsToRegroup = selected.SelectMany(r => r.Items).ToList();
             ClearStaleInvoiceLabelOverrides(itemsToRegroup);
+            var shippingFeeDecision = DecideMergedShippingFee(itemsToRegroup);
             var groupId = ShipmentGrouping.GetEffectiveGroupId(selected[0].Items[0]);
             foreach (var item in itemsToRegroup)
             {
                 item.ShipmentGroupId = groupId;
             }
+            ApplyMergedShippingFee(groupId, shippingFeeDecision);
             // 다시 한 송장으로 합쳐졌으니, 분리배송 때 붙였을 수 있는 수취인명 번호(1,2,3...)를 뗀다.
             ShipmentGrouping.RenumberSplitRecipients([itemsToRegroup]);
             _ordersGrid.Invalidate();
@@ -1917,6 +2195,7 @@ public class OfsForm : Form
             foreach (var row in multiItemGroups)
             {
                 ClearStaleInvoiceLabelOverrides(row.Items);
+                ResetShippingFeeForSplit(row.Items);
                 foreach (var item in row.Items) item.ShipmentGroupId = null;
                 ShipmentGrouping.RenumberSplitRecipients(row.Items.Select(i => (IReadOnlyList<OfsOrderItem>)new List<OfsOrderItem> { i }).ToList());
             }
@@ -1929,6 +2208,7 @@ public class OfsForm : Form
                 var template = row.Items[0];
                 var baseId = ShipmentGrouping.GetEffectiveGroupId(template);
                 ClearStaleInvoiceLabelOverrides([template]);
+                PinShippingFee(row.Items);
 
                 if (template.Quantity > 1)
                 {
@@ -1945,6 +2225,7 @@ public class OfsForm : Form
                         var duplicate = CloneOrderItem(template);
                         duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
                         duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
+                        SetShippingFee([duplicate], null, null); // 새로 생긴 송장 → 채널 기본값
                         duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
                         duplicate.Quantity = baseQty + (i < remainder ? 1 : 0);
                         duplicates.Add(duplicate);
@@ -1970,6 +2251,7 @@ public class OfsForm : Form
                     var duplicate = CloneOrderItem(template);
                     duplicate.TrackingNo = null;
                     duplicate.InvoiceLabel = null;
+                    SetShippingFee([duplicate], null, null);
                     duplicate.ShipmentGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
 
                     _orders.Insert(_orders.IndexOf(template) + 1, duplicate);
@@ -2012,6 +2294,7 @@ public class OfsForm : Form
             var templateItems = selected[0].Items;
             var baseId = ShipmentGrouping.GetEffectiveGroupId(templateItems[0]);
             ClearStaleInvoiceLabelOverrides(templateItems);
+            PinShippingFee(templateItems);
             foreach (var item in templateItems) item.ShipmentGroupId = baseId;
 
             var newGroupId = $"{baseId}-분리{Guid.NewGuid().ToString("N")[..6]}";
@@ -2023,6 +2306,7 @@ public class OfsForm : Form
                 duplicate.TrackingNo = null; // 아직 출고되지 않은 별도 송장이라 운송장번호는 새로 받아야 함
                 duplicate.InvoiceLabel = null; // 옛 묶음 구성 기준 오버라이드를 그대로 들고 오면 안 됨
                 duplicate.ShipmentGroupId = newGroupId;
+                SetShippingFee([duplicate], null, null); // 복사한 새 송장 → 채널 기본값
                 _orders.Insert(insertAt++, duplicate);
                 duplicates.Add(duplicate);
             }
@@ -2149,6 +2433,8 @@ public class OfsForm : Form
 
         var table = new DataTable();
         table.Columns.Add("__rowIndex", typeof(int));
+        table.Columns.Add(PreviewShipChargeColumn, typeof(bool));
+        table.Columns.Add(PreviewShipFeeColumn, typeof(string));
         foreach (var entry in entries) table.Columns.Add(entry.Header, typeof(string));
 
         for (int i = 0; i < _previewRowModels.Count; i++)
@@ -2159,6 +2445,9 @@ public class OfsForm : Form
 
             var dataRow = table.NewRow();
             dataRow["__rowIndex"] = i;
+            var (chargeShipping, shippingAmount) = ResolveShippingFee(row.Items, channelConfigsByCode);
+            dataRow[PreviewShipChargeColumn] = chargeShipping;
+            dataRow[PreviewShipFeeColumn] = shippingAmount.ToString("N0");
             foreach (var entry in entries)
             {
                 dataRow[entry.Header] = CourierFieldResolver.Resolve(entry, row.Items, courier, channelConfig) ?? string.Empty;
@@ -2212,6 +2501,19 @@ public class OfsForm : Form
     {
         _previewGrid.Columns.Clear();
         _previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "__rowIndex", DataPropertyName = "__rowIndex", Visible = false });
+        _previewGrid.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = PreviewShipChargeColumn, HeaderText = "배송비청구", DataPropertyName = PreviewShipChargeColumn,
+            Width = 70, MinimumWidth = 50,
+            ToolTipText = "마감 시 이 송장의 배송비를 거래처에 청구(발주확정 때 배송비 라인 1줄 저장, 원가=청구액). 택배사 양식으로는 나가지 않습니다.",
+        });
+        _previewGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = PreviewShipFeeColumn, HeaderText = "청구액", DataPropertyName = PreviewShipFeeColumn,
+            Width = 70, MinimumWidth = 50,
+            DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+            ToolTipText = "배송비 청구액(VAT포함). 오른쪽 클릭 메뉴로 선택한 송장들에 한꺼번에 지정할 수 있습니다.",
+        });
 
         foreach (var entry in entries)
         {
@@ -2265,6 +2567,8 @@ public class OfsForm : Form
         InvoiceLabel = item.InvoiceLabel,
         InvoiceDisplayName = item.InvoiceDisplayName,
         ShipmentGroupId = item.ShipmentGroupId,
+        ChargeShippingFee = item.ChargeShippingFee,
+        ShippingFeeAmount = item.ShippingFeeAmount,
     };
 
     private void OnUndoPreviewEditClick(object? sender, EventArgs e)

@@ -51,7 +51,7 @@ public class TrackingBackfillViewer : Form
     private void InitializeComponent()
     {
         Text = "운송장 파일 누락건 점검";
-        Size = new Size(1100, 700);
+        Size = new Size(1280, 700);
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = true;
 
@@ -95,6 +95,15 @@ public class TrackingBackfillViewer : Form
         var btnExport = new Button { Text = "운임통계 내보내기", Size = new Size(130, 30) };
         btnExport.Click += OnExportStatsClick;
         toolbar.Controls.Add(btnExport);
+
+        // 파일 전체 송장을 채널별로 세고 송장마다 배송비 청구 여부를 대조한다(라벨/미등록 필터와 무관).
+        var btnChannelReconcile = new Button { Text = "채널별 송장 대조(배송비)", Size = new Size(170, 30) };
+        btnChannelReconcile.Click += (_, _) =>
+        {
+            if (_allRows.Count == 0) return;
+            new ChannelShipmentReconcileForm(_allRows).Show(this);
+        };
+        toolbar.Controls.Add(btnChannelReconcile);
 
         // ── 메인 그리드 ────────────────────────────────────────────────────
         _grid = new ExcelLikeDataGridView

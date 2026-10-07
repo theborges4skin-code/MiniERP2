@@ -939,8 +939,12 @@ public class OutboundHistoryForm : Form
         // 매칭 대상은 운송장번호가 아직 없는(=발주확정 상태) 건. 이름+주소가 완전히 같은 건들만 한
         // 그룹으로 묶는다 — 이름만 같은 동명이인(주소 다름)은 서로 다른 배송으로 취급해야 하므로
         // 별도 그룹이 된다(3번 규칙).
+        // 배송비 라인(OFS 배송비 청구)은 수령인 매칭 후보에서 뺀다 — 같은 묶음의 상품 라인이 출고확정될 때
+        // OutboundRepository가 함께 확정해 준다. 후보에 남기면 운송장이 여러 개인 수령인의 선택창에 섞인다.
+        var shippingKeys = new Services.ShippingFeeLineService(_channelSkuRepository).GetAllShippingKeys();
         var candidateGroups = details
             .Where(d => string.IsNullOrWhiteSpace(d.TrackingNo))
+            .Where(d => !Services.ShippingFeeLineService.IsShippingLine(d, shippingKeys))
             .GroupBy(d => (Name: NormalizeForMatch(d.Recipient), Addr: NormalizeForMatch(d.Address)));
 
         var appliedCount = 0;
@@ -1192,7 +1196,9 @@ public class OutboundHistoryForm : Form
         // 대상(선택 건 또는 조회된 전체)을 수령인+주소 일치로 묶는다(전화번호는 위 주석대로 좁히기
         // 용도). 이미 송장번호가 있는 건도 제외하지 않는다 — 파일 재확인/교정으로 덮어쓰는 것도 이
         // 기능의 대상이다.
+        var shippingKeys = new Services.ShippingFeeLineService(_channelSkuRepository).GetAllShippingKeys();
         var candidateGroups = targets
+            .Where(d => !Services.ShippingFeeLineService.IsShippingLine(d, shippingKeys)) // 배송비 라인은 묶음을 따라감
             .GroupBy(d => (Name: NormalizeForMatch(d.Recipient), Phone: NormalizeForMatch(d.Phone), Addr: NormalizeForMatch(d.Address)));
 
         var appliedCount = 0;

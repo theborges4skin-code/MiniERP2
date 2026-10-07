@@ -134,6 +134,7 @@ public class OutboundRepository
             command.Parameters.AddWithValue("$confirmedAt", confirmedAt ?? DateTime.Now);
             command.Parameters.AddWithValue("$id", id);
             command.ExecuteNonQuery();
+            PropagateToShippingFeeSiblings(connection, transaction, id, null, confirmedAt ?? DateTime.Now);
         }
 
         transaction.Commit();
@@ -154,6 +155,101 @@ public class OutboundRepository
         command.Parameters.AddWithValue("$courierName", (object?)courierName ?? DBNull.Value);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
+
+        PropagateToShippingFeeSiblings(connection, null, id, trackingNo, DateTime.Now);
+    }
+
+    /// <summary>
+    /// 같은 묶음(ShipmentGroupKey)의 아직 출고확정 안 된 배송비 라인(OFS 배송비 청구 — 채널의 마스터SKU
+    /// 'shipping' CSKU 라인)을 기준 라인과 함께 출고확정한다. 운송장 매칭은 수령인 기준이라 배송비 라인을
+    /// 후보에서 빼므로(OutboundHistoryForm), 상품 라인이 확정될 때 여기서 따라가게 해야 마감월 집계에서
+    /// 배송비만 빠지지 않는다. trackingNo가 null이면 운송장번호는 건드리지 않는다.
+    /// </summary>
+    private static void PropagateToShippingFeeSiblings(SqliteConnection connection, SqliteTransaction? transaction, long id, string? trackingNo, DateTime confirmedAt)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE OutboundDetailTable
+            SET TrackingNo = CASE WHEN $trackingNo IS NOT NULL AND TrackingNo = '' THEN $trackingNo ELSE TrackingNo END,
+                Status = '출고확정',
+                ConfirmedAt = $confirmedAt
+            WHERE ConfirmedAt IS NULL
+              AND Id <> $id
+              AND ShipmentGroupKey <> ''
+              AND ShipmentGroupKey = (SELECT s.ShipmentGroupKey FROM OutboundDetailTable s WHERE s.Id = $id)
+              AND ChannelCode = (SELECT s.ChannelCode FROM OutboundDetailTable s WHERE s.Id = $id)
+              AND MskuCode IN (SELECT c.CskuCode FROM ChannelSkuTable c WHERE c.ChannelCode = OutboundDetailTable.ChannelCode AND c.Msku = 'shipping')
+            """;
+        command.Parameters.AddWithValue("$trackingNo", (object?)trackingNo ?? DBNull.Value);
+        command.Parameters.AddWithValue("$confirmedAt", confirmedAt);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 이미 이력에 있는 송장(anchor = 그 송장의 상품 라인 하나)에 배송비 라인을 나중에 붙인다(운송장 누락건
+    /// 점검의 채널별 송장 대조 → [선택 송장 배송비 청구]). 묶음키·운송장·상태·출고일·귀속월을 anchor와 똑같이
+    /// 맞춰 같은 달 마감에 잡히게 한다(SaveOutbound는 출고일을 지금으로 찍어 다른 달로 갈 수 있어 쓰지 않음).
+    /// 이미 있으면 금액만 바꾼다. 원가(PurchasePrice) = 청구액(이익 0).
+    /// </summary>
+    public void UpsertShippingFeeLine(OutboundDetail anchor, string shippingCskuCode, string productName, decimal amount, string remark)
+    {
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO OutboundDetailTable (ChannelCode, OrderNo, ShipmentGroupKey, TrackingNo, MskuCode, Qty, SupplyPrice, CreatedAt, Status, ConfirmedAt, Recipient, Phone, Address, ProductName, Remark, PurchasePrice, LineKind, ClosingPeriod)
+            VALUES ($channelCode, $orderNo, $groupKey, $trackingNo, $msku, 1, $amount, $createdAt, $status, $confirmedAt, $recipient, $phone, $address, $productName, $remark, $amount, '', $closingPeriod)
+            ON CONFLICT(ShipmentGroupKey, MskuCode) DO UPDATE SET
+                SupplyPrice = excluded.SupplyPrice,
+                PurchasePrice = excluded.PurchasePrice
+            """;
+        command.Parameters.AddWithValue("$channelCode", anchor.ChannelCode);
+        command.Parameters.AddWithValue("$orderNo", anchor.OrderNo);
+        command.Parameters.AddWithValue("$groupKey", string.IsNullOrEmpty(anchor.ShipmentGroupKey) ? anchor.OrderNo : anchor.ShipmentGroupKey);
+        command.Parameters.AddWithValue("$trackingNo", anchor.TrackingNo ?? string.Empty);
+        command.Parameters.AddWithValue("$msku", shippingCskuCode);
+        command.Parameters.AddWithValue("$amount", amount);
+        command.Parameters.AddWithValue("$createdAt", DateTime.Now);
+        command.Parameters.AddWithValue("$status", string.IsNullOrEmpty(anchor.Status) ? "발주확정" : anchor.Status);
+        command.Parameters.AddWithValue("$confirmedAt", (object?)anchor.ConfirmedAt ?? DBNull.Value);
+        command.Parameters.AddWithValue("$recipient", anchor.Recipient ?? string.Empty);
+        command.Parameters.AddWithValue("$phone", anchor.Phone ?? string.Empty);
+        command.Parameters.AddWithValue("$address", anchor.Address ?? string.Empty);
+        command.Parameters.AddWithValue("$productName", productName);
+        command.Parameters.AddWithValue("$remark", remark);
+        command.Parameters.AddWithValue("$closingPeriod", anchor.ClosingPeriod ?? string.Empty);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 지정한 묶음들의 배송비 라인(OFS에서 넣은 것)을 지운다 — OFS에서 배송비 청구를 끄고 다시 발주확정할 때.
+    /// 반환값은 지운 행 수.
+    /// </summary>
+    public int DeleteShippingFeeLines(string channelCode, IEnumerable<string> shipmentGroupKeys, IReadOnlyCollection<string> shippingCskuCodes)
+    {
+        var keys = shipmentGroupKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct().ToList();
+        if (keys.Count == 0 || shippingCskuCodes.Count == 0) return 0;
+
+        using var connection = SqliteConnectionFactory.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        var cskuParams = shippingCskuCodes.Select((_, i) => $"$c{i}").ToList();
+        command.CommandText = $"DELETE FROM OutboundDetailTable WHERE ChannelCode = $channel AND ShipmentGroupKey = $key AND MskuCode IN ({string.Join(",", cskuParams)})";
+        command.Parameters.AddWithValue("$channel", channelCode);
+        var i = 0;
+        foreach (var code in shippingCskuCodes) command.Parameters.AddWithValue(cskuParams[i++], code);
+        var keyParam = command.Parameters.Add("$key", SqliteType.Text);
+
+        var deleted = 0;
+        foreach (var key in keys)
+        {
+            keyParam.Value = key;
+            deleted += command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+        return deleted;
     }
 
     /// <summary>

@@ -118,4 +118,14 @@ public class OfsOrderItem
     /// 그대로 스냅샷됩니다.
     /// </summary>
     public string? LineKind { get; set; }
+
+    /// <summary>
+    /// 이 줄이 속한 송장(묶음)에 마감 시 배송비를 청구할지. null이면 채널 설정
+    /// (<see cref="ChannelConfig.OfsChargeShippingFeeByDefault"/>)을 따른다. 묶음 단위 값이라 OFS 미리보기에서
+    /// 고치면 그 묶음의 모든 줄에 같이 들어간다. 발주확정 시 묶음당 배송비 라인 1줄로 저장된다.
+    /// </summary>
+    public bool? ChargeShippingFee { get; set; }
+
+    /// <summary>배송비 청구액(VAT포함). null이면 채널 설정(<see cref="ChannelConfig.OfsShippingFeeAmount"/>).</summary>
+    public decimal? ShippingFeeAmount { get; set; }
 }
