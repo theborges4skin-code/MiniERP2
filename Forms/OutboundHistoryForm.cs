@@ -164,16 +164,18 @@ public class OutboundHistoryForm : Form
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
         // 버튼이 많아 창을 줄이면 한 줄에 다 안 들어간다 — FlowLayoutPanel의 자동 줄바꿈에 맡기면
         // 넘친 줄이 이 행의 고정 높이 밖으로 잘려 보이지 않고(그리드 스크롤바는 이 행에 안 걸림),
-        // 그래서 아예 필터 줄/버튼 줄 2열로 고정해 항상 다 보이게 한다.
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        // 그래서 아예 필터 줄/송장 버튼 줄/편집·출력 버튼 줄 3열로 고정해 항상 다 보이게 한다.
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
-        var toolStrip = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        toolStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        toolStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        var toolStrip = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+        toolStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34f));
+        toolStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33f));
+        toolStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33f));
         var toolStripRow1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 2, 5, 0) };
-        var toolStripRow2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 2) };
+        var toolStripRow2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 0) };
+        var toolStripRow3 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5, 0, 5, 2) };
 
         var channels = new List<SalesChannel> { new() { ChannelCode = "", ChannelName = "(전체)" } };
         channels.AddRange(_salesChannelRepository.GetAll());
@@ -229,13 +231,15 @@ public class OutboundHistoryForm : Form
         toolStripRow2.Controls.Add(btnCumulativeTrackingImport);
         toolStripRow2.Controls.Add(btnCumulativeTrackingWriteBack);
         toolStripRow2.Controls.Add(btnCheckMissing);
-        toolStripRow2.Controls.Add(btnExport);
-        toolStripRow2.Controls.Add(btnDelete);
-        toolStripRow2.Controls.Add(btnSaveChanges);
         toolStripRow2.Controls.Add(btnExportTracking);
+
+        toolStripRow3.Controls.Add(btnExport);
+        toolStripRow3.Controls.Add(btnDelete);
+        toolStripRow3.Controls.Add(btnSaveChanges);
 
         toolStrip.Controls.Add(toolStripRow1, 0, 0);
         toolStrip.Controls.Add(toolStripRow2, 0, 1);
+        toolStrip.Controls.Add(toolStripRow3, 0, 2);
 
         // 행 머리글(왼쪽 끝)을 클릭해야 행 전체가 선택된다(선택 삭제/택배사 양식 출력용) — 셀을
         // 클릭하면 그 셀만 선택되어, 오른클릭 복사 시 행 전체가 아니라 클릭한 셀만 복사된다.

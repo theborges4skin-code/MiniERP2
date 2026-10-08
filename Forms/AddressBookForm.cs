@@ -1,6 +1,7 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Utils;
 
 namespace MiniERP2.Forms;
 
@@ -28,7 +29,14 @@ public class AddressBookForm : Form
     private CheckBox _chkIsActive = new();
     private NumericUpDown _numDisplayOrder = new();
     private CheckedListBox _channelTagsList = new();
+    private TextBox _txtChannelSearch = new();
     private Label _statusLabel = new();
+
+    // 채널 검색으로 목록이 걸러지면 목록 인덱스와 _channels 인덱스가 어긋나고, 숨겨진 채널의 체크도
+    // 유지돼야 한다 — 그래서 체크 상태는 목록이 아니라 이 집합이 원본이고, 목록은 보이는 채널만 그린다.
+    private readonly HashSet<string> _checkedChannelCodes = new(StringComparer.OrdinalIgnoreCase);
+    private List<SalesChannel> _visibleChannels = new();
+    private bool _suppressItemCheck;
 
     public AddressBookForm()
     {
@@ -118,9 +126,16 @@ public class AddressBookForm : Form
         flagsPanel.Controls.Add(new Label { Text = "표시순서:", AutoSize = true, Padding = new Padding(12, 6, 5, 0) });
         _numDisplayOrder = new NumericUpDown { Minimum = 0, Maximum = 9999, Width = 70 };
         flagsPanel.Controls.Add(_numDisplayOrder);
+        // 채널이 많아 태그 목록을 스크롤로 찾기 번거롭다 — 입력하면 맞는 채널만 아래 목록에 남긴다(초성 가능).
+        flagsPanel.Controls.Add(new Label { Text = "채널 검색:", AutoSize = true, Padding = new Padding(24, 6, 5, 0) });
+        _txtChannelSearch = new TextBox { Width = 200, PlaceholderText = "이름 일부 또는 초성" };
+        _txtChannelSearch.TextChanged += (s, e) => RefreshChannelTagsList();
+        _txtChannelSearch.KeyDown += OnChannelSearchKeyDown;
+        flagsPanel.Controls.Add(_txtChannelSearch);
 
         var tagsGroup = new GroupBox { Text = "채널 태그 (선택한 채널을 OFS \"배송지 불러오기\"에서 우선 노출 — 비워두면 항상 전체 노출)", Dock = DockStyle.Fill };
         _channelTagsList = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true };
+        _channelTagsList.ItemCheck += OnChannelTagItemCheck;
         tagsGroup.Controls.Add(_channelTagsList);
 
         var saveButtonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
@@ -146,8 +161,60 @@ public class AddressBookForm : Form
     private void LoadChannels()
     {
         _channels = new SalesChannelRepository().GetAll();
-        _channelTagsList.Items.Clear();
-        foreach (var channel in _channels) _channelTagsList.Items.Add(channel.ChannelName);
+        RefreshChannelTagsList();
+    }
+
+    private void RefreshChannelTagsList()
+    {
+        var query = _txtChannelSearch.Text.Trim();
+        _visibleChannels = _channels.Where(c => KoreanSearch.Matches(c.ChannelName, query)).ToList();
+
+        _suppressItemCheck = true;
+        _channelTagsList.BeginUpdate();
+        try
+        {
+            _channelTagsList.Items.Clear();
+            foreach (var channel in _visibleChannels)
+                _channelTagsList.Items.Add(channel.ChannelName, _checkedChannelCodes.Contains(channel.ChannelCode));
+        }
+        finally
+        {
+            _channelTagsList.EndUpdate();
+            _suppressItemCheck = false;
+        }
+    }
+
+    private void OnChannelTagItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        if (_suppressItemCheck || e.Index < 0 || e.Index >= _visibleChannels.Count) return;
+        var code = _visibleChannels[e.Index].ChannelCode;
+        if (e.NewValue == CheckState.Checked) _checkedChannelCodes.Add(code);
+        else _checkedChannelCodes.Remove(code);
+    }
+
+    /// <summary>검색창에서 ↓ 누르면 결과 목록으로 넘어가고, Esc는 검색어를 지운다.</summary>
+    private void OnChannelSearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Down && _channelTagsList.Items.Count > 0)
+        {
+            _channelTagsList.Focus();
+            _channelTagsList.SelectedIndex = 0;
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Escape && _txtChannelSearch.TextLength > 0)
+        {
+            _txtChannelSearch.Clear();
+            e.SuppressKeyPress = true;
+        }
+    }
+
+    private void SetCheckedChannels(IEnumerable<string> channelCodes)
+    {
+        _checkedChannelCodes.Clear();
+        foreach (var code in channelCodes) _checkedChannelCodes.Add(code);
+        // 다른 주소로 바뀌면 이전 검색어로 걸러진 채로 남지 않게 전체 목록으로 되돌린다.
+        if (_txtChannelSearch.TextLength > 0) _txtChannelSearch.Clear();
+        else RefreshChannelTagsList();
     }
 
     private void LoadEntries()
@@ -170,10 +237,7 @@ public class AddressBookForm : Form
         _chkIsActive.Checked = entry.IsActive;
         _numDisplayOrder.Value = Math.Clamp(entry.DisplayOrder, (int)_numDisplayOrder.Minimum, (int)_numDisplayOrder.Maximum);
 
-        for (int i = 0; i < _channels.Count; i++)
-        {
-            _channelTagsList.SetItemChecked(i, entry.ChannelTags.Contains(_channels[i].ChannelCode, StringComparer.OrdinalIgnoreCase));
-        }
+        SetCheckedChannels(entry.ChannelTags);
     }
 
     private void ResetDetailForNew()
@@ -187,7 +251,7 @@ public class AddressBookForm : Form
         _txtMemo.Text = string.Empty;
         _chkIsActive.Checked = true;
         _numDisplayOrder.Value = 0;
-        for (int i = 0; i < _channelTagsList.Items.Count; i++) _channelTagsList.SetItemChecked(i, false);
+        SetCheckedChannels([]);
         _txtLabel.Focus();
     }
 
@@ -200,8 +264,10 @@ public class AddressBookForm : Form
             return;
         }
 
-        var checkedChannelCodes = _channelTagsList.CheckedIndices.Cast<int>()
-            .Select(i => _channels[i].ChannelCode)
+        // 검색으로 숨겨진 채널의 체크도 포함되도록 목록이 아니라 _checkedChannelCodes에서 읽는다.
+        var checkedChannelCodes = _channels
+            .Where(c => _checkedChannelCodes.Contains(c.ChannelCode))
+            .Select(c => c.ChannelCode)
             .ToList();
 
         var entry = new AddressBookEntry
