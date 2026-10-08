@@ -120,18 +120,22 @@ public class AddressBookForm : Form
         _txtMemo = new TextBox { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical, Margin = new Padding(0, 3, 5, 3) };
         memoPanel.Controls.Add(_txtMemo, 1, 0);
 
-        var flagsPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        _chkIsActive = new CheckBox { Text = "활성", AutoSize = true, Checked = true, Padding = new Padding(0, 6, 0, 0) };
-        flagsPanel.Controls.Add(_chkIsActive);
-        flagsPanel.Controls.Add(new Label { Text = "표시순서:", AutoSize = true, Padding = new Padding(12, 6, 5, 0) });
-        _numDisplayOrder = new NumericUpDown { Minimum = 0, Maximum = 9999, Width = 70 };
-        flagsPanel.Controls.Add(_numDisplayOrder);
+        // 이 행은 높이가 고정(35)이라 FlowLayoutPanel이 줄바꿈하면 넘친 검색창이 행 밖으로 잘려 안 보인다 —
+        // 줄바꿈 없는 TableLayoutPanel로 깔고 검색창이 남는 폭을 채우게 한다(주소/메모 행과 같은 방식).
+        var flagsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1 };
+        for (int i = 0; i < 4; i++) flagsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        flagsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _chkIsActive = new CheckBox { Text = "활성", AutoSize = true, Checked = true, Anchor = AnchorStyles.Left };
+        flagsPanel.Controls.Add(_chkIsActive, 0, 0);
+        flagsPanel.Controls.Add(new Label { Text = "표시순서:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 0, 5, 0) }, 1, 0);
+        _numDisplayOrder = new NumericUpDown { Minimum = 0, Maximum = 9999, Width = 70, Anchor = AnchorStyles.Left };
+        flagsPanel.Controls.Add(_numDisplayOrder, 2, 0);
         // 채널이 많아 태그 목록을 스크롤로 찾기 번거롭다 — 입력하면 맞는 채널만 아래 목록에 남긴다(초성 가능).
-        flagsPanel.Controls.Add(new Label { Text = "채널 검색:", AutoSize = true, Padding = new Padding(24, 6, 5, 0) });
-        _txtChannelSearch = new TextBox { Width = 200, PlaceholderText = "이름 일부 또는 초성" };
+        flagsPanel.Controls.Add(new Label { Text = "채널 검색:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(24, 0, 5, 0) }, 3, 0);
+        _txtChannelSearch = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 3, 5, 3), PlaceholderText = "이름 일부 또는 초성" };
         _txtChannelSearch.TextChanged += (s, e) => RefreshChannelTagsList();
         _txtChannelSearch.KeyDown += OnChannelSearchKeyDown;
-        flagsPanel.Controls.Add(_txtChannelSearch);
+        flagsPanel.Controls.Add(_txtChannelSearch, 4, 0);
 
         var tagsGroup = new GroupBox { Text = "채널 태그 (선택한 채널을 OFS \"배송지 불러오기\"에서 우선 노출 — 비워두면 항상 전체 노출)", Dock = DockStyle.Fill };
         _channelTagsList = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true };
