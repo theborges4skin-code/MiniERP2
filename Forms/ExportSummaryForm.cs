@@ -2,7 +2,9 @@ using System.ComponentModel;
 using MiniERP2.Config;
 using MiniERP2.Controls;
 using MiniERP2.DataLoaders;
+using MiniERP2.Exporters;
 using MiniERP2.Models;
+using MiniERP2.Services;
 using MiniERP2.Utils;
 using OfficeOpenXml;
 using MiniERP2.UI;
@@ -48,6 +50,9 @@ public class ExportSummaryForm : Form
         public int HeaderRow { get; set; } = 1;
         public string DateColumn { get; set; } = "";
         public string AmountColumn { get; set; } = "";
+        public string QuantityColumn { get; set; } = "";
+        public string OrderIdColumn { get; set; } = "";
+        public string SubtractColumns { get; set; } = "";
     }
 
     public ExportSummaryForm()
@@ -78,11 +83,12 @@ public class ExportSummaryForm : Form
     private void InitializeComponent()
     {
         Text = "수출요약보고서";
-        Size = new Size(1100, 700);
+        Size = new Size(1460, 760);
         StartPosition = FormStartPosition.CenterScreen;
 
         var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        // 버튼이 한 줄에 다 안 들어가 '엑셀로 내보내기'가 잘려 보이지 않던 문제 → 두 줄 높이로.
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
@@ -97,6 +103,8 @@ public class ExportSummaryForm : Form
         var btnRemoveSource = new Button { Text = "선택 소스 제거", Size = new Size(110, 30) };
         var btnAggregate = new Button { Text = "집계", Size = new Size(80, 30), Font = new Font(Font, FontStyle.Bold) };
         var btnExport = new Button { Text = "엑셀로 내보내기", Size = new Size(120, 30) };
+        var btnQuarterReport = new Button { Text = "분기 보고서 만들기(폴더)", Size = new Size(170, 30), Font = new Font(Font, FontStyle.Bold), BackColor = Color.FromArgb(221, 235, 247) };
+        var btnReconcile = new Button { Text = "수출신고 대사(부가세)", Size = new Size(150, 30), Font = new Font(Font, FontStyle.Bold) };
 
         btnAddDeclaration.Click += (s, e) => AddDeclarationFile();
         btnAddSales.Click += (s, e) => AddSalesFile();
@@ -107,7 +115,10 @@ public class ExportSummaryForm : Form
         btnRemoveSource.Click += (s, e) => RemoveSelectedSource();
         btnAggregate.Click += (s, e) => Aggregate();
         btnExport.Click += (s, e) => Export();
+        btnReconcile.Click += (s, e) => ReconcileDeclarations();
+        btnQuarterReport.Click += (s, e) => BuildQuarterReport();
 
+        toolStrip.Controls.Add(btnQuarterReport);
         toolStrip.Controls.Add(btnAddDeclaration);
         toolStrip.Controls.Add(btnAddSales);
         toolStrip.Controls.Add(btnAutoSales);
@@ -117,6 +128,7 @@ public class ExportSummaryForm : Form
         toolStrip.Controls.Add(btnRemoveSource);
         toolStrip.Controls.Add(btnAggregate);
         toolStrip.Controls.Add(btnExport);
+        toolStrip.Controls.Add(btnReconcile);
 
         _sourceGrid = new ExcelLikeDataGridView
         {
@@ -163,7 +175,18 @@ public class ExportSummaryForm : Form
 
         var tabControl = new TabControl { Dock = DockStyle.Fill };
         var filesTab = new TabPage("파일 불러오기");
-        filesTab.Controls.Add(mainLayout);
+        // 오른쪽에 분기 자료 준비 안내를 고정으로 띄운다(매 분기 어디서 무엇을 받는지 잊지 않게).
+        var guideSplit = new PersistentSplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            FixedPanel = FixedPanel.Panel2,
+            SplitterDistance = 1010,
+            PersistenceKey = "ExportSummaryForm.GuideSplit",
+        };
+        guideSplit.Panel1.Controls.Add(mainLayout);
+        guideSplit.Panel2.Controls.Add(BuildPreparationGuide());
+        filesTab.Controls.Add(guideSplit);
         var settingsTab = new TabPage("설정");
         BuildSettingsTab(settingsTab);
         tabControl.TabPages.Add(filesTab);
@@ -177,6 +200,69 @@ public class ExportSummaryForm : Form
     /// 통화→마켓 매핑, 송금 규칙 목록 같은 복잡한 항목은 그대로 JSON 편집에 맡기고, 가장 자주
     /// 바꿔야 하는 값(트랙별 헤더 행/컬럼명)만 다룬다.
     /// </summary>
+    /// <summary>
+    /// 분기 자료 준비 안내. 프로그램 활용자료(MiniERP2가 읽는 파일)와 세무사 전달자료(PDF 등)를 구분해 보여주고,
+    /// 구분 표시가 없는 항목은 둘 다에 쓰는 공통 자료다(2026-10-12 사용자 정리 기준).
+    /// </summary>
+    private static Control BuildPreparationGuide()
+    {
+        var group = new GroupBox { Text = "분기 자료 준비 안내 (분기 폴더 하나에 모두 저장)", Dock = DockStyle.Fill, Padding = new Padding(8) };
+        var box = new RichTextBox
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            BorderStyle = BorderStyle.None,
+            BackColor = Color.FromArgb(255, 252, 235),
+            ForeColor = Color.FromArgb(30, 30, 30),
+            Font = new Font("Malgun Gothic", 9.5f),
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            DetectUrls = false,
+        };
+
+        void Heading(string text, Color color)
+        {
+            box.SelectionFont = new Font(box.Font.FontFamily, 10.5f, FontStyle.Bold);
+            box.SelectionColor = color;
+            box.AppendText(text + "\n");
+        }
+        void Item(string title, string body)
+        {
+            box.SelectionFont = new Font(box.Font, FontStyle.Bold);
+            box.SelectionColor = box.ForeColor;
+            box.AppendText("• " + title + "\n");
+            box.SelectionFont = box.Font;
+            box.SelectionColor = box.ForeColor;
+            box.AppendText("   " + body + "\n");
+        }
+
+        Heading("■ 공통 (프로그램 + 세무사 전달)", Color.FromArgb(0, 90, 160));
+        Item("수출실적", "홈택스 → 수출실적명세");
+        Item("페이팔 거래내역", "PayPal → Activity Report → Filter → 기간 설정 후 다운로드");
+        Item("자사몰 거래내역", "wix.com → Sales → Orders → Filter(기간) 조회 → Export → CSV\n   (프로그램은 PayPal 누락 대조에 사용)");
+        box.AppendText("\n");
+
+        Heading("■ 프로그램 활용자료 (MiniERP2용)", Color.FromArgb(0, 120, 60));
+        Item("페이오니어 거래내역", "Payoneer → Report → Transactions (엑셀)");
+        Item("쇼피 수출내역", "각 마켓별 Order → My Orders → Completed → 월별 리포트 다운\n   (분기 직전 달 파일도 함께 넣으면 그 달 주문 중 분기 안에 구매확정된 매출까지 잡힘)");
+        Item("아마존 수출내역 (미국·재팬 동일)", "Payment reports → Report Request → All, Transaction,\n   분기 기간을 한 번에 선택해 다운");
+        box.AppendText("\n");
+
+        Heading("■ 세무사 전달자료", Color.FromArgb(170, 70, 0));
+        Item("페이오니어", "Account statement (PDF)");
+        Item("아마존 (미국·재팬 동일)", "Payment reports → Report Request → All, Summary, 월별 PDF");
+        box.AppendText("\n");
+
+        Heading("■ 사용 방법", Color.FromArgb(60, 60, 60));
+        box.SelectionFont = box.Font;
+        box.AppendText("1. 위 자료를 분기 폴더 하나에 저장(하위 폴더 가능, 파일명 그대로)\n" +
+                       "2. [분기 보고서 만들기(폴더)] → 폴더 선택 → 저장\n" +
+                       "3. 결과 엑셀의 '확인사항' 시트에서 빠진 자료 확인\n");
+
+        box.SelectionStart = 0;
+        group.Controls.Add(box);
+        return group;
+    }
+
     private void BuildSettingsTab(TabPage tab)
     {
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, Padding = new Padding(10) };
@@ -213,7 +299,10 @@ public class ExportSummaryForm : Form
             new DataGridViewTextBoxColumn { HeaderText = "마켓명", Name = "MarketName", DataPropertyName = "MarketName", Width = 150, ReadOnly = true },
             new DataGridViewTextBoxColumn { HeaderText = "헤더행", Name = "HeaderRow", DataPropertyName = "HeaderRow", Width = 55 },
             new DataGridViewTextBoxColumn { HeaderText = "결제일자 컬럼", Name = "DateColumn", DataPropertyName = "DateColumn", Width = 220 },
-            new DataGridViewTextBoxColumn { HeaderText = "판매액 컬럼", Name = "AmountColumn", DataPropertyName = "AmountColumn", Width = 220 }
+            new DataGridViewTextBoxColumn { HeaderText = "판매액 컬럼", Name = "AmountColumn", DataPropertyName = "AmountColumn", Width = 220 },
+            new DataGridViewTextBoxColumn { HeaderText = "수량 컬럼(선택, 단가×수량)", Name = "QuantityColumn", DataPropertyName = "QuantityColumn", Width = 170 },
+            new DataGridViewTextBoxColumn { HeaderText = "주문번호 컬럼(주문단위 집계)", Name = "OrderIdColumn", DataPropertyName = "OrderIdColumn", Width = 170 },
+            new DataGridViewTextBoxColumn { HeaderText = "차감 컬럼(; 구분, 헤더*배율)", Name = "SubtractColumns", DataPropertyName = "SubtractColumns", Width = 300 }
         );
         salesGroup.Controls.Add(_salesMappingGrid);
 
@@ -268,6 +357,9 @@ public class ExportSummaryForm : Form
             HeaderRow = m.HeaderRow,
             DateColumn = m.DateColumn,
             AmountColumn = m.AmountColumn,
+            QuantityColumn = m.QuantityColumn,
+            OrderIdColumn = m.OrderIdColumn,
+            SubtractColumns = string.Join("; ", m.SubtractColumns),
         }).ToList();
         _salesMappingGrid.DataSource = new BindingList<SalesMarketMappingRow>(rows);
 
@@ -296,6 +388,10 @@ public class ExportSummaryForm : Form
                 mapping.HeaderRow = row.HeaderRow;
                 mapping.DateColumn = row.DateColumn.Trim();
                 mapping.AmountColumn = row.AmountColumn.Trim();
+                mapping.QuantityColumn = (row.QuantityColumn ?? "").Trim();
+                mapping.OrderIdColumn = (row.OrderIdColumn ?? "").Trim();
+                mapping.SubtractColumns = (row.SubtractColumns ?? "")
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             }
         }
 
@@ -489,6 +585,179 @@ public class ExportSummaryForm : Form
 
         if (loadedCount > 0)
             _statusLabel.Text = $"{loadedCount}개 파일 자동탐지 로드 완료.";
+    }
+
+    /// <summary>
+    /// 분기 원본 폴더 하나로 수출요약보고서(26년2분기 보고서 양식) 전체를 만든다: 폴더 선택 → 저장 두 단계.
+    /// 폴더 안 수출신고·쇼피 주문·페이오니어·PayPal·아마존 거래내역 파일을 자동 판별한다(ExportQuarterReportBuilder).
+    /// </summary>
+    private void BuildQuarterReport()
+    {
+        using var folderDialog = new FolderBrowserDialog
+        {
+            Description = "분기 원본 폴더를 선택하세요 (수출신고실적·쇼피 Order.completed·페이오니어·PayPal·아마존 거래내역 CSV, 하위폴더 포함)",
+            InitialDirectory = _settingsService.GetLastFolder("ExportSummary.Reconcile") ?? _settingsService.GetLastFolder("ExportSummary.Declaration") ?? "",
+        };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+        var folder = folderDialog.SelectedPath;
+        _settingsService.SetLastFolder("ExportSummary.Reconcile", folder);
+
+        ExportQuarterReportBuilder.Report report;
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            report = ExportQuarterReportBuilder.Build(folder, _config);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "분기 보고서", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+
+        var quarter = $"{report.PeriodStart:yy}년{(report.PeriodStart.Month - 1) / 3 + 1}분기";
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx", $"수출요약보고서_{quarter}.xlsx", folder);
+        if (filePath == null) return;
+
+        try
+        {
+            ExcelLicense.Ensure();
+            using var package = new ExcelPackage();
+            var marketNames = _config.Markets.ToDictionary(m => m.MarketCode, m => m.MarketName);
+            ExportQuarterReportExcelWriter.Write(package, report, marketNames);
+            ExportHelper.SaveExcel(package, filePath);
+
+            // 화면 아래 표에도 같은 결과를 보여준다.
+            _pivotGrid.DataSource = new BindingList<TidyRow>(report.Tidy
+                .Select(t => new TidyRow(t.MarketName, "", t.YearMonth, t.Indicator, t.Currency, t.Amount)).ToList());
+            _statusLabel.Text = $"분기 보고서 저장: {Path.GetFileName(filePath)} — 파일 {report.UsedFiles.Count}개 사용, 확인사항 {report.Warnings.Count}건";
+
+            if (report.Warnings.Count > 0)
+            {
+                MessageBox.Show(
+                    $"보고서를 만들었습니다. 확인할 사항이 {report.Warnings.Count}건 있습니다(엑셀 '확인사항' 시트에도 있음):\n\n" +
+                    string.Join("\n", report.Warnings.Take(12).Select(w => "• " + w)) + (report.Warnings.Count > 12 ? "\n…" : ""),
+                    "분기 보고서 — 확인사항", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 분기 부가세 신고용 수출신고 대사. 분기 원본 폴더(수출신고실적 파일 + 쇼피 Order.completed 파일)를 고르면
+    /// 신고 건과 주문을 짝지어 판매 매출 → 수출신고액 차이를 항목별로 나눈 엑셀을 만든다.
+    /// 화면에 불러온 소스와는 별개로 폴더에서 직접 읽는다(주문 단위 원자료가 필요해서).
+    /// </summary>
+    private void ReconcileDeclarations()
+    {
+        using var folderDialog = new FolderBrowserDialog
+        {
+            Description = "분기 원본 폴더를 선택하세요 (수출신고실적목록조회 파일과 쇼피 Order.completed 파일이 들어있는 폴더, 하위폴더 포함)",
+            InitialDirectory = _settingsService.GetLastFolder("ExportSummary.Reconcile") ?? _settingsService.GetLastFolder("ExportSummary.Declaration") ?? "",
+        };
+        if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+        var folder = folderDialog.SelectedPath;
+        _settingsService.SetLastFolder("ExportSummary.Reconcile", folder);
+
+        var declarations = new List<ExportSummaryLoader.DeclarationRow>();
+        var orders = new List<ExportSummaryLoader.SalesOrderRecord>();
+        var declarationFiles = new List<string>();
+        var salesFileCount = 0;
+        var errors = new List<string>();
+        var skippedNoRecon = new HashSet<string>();
+
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folder, "*.xls*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var name = Path.GetFileName(file);
+                if (name.StartsWith("~$", StringComparison.Ordinal)) continue;
+
+                var baseName = Path.GetFileNameWithoutExtension(file);
+                var mapping = _config.SalesMarkets.FirstOrDefault(m =>
+                    m.FileNamePatterns.Any(pat => baseName.Contains(pat, StringComparison.OrdinalIgnoreCase)));
+                if (mapping is not null)
+                {
+                    if (mapping.Recon is null || string.IsNullOrWhiteSpace(mapping.OrderIdColumn))
+                    {
+                        skippedNoRecon.Add(mapping.MarketCode);
+                        continue;
+                    }
+                    var currency = _config.Markets.FirstOrDefault(m => m.MarketCode == mapping.MarketCode)?.Currency ?? "";
+                    try
+                    {
+                        orders.AddRange(ExportSummaryLoader.LoadSalesOrders(file, mapping, currency));
+                        salesFileCount++;
+                    }
+                    catch (Exception ex) { errors.Add($"{name}: {ex.Message}"); }
+                    continue;
+                }
+
+                // 판매 파일이 아니면 수출신고 파일인지 헤더로 판별(아니면 조용히 건너뜀: 보고서·빈 파일 등)
+                try
+                {
+                    var rows = ExportSummaryLoader.LoadDeclarationRows(file, _config.DeclarationTrack);
+                    if (rows.Count == 0) continue;
+                    declarations.AddRange(rows);
+                    declarationFiles.Add(name);
+                }
+                catch (InvalidOperationException) { /* 수출신고 파일 아님 */ }
+                catch (Exception ex) { errors.Add($"{name}: {ex.Message}"); }
+            }
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+
+        ReportErrors(errors);
+        if (declarations.Count == 0 || orders.Count == 0)
+        {
+            MessageBox.Show(
+                $"대사할 자료가 부족합니다.\n수출신고 행: {declarations.Count}건, 판매 주문: {orders.Count}건\n\n" +
+                "폴더에 수출신고실적 파일(헤더: 신고일자/결제금액/통화코드)과 쇼피 Order.completed 파일이 모두 있어야 합니다.",
+                "수출신고 대사", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var (periodStart, periodEnd) = ExportDeclarationReconcileEngine.InferPeriod(declarations);
+        var configuredRates = _config.SalesMarkets
+            .Where(m => m.Recon is { DeclaredRate: > 0 })
+            .Select(m => (Currency: _config.Markets.FirstOrDefault(x => x.MarketCode == m.MarketCode)?.Currency ?? "", m.Recon!.DeclaredRate))
+            .Where(x => x.Currency.Length > 0)
+            .GroupBy(x => x.Currency)
+            .ToDictionary(g => g.Key, g => g.First().DeclaredRate);
+        var result = ExportDeclarationReconcileEngine.Run(declarations, orders, periodStart, periodEnd, configuredRates);
+
+        var filePath = ExportHelper.ShowSaveFileDialog(this, "Excel Files (*.xlsx)|*.xlsx",
+            $"수출신고대사_{periodStart:yyyyMM}-{periodEnd.AddDays(-1):yyyyMM}.xlsx", folder);
+        if (filePath == null) return;
+
+        try
+        {
+            ExcelLicense.Ensure();
+            using var package = new ExcelPackage();
+            var marketNames = _config.Markets.ToDictionary(m => m.MarketCode, m => m.MarketName);
+            ExportDeclarationReconcileExcelWriter.Write(package, result, marketNames);
+            ExportHelper.SaveExcel(package, filePath);
+
+            var notice = skippedNoRecon.Count > 0 ? $" (대사 설정 없는 마켓 제외: {string.Join(", ", skippedNoRecon)})" : "";
+            _statusLabel.Text = $"수출신고 대사 완료 — 신고 {declarations.Count}건·주문 {orders.Count}건(판매파일 {salesFileCount}개), " +
+                                $"짝지은 {result.Matches.Count}건{notice}: {Path.GetFileName(filePath)}";
+            ExportHelper.ShowPostExportDialog(this, filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ReportUnmatched(int unmatchedRowCount, string? unmatchedSample, string basisLabel)
