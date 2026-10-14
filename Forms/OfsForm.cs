@@ -1014,7 +1014,7 @@ public class OfsForm : Form
 
         EnsureManualOrderDialog();
         // 버튼으로 연 경우: 추가 모드로 복귀 + 현재 채널로 갱신
-        _manualOrderDialog!.SetReplaceTarget(null);
+        _manualOrderDialog!.SetReplaceTargets(null);
         _manualOrderDialog.SetChannel(selectedChannel.ChannelCode, selectedChannel.ChannelName);
 
         if (!_manualOrderDialog.Visible)
@@ -1031,6 +1031,7 @@ public class OfsForm : Form
     {
         if (items.Count == 0) return;
 
+        SettlePendingNewRow();
         foreach (var item in items) _orders.Add(item);
         _totalLoadedRowCount += items.Count;
 
@@ -1041,32 +1042,161 @@ public class OfsForm : Form
         _statusLabel.Text = $"자동발주처리에서 {items.Count}건을 불러왔습니다. (총 {_orders.Count}건){duplicateNote}";
     }
 
-    private void AddManualOrderItem(OfsOrderItem item)
+    /// <summary>* 줄 입력 중에 _orders를 코드로 고치면 그리드가 깨지므로 먼저 정리한다(ExcelLikeDataGridView 참고).</summary>
+    private void SettlePendingNewRow() => _ordersGrid.SettlePendingNewRow();
+
+    private void AddManualOrderItems(IReadOnlyList<OfsOrderItem> items)
     {
-        _orders.Add(item);
+        if (items.Count == 0) return;
+
+        SettlePendingNewRow();
+        var firstNewIndex = _orders.Count;
+        foreach (var item in items) _orders.Add(item);
 
         // 파일 로드 때 만들어 둔 이력 인덱스에는 이 주문번호가 없을 수 있으므로(수동 추가 건),
-        // 이 줄 하나만 따로 이력을 확인해 "중복" 열을 채운다 — 한 번에 한 줄이라 조회도 1회다.
-        if (!string.IsNullOrWhiteSpace(item.OrderNo))
+        // 새 줄들만 따로 이력을 확인해 "중복" 열을 채운다 — 조회는 한 번에 묶어서 1회다.
+        var orderNos = items.Where(i => !string.IsNullOrWhiteSpace(i.OrderNo))
+            .Select(i => i.OrderNo!.Trim()).Distinct().ToList();
+        if (orderNos.Count > 0)
         {
-            OrderDuplicateChecker.HistoryIndex
-                .Build(LoadOutboundHistory([item.OrderNo!.Trim()]))
-                .Annotate(item);
+            var index = OrderDuplicateChecker.HistoryIndex.Build(LoadOutboundHistory(orderNos));
+            foreach (var item in items) index.Annotate(item);
         }
 
-        // 새로 추가된 행으로 스크롤
-        int lastIdx = _ordersGrid.Rows.Count - 1;
-        while (lastIdx >= 0 && _ordersGrid.Rows[lastIdx].IsNewRow) lastIdx--;
+        // 새로 추가된 첫 줄로 스크롤(엑셀에서 여러 줄을 복사해 붙여넣을 시작 위치)
         // 분할선을 위로 끝까지 올려 상세 그리드에 헤더만 보이는 상태면 WinForms가 "행을 표시할 공간이
         // 없습니다" 예외를 던진다 — 스크롤은 편의 기능일 뿐이므로 표시 공간이 있을 때만 시도한다.
-        if (lastIdx >= 0 && _ordersGrid.DisplayRectangle.Height > _ordersGrid.ColumnHeadersHeight)
+        if (firstNewIndex < _ordersGrid.Rows.Count && _ordersGrid.DisplayRectangle.Height > _ordersGrid.ColumnHeadersHeight)
         {
-            try { _ordersGrid.FirstDisplayedScrollingRowIndex = lastIdx; }
+            try { _ordersGrid.FirstDisplayedScrollingRowIndex = firstNewIndex; }
             catch (InvalidOperationException) { }
         }
 
         RefreshExportPreview();
-        _statusLabel.Text = $"수동 주문 추가 — {item.MappedSku ?? "(빈 행)"}  (총 {_orders.Count}건)";
+        var first = items[0];
+        var what = items.All(i => string.IsNullOrWhiteSpace(i.MappedSku))
+            ? "빈 행"
+            : string.Join(", ", items.Select(i => i.MappedSku).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().Take(4));
+        _statusLabel.Text = items.Count == 1
+            ? $"수동 주문 추가 — {first.MappedSku ?? "(빈 행)"}  (총 {_orders.Count}건)"
+            : $"수동 주문 {items.Count}줄 추가 — {what}  (총 {_orders.Count}건). 엑셀에서 복사한 수취인 정보는 새 첫 줄의 칸을 클릭하고 Ctrl+V로 붙여넣으세요.";
+    }
+
+    /// <summary>
+    /// 선택한 줄(들)에 CSKU를 배정한다. 품목이 1개면 그 줄의 CSKU만 바꾸고, 여러 개(최대 4)면 줄마다
+    /// 첫 품목을 넣고 나머지 품목은 같은 수취인 정보의 줄을 바로 아래에 추가해 한 묶음(합포장)으로
+    /// 만든다. 이미 다른 줄과 묶여 있어 합치면 한 송장에 4품목을 넘는 줄은 배정하지 않는다.
+    /// </summary>
+    private void AssignProductsToRows(IReadOnlyList<OfsOrderItem> targets, IReadOnlyList<MultiProductAssigner.ProductSlot> slots)
+    {
+        var liveTargets = targets.Where(_orders.Contains).ToList();
+        if (liveTargets.Count == 0 || slots.Count == 0) return;
+        if (MultiProductAssigner.Validate(slots) is { } error)
+        {
+            MessageBox.Show(error, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        SettlePendingNewRow();
+
+        if (slots.Count > 1)
+        {
+            var targetSet = new HashSet<OfsOrderItem>(liveTargets);
+            var tooBig = liveTargets.Where(t =>
+            {
+                var groupId = ShipmentGrouping.GetEffectiveGroupId(t);
+                var others = _orders.Count(o => !targetSet.Contains(o) && ShipmentGrouping.GetEffectiveGroupId(o) == groupId
+                                                && !string.IsNullOrWhiteSpace(o.MappedSku));
+                return others + slots.Count > MultiProductAssigner.MaxProductsPerShipment;
+            }).ToList();
+            if (tooBig.Count > 0)
+            {
+                MessageBox.Show(
+                    $"{tooBig.Count}건은 이미 다른 줄과 합포장돼 있어 합치면 한 송장에 {MultiProductAssigner.MaxProductsPerShipment}품목을 넘습니다.\n" +
+                    "그 줄들은 \"묶음 해제\" 후 다시 배정하거나 주문을 나눠 직접 입력하세요. (나머지 줄만 배정합니다)",
+                    "품목 수 초과", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                liveTargets = liveTargets.Except(tooBig).ToList();
+                if (liveTargets.Count == 0) return;
+            }
+            ClearStaleInvoiceLabelOverrides(liveTargets);
+        }
+
+        var addedRows = 0;
+        foreach (var target in liveTargets)
+        {
+            var extras = MultiProductAssigner.Apply(target, slots, "수동 매핑");
+            var insertAt = _orders.IndexOf(target) + 1;
+            foreach (var extra in extras) _orders.Insert(insertAt++, extra);
+            addedRows += extras.Count;
+        }
+
+        _ordersGrid.Invalidate();
+        RefreshExportPreview();
+        var skuText = string.Join(", ", slots.Select(s => s.Quantity is int q ? $"{s.CskuCode}×{q}" : s.CskuCode));
+        _statusLabel.Text = addedRows > 0
+            ? $"{liveTargets.Count}건에 {skuText} 배정 — 품목 줄 {addedRows}개를 추가해 합포장으로 묶었습니다. (총 {_orders.Count}건)"
+            : $"{liveTargets.Count}건에 {skuText} 배정했습니다.";
+    }
+
+    /// <summary>우클릭 "여러 품목 배정" — 선택 줄에 CSKU를 최대 4개까지 골라 배정한다(같은 채널 줄만).</summary>
+    private void OnAssignMultiProductClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems().Where(o => o.Status != "메모").ToList();
+        BeginInvoke(() =>
+        {
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("품목을 배정할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var channelCodes = selected.Select(o => o.ChannelCode ?? _lastChannelCode ?? "").Distinct().ToList();
+            if (channelCodes.Count > 1 || string.IsNullOrEmpty(channelCodes[0]))
+            {
+                MessageBox.Show("한 채널의 줄만 선택해서 배정하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var channelCode = channelCodes[0];
+            var channelName = _channelConfigService.Load().FirstOrDefault(c => c.ChannelCode == channelCode)?.ChannelName ?? channelCode;
+            var resolver = new ManualCskuResolver(channelCode, channelName, _channelSkuRepository);
+            var frequent = _outboundRepository.GetTopCskusByChannel(channelCode, 10).Select(t => (t.MskuCode, t.ProductName));
+
+            using var dialog = new MultiProductAssignDialog(resolver, frequent, $"선택한 주문 {selected.Count}건");
+            if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+            AssignProductsToRows(selected, dialog.Slots);
+        });
+    }
+
+    /// <summary>우클릭 "선택 행 일괄 입력" — 체크한 주문 정보 항목을 선택한 줄 전부에 같은 값으로 넣는다.</summary>
+    private void OnBulkEditOrderFieldsClick(object? sender, EventArgs e)
+    {
+        var selected = GetSelectedOrderItems();
+        BeginInvoke(() =>
+        {
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("입력할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dialog = new BulkOrderFieldDialog(selected.Count);
+            if (FormManager.ShowDialogSafe(dialog, this) != DialogResult.OK) return;
+
+            SettlePendingNewRow();
+            foreach (var item in selected) dialog.ApplyTo(item);
+
+            var orderNos = selected.Where(i => !string.IsNullOrWhiteSpace(i.OrderNo)).Select(i => i.OrderNo!.Trim()).Distinct().ToList();
+            if (orderNos.Count > 0)
+            {
+                var index = OrderDuplicateChecker.HistoryIndex.Build(LoadOutboundHistory(orderNos));
+                foreach (var item in selected) index.Annotate(item);
+            }
+
+            _ordersGrid.Invalidate();
+            RefreshExportPreview();
+            _statusLabel.Text = $"{selected.Count}건에 주문 정보를 일괄 입력했습니다.";
+        });
     }
 
     /// <summary>툴바의 채널 버튼 — 파일 로드와 같은 채널 선택 팝업(그룹/즐겨찾기/검색)을 띄운다.</summary>
@@ -1238,6 +1368,9 @@ public class OfsForm : Form
             new ToolStripMenuItem("배송지 불러오기", null, OnLoadAddressBookClick),
             new ToolStripMenuItem("조건부 매핑 규칙 추가", null, OnAddConditionRuleFromOrderRowClick),
             new ToolStripSeparator(),
+            new ToolStripMenuItem($"품목(CSKU) 배정 — 여러 품목 최대 {MultiProductAssigner.MaxProductsPerShipment}개", null, OnAssignMultiProductClick),
+            new ToolStripMenuItem("선택 행 일괄 입력(수취인·주소 등)", null, OnBulkEditOrderFieldsClick),
+            new ToolStripSeparator(),
             new ToolStripMenuItem("합포장으로 묶기", null, OnMergeIntoOneShipmentClick),
             new ToolStripMenuItem("분리배송으로 분리", null, OnSplitIntoNewShipmentClick),
             new ToolStripMenuItem("묶음 해제", null, OnResetShipmentGroupClick),
@@ -1348,6 +1481,7 @@ public class OfsForm : Form
             OrderNo = selected?.OrderNo,
         };
 
+        SettlePendingNewRow();
         var insertAt = selected != null ? _orders.IndexOf(selected) + 1 : _orders.Count;
         _orders.Insert(insertAt, memoRow);
 
@@ -1482,12 +1616,12 @@ public class OfsForm : Form
         {
             HideQuickMapPanel();
             EnsureManualOrderDialog();
-            var rowIdx = _ordersGrid.CurrentRow?.Index ?? -1;
-            _manualOrderDialog!.SetReplaceTarget(item, () =>
-            {
-                if (rowIdx >= 0) _ordersGrid.InvalidateRow(rowIdx);
-                RefreshExportPreview();
-            });
+            // 드래그로 여러 줄을 골랐으면 그중 CSKU 미지정 수동 줄 전부가 교체 대상이다(일괄 배정).
+            var targets = GetSelectedOrderItems()
+                .Where(o => o.Status == "수동 추가" && string.IsNullOrWhiteSpace(o.MappedSku) && o.LineKind != LineKinds.Sample)
+                .ToList();
+            if (!targets.Contains(item)) targets.Insert(0, item);
+            _manualOrderDialog!.SetReplaceTargets(targets);
             if (!_manualOrderDialog.Visible)
                 _manualOrderDialog.Show(this);
             _manualOrderDialog.BringToFront();
@@ -1496,7 +1630,7 @@ public class OfsForm : Form
 
         // 교체 모드 해제 — 다른 행으로 이동하면 추가 모드로 복귀
         if (_manualOrderDialog?.Visible == true)
-            _manualOrderDialog.SetReplaceTarget(null);
+            _manualOrderDialog.SetReplaceTargets(null);
 
         // 기존 QuickMappingPanel 로직
         if (item == null || (item.Status != "매핑 실패" && item.Status != "매핑 키 없음"))
@@ -1518,7 +1652,8 @@ public class OfsForm : Form
         if (_manualOrderDialog != null && !_manualOrderDialog.IsDisposed) return;
         var ch = _selectedChannel;
         _manualOrderDialog = new ManualOrderDialog(
-            AddManualOrderItem,
+            AddManualOrderItems,
+            AssignProductsToRows,
             ch?.ChannelCode ?? _lastChannelCode ?? "",
             ch?.ChannelName ?? "",
             _outboundRepository,

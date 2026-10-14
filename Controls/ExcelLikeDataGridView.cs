@@ -270,6 +270,43 @@ public class ExcelLikeDataGridView : DataGridView
     }
 
     /// <summary>
+    /// 맨 아래 입력용 빈 줄(*)을 클릭하면 DataGridView가 데이터 원본(BindingList)에 확정되지 않은 새
+    /// 항목을 미리 만들어 둔다(AddNew). 그 상태에서 코드가 원본 목록에 줄을 추가/삽입하면 WinForms가
+    /// InvalidOperationException을 던지고 그리드 내부 행 상태가 어긋나 이후 클릭마다 예외가 이어진다
+    /// (2026-10-14 OFS 수동 주문 "빈 행 추가" 중 발생). 원본 목록을 코드로 고치기 직전에 호출한다 —
+    /// 편집 중인 셀은 확정하고, 아무것도 입력하지 않은 * 줄은 취소한다.
+    /// </summary>
+    public void SettlePendingNewRow()
+    {
+        var onNewRow = CurrentRow?.IsNewRow == true;
+        if (!onNewRow && !IsCurrentCellInEditMode) return;
+
+        try
+        {
+            var currencyManager = DataSource != null && BindingContext != null
+                ? BindingContext[DataSource, DataMember] as CurrencyManager
+                : null;
+            if (onNewRow && !IsCurrentRowDirty)
+            {
+                CancelEdit();
+                currencyManager?.CancelCurrentEdit();
+            }
+            else
+            {
+                EndEdit();
+                currencyManager?.EndCurrentEdit();
+            }
+
+            // * 줄에 커서가 남아 있으면 다음 추가 때 다시 AddNew가 걸리므로 현재 셀을 비운다.
+            if (CurrentRow?.IsNewRow == true) CurrentCell = null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            DiagnosticsLogger.Log($"[그리드] 입력 중인 새 줄 정리 실패(무시하고 계속): {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// 클립보드의 탭/개행 구분 텍스트(엑셀 복사 형식)를 현재 셀을 기준으로 붙여넣습니다.
     /// 기존 행의 범위 안에서만 채워지며(새 행은 추가하지 않음), 읽기전용 셀은 건너뜁니다.
     /// </summary>
