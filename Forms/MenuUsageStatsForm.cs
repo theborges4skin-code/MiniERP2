@@ -1,5 +1,6 @@
 using MiniERP2.Config;
 using MiniERP2.UI;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -11,7 +12,7 @@ namespace MiniERP2.Forms;
 public class MenuUsageStatsForm : Form
 {
     private readonly MenuUsageLogService _menuUsageLogService = new();
-    private DataGridView _grid = new();
+    private CellCopyDataGridView _grid = new();
 
     public MenuUsageStatsForm()
     {
@@ -38,7 +39,7 @@ public class MenuUsageStatsForm : Form
             Padding = new Padding(10, 10, 0, 0),
         });
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,

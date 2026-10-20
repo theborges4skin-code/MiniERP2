@@ -16,9 +16,9 @@ namespace MiniERP2.Exporters;
 /// 맨 왼쪽 열(상품명(내부관리용))은 아마존 제출 양식에는 없는 열로, 사람이 행을 알아보기 위한
 /// 용도이지 업로드용이 아니다 — InvoiceDisplayName(송장출력용 표시명, 비어있으면 ItemName)을 쓴다.
 /// 맨 오른쪽 두 열(유통기한/MOCRA Listing No.)도 아마존 제출 양식에는 없는 내부관리용 열이다.
-/// 유통기한은 발주 시 입력한 값(그리드 힌트는 YYYYMMDD이지만 실제로는 "yyyy.MM.dd."처럼 점으로
-/// 구분해 입력한 값도 흔해 ExpiryDateFormats 여러 형식을 시도한다)을 "MMM.DD.YYYY.EXP." 형식으로
-/// (예: 2026-08-05 → "AUG.05.2026.EXP.") 변환하고, 어떤 형식으로도 파싱할 수 없으면 빈 칸으로 둔다.
+/// 유통기한은 발주 시 입력한 값(인식하는 입력 형식은 ExpiryDateParser 참고)을 "MMM.DD.YYYY.EXP."
+/// 형식으로(예: 2026-08-05 → "AUG.05.2026.EXP.") 변환하고, 해석할 수 없는 값은 입력 원문을 그대로
+/// 쓴다(예전에는 빈 칸으로 비워서 입력한 유통기한이 출력물에서 사라졌다).
 /// MOCRA Listing No.는 CSKU 마스터 값을 그대로 쓴다(품목별 값이라 cskus 인자로 조회한다).
 /// </summary>
 public static class FbaShipmentExporter
@@ -91,25 +91,12 @@ public static class FbaShipmentExporter
         ExportHelper.SaveExcel(package, filePath);
     }
 
-    /// <summary>그리드 힌트는 "YYYYMMDD"지만 실제로는 사람이 "yyyy.MM.dd."처럼 점을 찍어 입력하는
-    /// 경우가 흔해서(끝에 점이 붙는 경우 포함) 여러 형식을 순서대로 시도한다.</summary>
-    private static readonly string[] ExpiryDateFormats =
-    [
-        "yyyyMMdd", "yyyy.MM.dd", "yyyy.M.d", "yyyy-MM-dd", "yyyy/MM/dd",
-    ];
-
     /// <summary>발주 시 입력한 유효기간 문자열을 "MMM.DD.YYYY.EXP." 형식으로 바꾼다(예:
-    /// "20260805" 또는 "2026.08.05." → "AUG.05.2026.EXP."). 비어있거나 어떤 형식으로도 파싱되지
-    /// 않으면 빈 문자열을 돌려준다.</summary>
+    /// "20260805", "2026.08.05.", "AUG.05.2026.EXP" → "AUG.05.2026.EXP."). 비어있으면 빈 문자열,
+    /// 해석할 수 없으면 입력 원문을 돌려준다(내부관리용 열이라 값을 잃지 않는 쪽을 택함).</summary>
     private static string FormatExpiryDate(string? expiryDate)
     {
-        if (string.IsNullOrWhiteSpace(expiryDate)) return string.Empty;
-
-        var trimmed = expiryDate.Trim().TrimEnd('.');
-        if (!DateTime.TryParseExact(trimmed, ExpiryDateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-        {
-            return string.Empty;
-        }
+        if (!ExpiryDateParser.TryParse(expiryDate, out var date)) return ExpiryDateParser.RawText(expiryDate);
 
         var month = date.ToString("MMM", CultureInfo.InvariantCulture).ToUpperInvariant();
         return $"{month}.{date:dd}.{date:yyyy}.EXP.";

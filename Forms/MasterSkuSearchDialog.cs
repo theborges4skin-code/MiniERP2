@@ -1,5 +1,6 @@
 using MiniERP2.Models;
 using MiniERP2.Utils;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -14,7 +15,7 @@ public class MasterSkuSearchDialog : Form
 
     private readonly List<ItemModel> _allItems;
     private TextBox _searchBox = new();
-    private DataGridView _grid = new();
+    private CellCopyDataGridView _grid = new();
 
     public MasterSkuSearchDialog(List<ItemModel> allItems, string initialQuery)
     {
@@ -52,7 +53,7 @@ public class MasterSkuSearchDialog : Form
             }
         };
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

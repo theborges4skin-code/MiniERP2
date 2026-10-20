@@ -5,6 +5,7 @@ using MiniERP2.Utils;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
 using MiniERP2.UI;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -29,7 +30,7 @@ public class ReportForm : Form
     private CheckedListBox _metricList = new();
 
     // ──────────── 결과 그리드 ────────────
-    private DataGridView _pivotGrid = new();
+    private CellCopyDataGridView _pivotGrid = new();
     private Label _statusLabel = new();
 
     // ──────────── 데이터 캐시 ────────────
@@ -144,7 +145,7 @@ public class ReportForm : Form
 
     private Control CreatePivotGrid()
     {
-        _pivotGrid = new DataGridView
+        _pivotGrid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,

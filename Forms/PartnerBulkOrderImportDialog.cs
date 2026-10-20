@@ -5,6 +5,7 @@ using MiniERP2.Models;
 using MiniERP2.UI;
 using MiniERP2.Utils;
 using OfficeOpenXml;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -25,7 +26,7 @@ public class PartnerBulkOrderImportDialog : Form
     private readonly string _channelName;
 
     private readonly BindingList<PartnerBulkOrderPreviewRow> _rows = [];
-    private readonly DataGridView _grid = new();
+    private readonly CellCopyDataGridView _grid = new();
     private readonly Label _summaryLabel = new() { AutoSize = true };
     private readonly Button _btnCommit = new() { Text = "확정", Size = new Size(90, 30), Enabled = false };
 

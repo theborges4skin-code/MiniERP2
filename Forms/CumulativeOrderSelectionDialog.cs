@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using MiniERP2.Models;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -10,7 +11,7 @@ namespace MiniERP2.Forms;
 /// </summary>
 public class CumulativeOrderSelectionDialog : Form
 {
-    private readonly DataGridView _grid = new();
+    private readonly CellCopyDataGridView _grid = new();
     public List<OfsOrderItem> SelectedItems { get; private set; } = [];
 
     /// <param name="alreadyShippedOrderNos">이미 출고확정 이력이 있는 주문번호(채널 무관). 이 목록에

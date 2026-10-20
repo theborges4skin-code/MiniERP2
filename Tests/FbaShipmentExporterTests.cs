@@ -97,6 +97,29 @@ public class FbaShipmentExporterTests
     }
 
     [TestMethod]
+    public void Export_ExpiryDate_AcceptsAmazonFormatInputAndKeepsUnparseableText()
+    {
+        // 2026-10-21 사용자 신고: 발주 그리드에 "SEP.07.2028.EXP"처럼 출력 형식 그대로 입력하면
+        // 선적명세 유통기한 칸이 공란으로 나왔다. 해석할 수 없는 값도 지우지 말고 원문을 남긴다.
+        var box = new FbaBox { FbaNo = "FBA-1", BoxSeq = 1, WeightG = 10 };
+        var items = new List<FbaBoxItem>
+        {
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 1, Csku = "A", ItemName = "A", Qty = 1, ExpiryDate = "SEP.07.2028.EXP" },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 2, Csku = "B", ItemName = "B", Qty = 1, ExpiryDate = "OCT.15.2028.EXP.\t" },
+            new() { FbaNo = "FBA-1", BoxSeq = 1, ItemSeq = 3, Csku = "C", ItemName = "C", Qty = 1, ExpiryDate = "2028.09" },
+        };
+
+        FbaShipmentExporter.Export([box], items, [], _filePath);
+
+        ExcelLicense.Ensure();
+        using var package = new ExcelPackage(new FileInfo(_filePath));
+        var sheet = package.Workbook.Worksheets["선적명세"];
+        Assert.AreEqual("SEP.07.2028.EXP.", sheet.Cells[2, 14].Value);
+        Assert.AreEqual("OCT.15.2028.EXP.", sheet.Cells[3, 14].Value);
+        Assert.AreEqual("2028.09", sheet.Cells[4, 14].Value);
+    }
+
+    [TestMethod]
     public void Export_WeightIsPerItemRow_NotJustBoxRepresentativeRow()
     {
         // 박스 총무게(WeightG=250)가 아니라 CSKU 행별로 UnitWeightG×Qty를 계산해 모든 행에 채워야

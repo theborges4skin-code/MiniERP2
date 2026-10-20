@@ -1,4 +1,3 @@
-using System.Globalization;
 using MiniERP2.Models;
 using MiniERP2.Utils;
 using OfficeOpenXml;
@@ -116,19 +115,8 @@ public static class FbaWorkOrderExporter
         ExportHelper.SaveExcel(package, filePath);
     }
 
-    /// <summary>그리드 힌트는 "YYYYMMDD"지만 실제로는 사람이 "yyyy.MM.dd."처럼 점을 찍어 입력하는
-    /// 경우가 흔해서(끝에 점이 붙는 경우 포함) 여러 형식을 순서대로 시도한다(FbaShipmentExporter와
-    /// 동일). 내부 작업지시서라 파싱에 실패해도 값을 비우지 않고 입력된 원문을 그대로 보여준다.</summary>
-    private static readonly string[] ExpiryDateFormats =
-    [
-        "yyyyMMdd", "yyyy.MM.dd", "yyyy.M.d", "yyyy-MM-dd", "yyyy/MM/dd",
-    ];
-
-    private static string NormalizeExpiryDate(string expiryDate)
-    {
-        var trimmed = expiryDate.Trim().TrimEnd('.');
-        return DateTime.TryParseExact(trimmed, ExpiryDateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
-            ? date.ToString("yyyy-MM-dd")
-            : trimmed;
-    }
+    /// <summary>입력 형식은 FbaShipmentExporter와 같은 ExpiryDateParser로 해석한다. 내부 작업지시서라
+    /// 해석에 실패해도 값을 비우지 않고 입력된 원문을 그대로 보여준다.</summary>
+    private static string NormalizeExpiryDate(string expiryDate) =>
+        ExpiryDateParser.TryParse(expiryDate, out var date) ? date.ToString("yyyy-MM-dd") : ExpiryDateParser.RawText(expiryDate);
 }

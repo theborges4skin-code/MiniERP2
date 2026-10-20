@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using MiniERP2.Models;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -29,8 +30,8 @@ public class TrackingFileRow(string trackingNo, string? orderNo, string? address
 /// </summary>
 public class TrackingAssignDialog : Form
 {
-    private readonly DataGridView _grid = new();
-    private readonly DataGridView _fileRefGrid = new();
+    private readonly CellCopyDataGridView _grid = new();
+    private readonly CellCopyDataGridView _fileRefGrid = new();
     private readonly List<OutboundDetail> _candidates;
     private readonly List<TrackingFileRow> _trackingRows;
 

@@ -195,7 +195,7 @@ public class FbaOrderForm : Form
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "품목명", DataPropertyName = nameof(FbaGridRow.ItemName), ReadOnly = true, Width = 200, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, SortMode = DataGridViewColumnSortMode.NotSortable });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "1단수량", DataPropertyName = nameof(FbaGridRow.QtyPerLayer), ReadOnly = true, Width = 60, SortMode = DataGridViewColumnSortMode.NotSortable });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "수량", DataPropertyName = nameof(FbaGridRow.Qty), Width = 60, SortMode = DataGridViewColumnSortMode.NotSortable });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "유통기한(YYYYMMDD)", DataPropertyName = nameof(FbaGridRow.ExpiryDate), Width = 130, SortMode = DataGridViewColumnSortMode.NotSortable });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "유통기한(YYYYMMDD)", DataPropertyName = nameof(FbaGridRow.ExpiryDate), Width = 130, ToolTipText = "YYYYMMDD 권장. 2028.09.07. / 2028-9-7 / 280907 / SEP.07.2028.EXP 도 인식합니다(일자 없는 2028.09는 인식 불가 — 원문 그대로 출력).", SortMode = DataGridViewColumnSortMode.NotSortable });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "박스무게(g)", DataPropertyName = nameof(FbaGridRow.WeightG), Width = 90, SortMode = DataGridViewColumnSortMode.NotSortable });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "운송장번호", DataPropertyName = nameof(FbaGridRow.TrackingNo), Width = 110, SortMode = DataGridViewColumnSortMode.NotSortable });
         _grid.DataSource = _rows;
@@ -1019,7 +1019,7 @@ public class FbaOrderForm : Form
             UnitWeightG = row.UnitWeightG,
             QtyPerLayer = row.QtyPerLayer,
             Qty = row.Qty,
-            ExpiryDate = string.IsNullOrWhiteSpace(row.ExpiryDate) ? null : row.ExpiryDate,
+            ExpiryDate = string.IsNullOrWhiteSpace(row.ExpiryDate) ? null : row.ExpiryDate.Trim(),
         })).ToList();
 
         try

@@ -1,3 +1,5 @@
+using MiniERP2.Controls;
+
 namespace MiniERP2.Forms;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace MiniERP2.Forms;
 /// </summary>
 public class MarginApplyConfirmDialog : Form
 {
-    private readonly DataGridView _grid = new();
+    private readonly CellCopyDataGridView _grid = new();
 
     private MarginApplyConfirmDialog(string title, string message, IReadOnlyList<(string Label, string Before, string After)> rows)
     {

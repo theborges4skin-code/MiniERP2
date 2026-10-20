@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using MiniERP2.Models;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -11,7 +12,7 @@ namespace MiniERP2.Forms;
 /// </summary>
 public class OrphanCskuFinderDialog : Form
 {
-    private readonly DataGridView _grid = new();
+    private readonly CellCopyDataGridView _grid = new();
 
     public string? SelectedChannelCode { get; private set; }
     public string? SelectedCskuCode { get; private set; }

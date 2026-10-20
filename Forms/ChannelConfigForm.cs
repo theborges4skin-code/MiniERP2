@@ -49,15 +49,15 @@ public class ChannelConfigForm : Form
     /// 있게 직접 추적한다(소속 그룹과 무관하게 채널만 담음 — 그룹 노드는 다중선택 대상이 아니다).
     /// </summary>
     private readonly List<TreeNode> _selectedChannelNodes = new();
-    private DataGridView _orderMappingGrid = new();
-    private DataGridView _settlementMappingGrid = new();
+    private CellCopyDataGridView _orderMappingGrid = new();
+    private CellCopyDataGridView _settlementMappingGrid = new();
     private DataGridView _courierOverrideGrid = new();
     private DataGridView _auxSourceGrid = new();
     private ListBox _adLayoutListBox = new();
     private Button _btnAdLayoutAdd = new();
     private Button _btnAdLayoutDelete = new();
     private TextBox _adMatchColumnsTextBox = new();
-    private DataGridView _adFieldMappingGrid = new();
+    private CellCopyDataGridView _adFieldMappingGrid = new();
     private AdFileLayout? _currentAdLayout;
     private CheckBox _cfsFeeEnabledCheckBox = new();
     private PropertyGrid _cfsFeePropertyGrid = new();

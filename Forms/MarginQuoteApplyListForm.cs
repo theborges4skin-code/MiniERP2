@@ -1,6 +1,7 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
 using MiniERP2.UI;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -21,7 +22,7 @@ public class MarginQuoteApplyListForm : Form
 
     private readonly PriceQuoteRepository _quoteRepository = new();
     private readonly ChannelSkuRepository _cskuRepository = new();
-    private readonly DataGridView _grid = new();
+    private readonly CellCopyDataGridView _grid = new();
     private readonly List<GroupRow> _groups;
     private readonly Func<decimal, decimal> _toDbBasis;
 

@@ -1,5 +1,6 @@
 using MiniERP2.Database;
 using MiniERP2.Models;
+using MiniERP2.Controls;
 
 namespace MiniERP2.Forms;
 
@@ -10,7 +11,7 @@ namespace MiniERP2.Forms;
 public class CskuStatBatchPickerDialog : Form
 {
     private readonly CskuStatRepository _repo;
-    private DataGridView _grid = new();
+    private CellCopyDataGridView _grid = new();
 
     public long? SelectedBatchId { get; private set; }
 
@@ -29,7 +30,7 @@ public class CskuStatBatchPickerDialog : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
 
-        _grid = new DataGridView
+        _grid = new CellCopyDataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,

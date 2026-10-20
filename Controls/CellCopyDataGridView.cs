@@ -11,41 +11,27 @@ namespace MiniERP2.Controls;
 /// 부가 기능이 같이 딸려와서, 그런 기능이 필요 없거나(단순 조회/피커 그리드) 이미
 /// 자체 Ctrl+V 처리를 갖고 있는 화면(풀필먼트 발주 처리 등)에 그대로 적용하면 기존
 /// 동작이 바뀌거나 깨질 수 있다. 이 클래스는 오직 Ctrl+C 복사 동작만 고정한다.
+/// 앱의 모든 그리드는 이 클래스나 ExcelLikeDataGridView를 써야 한다 — 순수 DataGridView를
+/// 새로 만들면 행 전체 복사 버그가 다시 생긴다(2026-10-21 전체 재점검 때 18개가 남아 있었다).
 /// </summary>
 public class CellCopyDataGridView : DataGridView
 {
+    public CellCopyDataGridView()
+    {
+        ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
+    }
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         // 기본 Ctrl+C는 DataGridView 내장 처리로 곧장 들어가 이 메서드를 거치지 않고
-        // 처리되어버리므로, 커맨드 키 단계에서 가로채 항상 아래 규칙을 타게 한다.
-        if (keyData == (Keys.Control | Keys.C))
+        // 처리되어버리므로, 커맨드 키 단계에서 가로채 항상 GridClipboard 규칙을 타게 한다.
+        // 셀 편집 중에는 가로채지 않는다 — 편집 텍스트박스에서 일부 글자만 골라 복사하는
+        // 일반 동작이 셀 전체 복사로 바뀌어버리기 때문(ExcelLikeDataGridView와 동일).
+        if (!IsCurrentCellInEditMode && keyData == (Keys.Control | Keys.C))
         {
-            CopySelection();
+            GridClipboard.CopySelection(this);
             return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
-    }
-
-    /// <summary>
-    /// SelectionMode가 FullRowSelect/RowHeaderSelect(기본값)인 그리드에서 클릭 한 번으로
-    /// 걸린 단일 행 선택은 지금 클릭한 셀 하나만 복사하고, 여러 행을 일부러 골랐을 때
-    /// (Ctrl/Shift+클릭)는 기존처럼 그 행들 전체를 복사한다. CellSelect 모드 그리드는
-    /// 원래도 셀 단위라 그대로 SelectedCells를 복사한다.
-    /// </summary>
-    private void CopySelection()
-    {
-        var isRowBasedMode = SelectionMode is DataGridViewSelectionMode.FullRowSelect or DataGridViewSelectionMode.RowHeaderSelect;
-
-        if (isRowBasedMode && SelectedRows.Count <= 1 && CurrentCell != null)
-        {
-            Clipboard.SetText(CurrentCell.FormattedValue?.ToString() ?? string.Empty);
-            return;
-        }
-
-        if (SelectedCells.Count > 0)
-        {
-            var content = GetClipboardContent();
-            if (content != null) Clipboard.SetDataObject(content);
-        }
     }
 }
