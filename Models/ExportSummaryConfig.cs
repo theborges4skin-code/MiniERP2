@@ -65,8 +65,13 @@ public class SalesMarketMapping
     /// <summary>주문 단위 모드에서 판매액에서 뺄 컬럼들(예: 구매자 부담 배송비, 쿠폰). "헤더*0.01"처럼 배율 지정 가능.</summary>
     public List<string> SubtractColumns { get; set; } = new();
 
-    /// <summary>파일명(확장자 제외)에 이 문자열 중 하나라도 포함되면 이 마켓 파일로 자동 인식.</summary>
+    /// <summary>파일명(확장자 제외)에 이 문자열 중 하나라도 포함되면 이 마켓 파일로 자동 인식.
+    /// "^"로 시작하면 파일명이 그 문자열로 시작할 때만(예: "^Order.completed.2" = 국가코드 없는 싱가포르 파일).</summary>
     public List<string> FileNamePatterns { get; set; } = new();
+
+    public bool MatchesFileName(string baseName) => FileNamePatterns.Any(pat => pat.StartsWith('^')
+        ? baseName.StartsWith(pat[1..], StringComparison.OrdinalIgnoreCase)
+        : baseName.Contains(pat, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>선택. 관세청 수출신고 내역과 주문을 맞춰보는 "수출신고 대사"용 컬럼. 없으면 이 마켓은 대사에서 빠진다.
     /// 주문 단위 모드(OrderIdColumn)가 전제다.</summary>
@@ -141,6 +146,13 @@ public class WixOrderTrackConfig
 {
     public string OrderNumberColumn { get; set; } = "Order number";
     public string DateColumn { get; set; } = "Date created";
+    public string TimeColumn { get; set; } = "Time";
+
+    /// <summary>
+    /// Wix 주문시각의 시간대(미국 서부). PayPal 내역은 한국시간이라 대조 전에 한국시간으로 바꾼다.
+    /// 2026-09 실데이터: Wix "Sep 27 2:57 AM" ↔ PayPal "09/27 19:00 KST"(16시간 차, PDT). 비우면 변환 안 함.
+    /// </summary>
+    public string TimeZoneId { get; set; } = "Pacific Standard Time";
     public string TotalColumn { get; set; } = "Total";
     public string CurrencyColumn { get; set; } = "Currency";
     public string PaymentStatusColumn { get; set; } = "Payment status";
@@ -154,19 +166,47 @@ public class WixOrderTrackConfig
 /// IncomeTypes 행의 IncomeColumns 합 + (ReimbursementType 행 중 설명에 ReimbursementContains가 있고 양수인 ReimbursementAmountColumn).
 /// 2026-06 미국 실데이터로 PDF 28,227.85와 일치 확인. 통화는 파일 머리말 "All amounts in USD"에서 읽는다.
 /// </summary>
-public class AmazonTransactionTrackConfig
+public class AmazonTransactionTrackConfig : AmazonTransactionLayout
+{
+    /// <summary>머리말의 통화 → 마켓코드.</summary>
+    public Dictionary<string, string> CurrencyToMarket { get; set; } = new() { ["USD"] = "US", ["JPY"] = "JP" };
+
+    /// <summary>
+    /// 영어(미국) 형식 외의 거래내역 형식. 아마존 일본은 헤더·거래종류가 일본어이고 머리말이 "指定のない場合、単位は円".
+    /// 일본 Income = 商品売上+配送料+ギフト包装手数料+プロモーション割引額+Amazonポイントの費用(注文·返金) — 2026-07~09 월간 요약 PDF "収入 小計"와 일치(소비세 제외).
+    /// </summary>
+    public List<AmazonTransactionLayout> AlternateLayouts { get; set; } = new()
+    {
+        new AmazonTransactionLayout
+        {
+            DateTimeColumn = "日付/時間", TypeColumn = "トランザクションの種類", DescriptionColumn = "説明",
+            IncomeTypes = new() { "注文", "返金", "清算" },
+            IncomeColumns = new() { "商品売上", "配送料", "ギフト包装手数料", "プロモーション割引額", "Amazonポイントの費用" },
+            // 일본 재고 보상 행은 아직 실데이터가 없어 추정값
+            ReimbursementType = "調整", ReimbursementContains = "FBA在庫", ReimbursementAmountColumn = "その他",
+            DefaultCurrency = "JPY",
+        },
+    };
+
+    /// <summary>기본(영어) 형식을 먼저, 그다음 대체 형식.</summary>
+    public IEnumerable<AmazonTransactionLayout> AllLayouts() => AlternateLayouts.Prepend(this);
+}
+
+/// <summary>아마존 거래내역 CSV 한 형식(언어)의 헤더·거래종류 이름.</summary>
+public class AmazonTransactionLayout
 {
     public string DateTimeColumn { get; set; } = "date/time";
     public string TypeColumn { get; set; } = "type";
     public string DescriptionColumn { get; set; } = "description";
     public List<string> IncomeTypes { get; set; } = new() { "Order", "Refund", "Liquidations" };
-    public List<string> IncomeColumns { get; set; } = new() { "product sales", "shipping credits", "gift wrap credits", "promotional rebates" };
+    // "other": 환불 행(Combined TCS+MTC)의 환급 금액. 요약 PDF는 FBA product sale refunds에 넣는다(2026-07 7.05달러로 확인).
+    public List<string> IncomeColumns { get; set; } = new() { "product sales", "shipping credits", "gift wrap credits", "promotional rebates", "other" };
     public string ReimbursementType { get; set; } = "Adjustment";
     public string ReimbursementContains { get; set; } = "Reimbursement";
     public string ReimbursementAmountColumn { get; set; } = "other";
 
-    /// <summary>머리말의 통화 → 마켓코드.</summary>
-    public Dictionary<string, string> CurrencyToMarket { get; set; } = new() { ["USD"] = "US", ["JPY"] = "JP" };
+    /// <summary>머리말에 "All amounts in XXX"가 없을 때 쓰는 통화.</summary>
+    public string DefaultCurrency { get; set; } = "USD";
 }
 
 /// <summary>

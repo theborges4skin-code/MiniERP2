@@ -20,7 +20,8 @@ public static class ExportQuarterSourceLoader
 
     public record PayoneerRow(DateTime? Date, string Description, decimal Amount, string Currency, string? MarketCode, bool Excluded, List<string> Raw);
     public record PaypalRow(DateTime? Date, string Currency, decimal Gross, decimal Net, bool Included, List<string> Raw);
-    public record WixOrder(string OrderNumber, DateTime? Date, string Currency, decimal Total, bool Included, List<string> Raw);
+    /// <summary>Wix 주문. Date는 PayPal과 같은 한국시간, LocalDate는 Wix 화면의 현지(미국) 시각.</summary>
+    public record WixOrder(string OrderNumber, DateTime? Date, string Currency, decimal Total, bool Included, List<string> Raw, DateTime? LocalDate = null);
 
     /// <summary>아마존 거래내역 월별 매출액(Income 합계)과 구성 항목.</summary>
     public record AmazonMonthlyIncome(string FileName, string MarketCode, string Currency, string YearMonth,
@@ -68,8 +69,7 @@ public static class ExportQuarterSourceLoader
     /// 머리말이 있을 수 있어 앞쪽 40줄 안에서 헤더 행을 찾는다.</summary>
     public static SourceKind DetectSourceKind(string filePath, ExportSummaryConfig config)
     {
-        var amazon = config.AmazonTransactionTrack;
-        if (TryReadTable(filePath, row => Has(row, amazon.DateTimeColumn) && Has(row, amazon.TypeColumn) && Has(row, amazon.IncomeColumns.FirstOrDefault() ?? "")) is not null)
+        if (config.AmazonTransactionTrack.AllLayouts().Any(layout => TryReadTable(filePath, row => IsAmazonHeader(row, layout)) is not null))
             return SourceKind.AmazonTransaction;
 
         var paypal = config.PaypalTrack;
@@ -103,6 +103,9 @@ public static class ExportQuarterSourceLoader
     }
 
     private static bool Has(List<string> row, string header) => header.Length > 0 && row.Any(c => Same(c, header));
+
+    private static bool IsAmazonHeader(List<string> row, AmazonTransactionLayout layout)
+        => Has(row, layout.DateTimeColumn) && Has(row, layout.TypeColumn) && Has(row, layout.IncomeColumns.FirstOrDefault() ?? "");
 
     public static List<PayoneerRow> LoadPayoneer(RawTable table, RemittanceTrackConfig config)
     {
@@ -142,7 +145,17 @@ public static class ExportQuarterSourceLoader
     public static List<WixOrder> LoadWixOrders(RawTable table, WixOrderTrackConfig config)
     {
         int noCol = table.Col(config.OrderNumberColumn), dateCol = table.Col(config.DateColumn), totalCol = table.Col(config.TotalColumn),
-            curCol = table.Col(config.CurrencyColumn), statusCol = table.Col(config.PaymentStatusColumn);
+            curCol = table.Col(config.CurrencyColumn), statusCol = table.Col(config.PaymentStatusColumn), timeCol = table.Col(config.TimeColumn);
+        TimeZoneInfo? source = null, korea = null;
+        if (!string.IsNullOrWhiteSpace(config.TimeZoneId))
+        {
+            try
+            {
+                source = TimeZoneInfo.FindSystemTimeZoneById(config.TimeZoneId);
+                korea = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time");
+            }
+            catch (TimeZoneNotFoundException) { source = korea = null; }
+        }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<WixOrder>();
         foreach (var row in table.Rows)
@@ -152,8 +165,15 @@ public static class ExportQuarterSourceLoader
             var included = string.IsNullOrWhiteSpace(config.IncludePaymentStatus) || statusCol < 0
                            || string.Equals(table.Get(row, statusCol).Trim(), config.IncludePaymentStatus, StringComparison.OrdinalIgnoreCase);
             var currency = table.Get(row, curCol).Trim();
-            result.Add(new WixOrder(no, ExportSummaryLoader.ParseDateText(table.Get(row, dateCol)), currency.Length > 0 ? currency : "USD",
-                ExportSummaryLoader.ParseAmountText(table.Get(row, totalCol)), included, row));
+            var local = ExportSummaryLoader.ParseDateText(table.Get(row, dateCol));
+            if (local is { } day && timeCol >= 0 && DateTime.TryParse(table.Get(row, timeCol), System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var time))
+                local = day.Date + time.TimeOfDay;
+            var kst = local is { } l && source is not null && korea is not null
+                ? TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(l, DateTimeKind.Unspecified), source, korea)
+                : local;
+            result.Add(new WixOrder(no, kst, currency.Length > 0 ? currency : "USD",
+                ExportSummaryLoader.ParseAmountText(table.Get(row, totalCol)), included, row, local));
         }
         return result;
     }
@@ -161,21 +181,29 @@ public static class ExportQuarterSourceLoader
     /// <summary>아마존 거래내역 CSV → 월별 Income 합계. 월은 거래 게시일(date/time, 현지 시간) 기준이라 요약 PDF의 기간과 같다.</summary>
     public static List<AmazonMonthlyIncome> LoadAmazonTransactions(string filePath, AmazonTransactionTrackConfig config)
     {
-        var table = ReadTable(filePath, headerFinder: row => row.Any(c => Same(c, config.DateTimeColumn)) && row.Any(c => Same(c, config.TypeColumn)));
+        // 형식(영어·일본어 등)을 차례로 시도해 헤더가 맞는 것으로 읽는다
+        RawTable? table = null;
+        AmazonTransactionLayout layout = config;
+        foreach (var candidate in config.AllLayouts())
+        {
+            table = TryReadTable(filePath, row => IsAmazonHeader(row, candidate));
+            if (table is not null) { layout = candidate; break; }
+        }
+        table ??= ReadTable(filePath, headerFinder: row => IsAmazonHeader(row, config));
 
-        // 머리말 "All amounts in USD, unless specified"에서 통화
+        // 머리말 "All amounts in USD, unless specified"에서 통화, 없으면 형식의 기본 통화(일본: 円)
         var currency = table.Preamble
             .Select(p => System.Text.RegularExpressions.Regex.Match(p, @"All amounts in ([A-Z]{3})"))
-            .FirstOrDefault(m => m.Success)?.Groups[1].Value ?? "USD";
+            .FirstOrDefault(m => m.Success)?.Groups[1].Value ?? layout.DefaultCurrency;
         if (!config.CurrencyToMarket.TryGetValue(currency, out var marketCode))
             throw new InvalidOperationException($"아마존 거래내역 통화 {currency}에 대응하는 마켓이 설정에 없습니다.");
 
-        int dateCol = table.Col(config.DateTimeColumn), typeCol = table.Col(config.TypeColumn), descCol = table.Col(config.DescriptionColumn),
-            reimbCol = table.Col(config.ReimbursementAmountColumn);
-        var incomeCols = config.IncomeColumns.Select(c => (Name: c, Col: table.Col(c))).ToList();
+        int dateCol = table.Col(layout.DateTimeColumn), typeCol = table.Col(layout.TypeColumn), descCol = table.Col(layout.DescriptionColumn),
+            reimbCol = table.Col(layout.ReimbursementAmountColumn);
+        var incomeCols = layout.IncomeColumns.Select(c => (Name: c, Col: table.Col(c))).ToList();
         var missing = incomeCols.Where(c => c.Col < 0).Select(c => c.Name).ToList();
         if (dateCol < 0 || typeCol < 0 || missing.Count > 0)
-            throw new InvalidOperationException($"아마존 거래내역 헤더를 찾지 못했습니다: {string.Join(", ", missing.Prepend(dateCol < 0 ? config.DateTimeColumn : "").Where(x => x.Length > 0))}");
+            throw new InvalidOperationException($"아마존 거래내역 헤더를 찾지 못했습니다: {string.Join(", ", missing.Prepend(dateCol < 0 ? layout.DateTimeColumn : "").Where(x => x.Length > 0))}");
 
         var byMonth = new SortedDictionary<string, (Dictionary<string, decimal> Comp, decimal Reimb)>(StringComparer.Ordinal);
         foreach (var row in table.Rows)
@@ -187,13 +215,13 @@ public static class ExportQuarterSourceLoader
                 acc = (incomeCols.ToDictionary(c => c.Name, _ => 0m), 0m);
 
             var type = table.Get(row, typeCol).Trim();
-            if (config.IncomeTypes.Any(t => Same(t, type)))
+            if (layout.IncomeTypes.Any(t => Same(t, type)))
             {
                 foreach (var (name, col) in incomeCols)
                     acc.Comp[name] += ExportSummaryLoader.ParseAmountText(table.Get(row, col));
             }
-            else if (Same(type, config.ReimbursementType)
-                     && table.Get(row, descCol).Contains(config.ReimbursementContains, StringComparison.OrdinalIgnoreCase))
+            else if (Same(type, layout.ReimbursementType)
+                     && table.Get(row, descCol).Contains(layout.ReimbursementContains, StringComparison.OrdinalIgnoreCase))
             {
                 // 요약 PDF는 양수 재고 보상만 Income에, 음수 조정은 Expenses에 넣는다.
                 var amount = ExportSummaryLoader.ParseAmountText(table.Get(row, reimbCol));

@@ -815,6 +815,30 @@ public class FboOrderForm : Form
         }
     }
 
+    /// <summary>그리드에 직접 입력한 이송장번호를 DB에 반영한다 — 저장(발주확정)을 다시 누르지 않아도
+    /// 입고양식 변환이 수동 입력분을 인식하도록. 그리드에 값이 있는 박스만 덮어쓴다.</summary>
+    private void PersistGridTrackingNos()
+    {
+        if (_grid.IsCurrentCellInEditMode) _grid.EndEdit();
+        var (order, boxes, items) = _orderRepository.GetOrder(_fboNo);
+        if (order == null) return;
+
+        var gridTracking = _rows
+            .Where(r => !string.IsNullOrWhiteSpace(r.TrackingNo))
+            .GroupBy(r => r.BoxSeq)
+            .ToDictionary(g => g.Key, g => g.First().TrackingNo!.Trim());
+        var changed = false;
+        foreach (var box in boxes)
+        {
+            if (gridTracking.TryGetValue(box.BoxSeq, out var trackingNo) && box.TrackingNo != trackingNo)
+            {
+                box.TrackingNo = trackingNo;
+                changed = true;
+            }
+        }
+        if (changed) _orderRepository.SaveOrder(order, boxes, items);
+    }
+
     private void RefreshTrackingFromDb()
     {
         var (_, boxes, _) = _orderRepository.GetOrder(_fboNo);
@@ -834,6 +858,7 @@ public class FboOrderForm : Form
             return;
         }
         var channel = SelectedChannel()!;
+        PersistGridTrackingNos();
         var (order, boxes, items) = _orderRepository.GetOrder(_fboNo);
         if (order == null) return;
 

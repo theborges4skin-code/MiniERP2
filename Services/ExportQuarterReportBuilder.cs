@@ -60,7 +60,7 @@ public static class ExportQuarterReportBuilder
                 // 1) 쇼피 주문(파일명 패턴)
                 var baseName = Path.GetFileNameWithoutExtension(file);
                 var mapping = config.SalesMarkets.FirstOrDefault(m =>
-                    m.FileNamePatterns.Any(pat => baseName.Contains(pat, StringComparison.OrdinalIgnoreCase)));
+                    m.MatchesFileName(baseName));
                 if (mapping is not null && ext != ".csv")
                 {
                     if (mapping.Recon is null || string.IsNullOrWhiteSpace(mapping.OrderIdColumn))
@@ -210,6 +210,9 @@ public static class ExportQuarterReportBuilder
         }
         // Wix 주문 ↔ PayPal 대조: 결제된 Wix 주문이 PayPal 내역에 없으면 PayPal을 다시 받아야 매출이 빠지지 않는다.
         var paypalUnused = paypal.SelectMany(p => p.Item2).Where(r => r.Included && r.Gross > 0 && r.Date.HasValue).ToList();
+        // Wix 시각은 미국 기준이라 한국시간(PayPal 기준)으로 분기를 넘는 주문은 PayPal에서도 다음 분기 거래다.
+        foreach (var o in wix.SelectMany(w => w.Item2).Where(o => o.Included && !InPeriod(o.Date) && InPeriod(o.LocalDate)))
+            warnings.Add($"Wix 주문 #{o.OrderNumber}(미국 {o.LocalDate:MM-dd HH:mm} = 한국 {o.Date:MM-dd HH:mm}, {o.Total:N2} {o.Currency})은 PayPal(한국시간) 기준 기간 밖 — 다음 분기 자사몰 매출(누락 아님)");
         foreach (var o in wix.SelectMany(w => w.Item2).Where(o => o.Included && InPeriod(o.Date)).OrderBy(o => o.Date))
         {
             var hit = paypalUnused.FirstOrDefault(r => r.Gross == o.Total && Math.Abs((r.Date!.Value.Date - o.Date!.Value.Date).TotalDays) <= 3);

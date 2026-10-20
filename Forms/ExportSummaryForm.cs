@@ -243,7 +243,7 @@ public class ExportSummaryForm : Form
 
         Heading("■ 프로그램 활용자료 (MiniERP2용)", Color.FromArgb(0, 120, 60));
         Item("페이오니어 거래내역", "Payoneer → Report → Transactions (엑셀)");
-        Item("쇼피 수출내역", "각 마켓별 Order → My Orders → Completed → 월별 리포트 다운\n   (분기 직전 달 파일도 함께 넣으면 그 달 주문 중 분기 안에 구매확정된 매출까지 잡힘)");
+        Item("쇼피 수출내역", "각 마켓별 Order → My Orders → Completed → 월별 리포트 다운\n   분기 직전 달 파일도 분기가 끝난 뒤 다시 받아 함께 넣기\n   (파일이 주문일 기준이라, 일찍 받으면 그 뒤 구매확정된 주문이 빠짐)");
         Item("아마존 수출내역 (미국·재팬 동일)", "Payment reports → Report Request → All, Transaction,\n   분기 기간을 한 번에 선택해 다운");
         box.AppendText("\n");
 
@@ -551,7 +551,7 @@ public class ExportSummaryForm : Form
         {
             var baseName = Path.GetFileNameWithoutExtension(fileName);
             var mapping = _config.SalesMarkets.FirstOrDefault(m =>
-                m.FileNamePatterns.Any(pat => baseName.Contains(pat, StringComparison.OrdinalIgnoreCase)));
+                m.MatchesFileName(baseName));
 
             if (mapping is null)
             {
@@ -683,7 +683,7 @@ public class ExportSummaryForm : Form
 
                 var baseName = Path.GetFileNameWithoutExtension(file);
                 var mapping = _config.SalesMarkets.FirstOrDefault(m =>
-                    m.FileNamePatterns.Any(pat => baseName.Contains(pat, StringComparison.OrdinalIgnoreCase)));
+                    m.MatchesFileName(baseName));
                 if (mapping is not null)
                 {
                     if (mapping.Recon is null || string.IsNullOrWhiteSpace(mapping.OrderIdColumn))

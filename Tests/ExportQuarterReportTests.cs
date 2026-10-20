@@ -55,7 +55,7 @@ public class ExportQuarterReportTests
         "\"All amounts in USD, unless specified\"",
         "\"date/time\",\"type\",\"order id\",\"description\",\"product sales\",\"shipping credits\",\"gift wrap credits\",\"promotional rebates\",\"other\",\"total\"",
         "\"Jun 1, 2026 12:49:34 AM PDT\",\"Order\",\"1\",\"Serum\",\"100.00\",\"5.00\",\"0\",\"-10.00\",\"0\",\"80.00\"",
-        "\"Jun 2, 2026 1:00:00 PM PDT\",\"Refund\",\"2\",\"Serum\",\"-20.00\",\"0\",\"0\",\"2.00\",\"0\",\"-15.00\"",
+        "\"Jun 2, 2026 1:00:00 PM PDT\",\"Refund\",\"2\",\"Serum\",\"-20.00\",\"0\",\"0\",\"2.00\",\"1.80\",\"-13.20\"",
         "\"Jun 3, 2026 1:00:00 PM PDT\",\"Adjustment\",\"\",\"FBA Inventory Reimbursement - Customer Return\",\"0\",\"0\",\"0\",\"0\",\"17.56\",\"17.56\"",
         "\"Jun 4, 2026 1:00:00 PM PDT\",\"Adjustment\",\"\",\"FBA Inventory Reimbursement - General Adjustment\",\"0\",\"0\",\"0\",\"0\",\"-2.39\",\"-2.39\"",
         "\"Jun 5, 2026 1:00:00 PM PDT\",\"Transfer\",\"\",\"To account ending in: 123\",\"0\",\"0\",\"0\",\"0\",\"-500.00\",\"-500.00\"",
@@ -81,8 +81,34 @@ public class ExportQuarterReportTests
         Assert.AreEqual("US", june.MarketCode);
         Assert.AreEqual("USD", june.Currency);
         Assert.AreEqual(17.56m, june.Reimbursement);
-        Assert.AreEqual(100m + 5m - 10m - 20m + 2m + 17.56m, june.Income);
+        Assert.AreEqual(100m + 5m - 10m - 20m + 2m + 1.80m + 17.56m, june.Income); // 환불 행 other(TCS 환급)도 Income
         Assert.AreEqual(50m, months.Single(m => m.YearMonth == "2026-07").Income);
+    }
+
+    private static readonly string[] AmazonJpCsv =
+    [
+        "\"Amazon 出品サービス、フルフィルメント by Amazon (FBA)\"",
+        "\"指定のない場合、単位は円\"",
+        "\"日付/時間\",\"トランザクションの種類\",\"注文番号\",\"説明\",\"商品売上\",\"商品の売上税\",\"配送料\",\"ギフト包装手数料\",\"Amazonポイントの費用\",\"プロモーション割引額\",\"手数料\",\"その他\",\"合計\"",
+        "\"2026/07/01 12:23:29 JST\",\"注文\",\"1\",\"Serum\",\"3,546\",\"354\",\"418\",\"0\",\"-39\",\"-418\",\"-442\",\"0\",\"3,004\"",
+        "\"2026/07/03 7:31:07 JST\",\"振込み\",\"\",\"末尾が668のアカウントへ\",\"0\",\"0\",\"0\",\"0\",\"0\",\"0\",\"0\",\"-34,702\",\"-34,702\"",
+        "\"2026/07/15 20:48:39 JST\",\"返金\",\"2\",\"Serum\",\"-2,273\",\"-227\",\"-140\",\"0\",\"25\",\"140\",\"254\",\"0\",\"-2,221\"",
+        "\"2026/07/15 22:48:47 JST\",\"注文外料金\",\"\",\"月額登録料\",\"0\",\"0\",\"0\",\"0\",\"0\",\"0\",\"0\",\"-3,072\",\"-3,072\"",
+    ];
+
+    /// <summary>아마존 일본 거래내역(일본어 헤더·円): 소비세 제외, 포인트 비용 포함 — 월간 요약 PDF "収入 小計" 규칙.</summary>
+    [TestMethod]
+    public void LoadAmazonTransactions_JapaneseLayout_ComputesIncomeInYen()
+    {
+        var path = WriteText("2026Jul1-2026Sep30CustomTransaction.csv", AmazonJpCsv);
+
+        Assert.AreEqual(ExportQuarterSourceLoader.SourceKind.AmazonTransaction, ExportQuarterSourceLoader.DetectSourceKind(path, new ExportSummaryConfig()));
+        var july = ExportQuarterSourceLoader.LoadAmazonTransactions(path, new AmazonTransactionTrackConfig()).Single();
+
+        Assert.AreEqual("2026-07", july.YearMonth);
+        Assert.AreEqual("JP", july.MarketCode);
+        Assert.AreEqual("JPY", july.Currency);
+        Assert.AreEqual(3546m + 418m - 39m - 418m - 2273m - 140m + 25m + 140m, july.Income);
     }
 
     [TestMethod]
@@ -138,10 +164,11 @@ public class ExportQuarterReportTests
             "\"1 Oct, 2026\",Payment from Shopee VN,9.00,USD,Completed,4");
         WriteText("Download_paypal.CSV", PaypalCsv);
         WriteText("Orders_wix.csv",
-            "Order number,Date created,Total,Currency,Payment status",
-            "10069,\"Sep 30, 2026\",62.00,USD,Paid",
-            "10068,\"Sep 27, 2026\",93.00,USD,Paid",
-            "10068,\"Sep 27, 2026\",93.00,USD,Paid");
+            "Order number,Date created,Time,Total,Currency,Payment status",
+            "10069,\"Sep 30, 2026\",1:00:00 AM,62.00,USD,Paid",
+            "10070,\"Sep 30, 2026\",9:01:06 AM,40.00,USD,Paid",   // 미국 9/30 오전 = 한국 10/1 → 다음 분기
+            "10068,\"Sep 27, 2026\",2:57:55 AM,93.00,USD,Paid",
+            "10068,\"Sep 27, 2026\",2:57:55 AM,93.00,USD,Paid");
         WriteText("2026Jun1-2026Jul31CustomUnifiedTransaction.csv", AmazonCsv);
 
         var config = new ExportSummaryConfigService(Path.Combine(_folder, "export_summary_config.json")).Load(); // 파일 없으면 기본값
@@ -162,9 +189,11 @@ public class ExportQuarterReportTests
         Assert.AreEqual(50m, Amount("US", ExportQuarterReportBuilder.Sales, "USD"));            // 6월분은 기간 밖
         Assert.IsTrue(report.Warnings.Any(w => w.Contains("중복된 수출신고 1건")));
         Assert.IsTrue(report.Warnings.Any(w => w.StartsWith("수출신고 내역이 없는 달: 2026-08, 2026-09")));
-        // Wix 10068(93)은 PayPal과 짝, 10069(62)는 PayPal에 없어 경고 1건
-        Assert.AreEqual(1, report.Warnings.Count(w => w.StartsWith("Wix 주문")));
-        StringAssert.Contains(report.Warnings.Single(w => w.StartsWith("Wix 주문")), "#10069");
+        // Wix 10068(93)은 PayPal과 짝, 10069(62)는 PayPal에 없음, 10070은 한국시간으로 10월이라 다음 분기 안내
+        var wixWarnings = report.Warnings.Where(w => w.StartsWith("Wix 주문")).ToList();
+        Assert.HasCount(2, wixWarnings);
+        Assert.IsTrue(wixWarnings.Any(w => w.Contains("#10069") && w.Contains("PayPal 내역에 없음")));
+        Assert.IsTrue(wixWarnings.Any(w => w.Contains("#10070") && w.Contains("한국 10-01 01:01") && w.Contains("다음 분기")));
 
         using var package = new ExcelPackage();
         ExportQuarterReportExcelWriter.Write(package, report, config.Markets.ToDictionary(m => m.MarketCode, m => m.MarketName));
