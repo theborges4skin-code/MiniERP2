@@ -43,6 +43,12 @@ internal static class Program
             return 0;
         }
 
+        // 렌더링 초기화(SetCompatibleTextRenderingDefault 포함)는 창이 하나라도 만들어지기 전에 가장 먼저 해야 한다.
+        // SetColorMode를 먼저 부르면 내부 창이 생겨 "첫 번째 IWin32Window 전에 호출해야 합니다" 예외로 시작 즉시 종료됐다
+        // (2026-10-21 MiniERP2 버튼으로 실행 시 무반응 — WER 로그로 확인).
+        ApplicationConfiguration.Initialize();
+        Application.SetColorMode(SystemColorMode.System);
+
         Directory.CreateDirectory(MfgPaths.AppDataFolder);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) =>
@@ -52,9 +58,18 @@ internal static class Program
                 "MiniERP2_MFG 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         };
 
-        Application.SetColorMode(SystemColorMode.System);
-        ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        try
+        {
+            Application.Run(new MainForm());
+        }
+        catch (Exception ex)
+        {
+            // 시작 단계 오류가 조용히 사라지지 않게 로그와 안내창을 남긴다.
+            Log.Write($"[Program] 시작 실패: {ex}");
+            MessageBox.Show($"제조원가관리 프로그램을 시작하지 못했습니다.\n\n{ex.Message}\n\n로그: {MfgPaths.DiagnosticsLogFilePath}",
+                "MiniERP2_MFG 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
         return 0;
     }
 
