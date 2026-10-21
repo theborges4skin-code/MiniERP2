@@ -352,7 +352,7 @@ public class OfsForm : Form
             // 기존 주문을 지울지 물어봅니다.
             if (_orders.Count > 0)
             {
-                var result = MessageBox.Show("기존에 로드된 주문이 있습니다. 새로 불러오시겠습니까?\n'아니오'를 누르면 기존 목록에 추가됩니다.", "확인", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                var result = LoggedMessageBox.Show("기존에 로드된 주문이 있습니다. 새로 불러오시겠습니까?\n'아니오'를 누르면 기존 목록에 추가됩니다.", "확인", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes) { _orders.Clear(); _totalLoadedRowCount = 0; }
                 else if (result == DialogResult.Cancel) return;
             }
@@ -365,7 +365,7 @@ public class OfsForm : Form
 
                 if (_orderLoader.LastLoadHeaderRowLooksEmpty)
                 {
-                    MessageBox.Show(
+                    LoggedMessageBox.Show(
                         $"'{Path.GetFileName(file)}' 파일에서 채널설정에 지정된 헤더 행(헤더 행: {channelConfig.OrderFieldMappings.Values.FirstOrDefault(m => !string.IsNullOrEmpty(m.Column))?.HeaderRow})의 헤더를 하나도 찾지 못했습니다.\n" +
                         "헤더 행이 비어있거나 셀이 병합되어 있을 수 있습니다. 채널설정에서 헤더 행 번호를 확인해주세요.\n\n확인을 누르면 일단 파일은 그대로 불러옵니다.",
                         "헤더 행 확인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -392,7 +392,7 @@ public class OfsForm : Form
 
                 if (recentItems.Count == 0)
                 {
-                    MessageBox.Show($"발주일 기준 최근 {windowDays}일 이내({cutoff:M월 d일}~) 항목이 없습니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    LoggedMessageBox.Show($"발주일 기준 최근 {windowDays}일 이내({cutoff:M월 d일}~) 항목이 없습니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
@@ -436,7 +436,7 @@ public class OfsForm : Form
             var unmappedCount = allLoadedItems.Count(o => o.Status == "매핑 실패" || o.Status == "매핑 키 없음");
             if (unmappedCount > 0 && EnsureMasterDbNotEmpty())
             {
-                MessageBox.Show($"미매핑건 {unmappedCount}건 있음. 매핑창이 열립니다.", "미매핑 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show($"미매핑건 {unmappedCount}건 있음. 매핑창이 열립니다.", "미매핑 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 var mappingForm = Application.OpenForms.OfType<MappingForm>().FirstOrDefault() ?? new MappingForm();
                 if (!mappingForm.Visible) mappingForm.Show();
@@ -446,7 +446,7 @@ public class OfsForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n\n{ex.Message}", "로드 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            LoggedMessageBox.Show($"파일을 읽는 중 오류가 발생했습니다.\n\n{ex.Message}", "로드 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _statusLabel.Text = "오류 발생";
         }
         finally
@@ -511,7 +511,7 @@ public class OfsForm : Form
     /// </summary>
     private void GuideToChannelConfig(SalesChannel channel)
     {
-        MessageBox.Show(
+        LoggedMessageBox.Show(
             $"'{channel.ChannelName}' 채널의 설정이 없습니다.\n채널 설정 창에서 발주서를 읽는 방법을 먼저 설정해주세요.",
             "채널 설정 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
@@ -528,7 +528,7 @@ public class OfsForm : Form
     {
         if (_itemRepository.GetAll().Count > 0) return true;
 
-        MessageBox.Show(
+        LoggedMessageBox.Show(
             "마스터DB(마스터SKU)가 비어있어 매핑할 수 없습니다.\n마스터SKU 관리창에서 먼저 품목을 등록해주세요.",
             "마스터DB 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
@@ -542,7 +542,7 @@ public class OfsForm : Form
     {
         if (_ordersGrid.CurrentRow?.DataBoundItem is not OfsOrderItem item)
         {
-            MessageBox.Show("매핑할 주문 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("매핑할 주문 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -569,7 +569,7 @@ public class OfsForm : Form
         var channelCode = _lastChannelCode ?? _orders.FirstOrDefault(o => !string.IsNullOrEmpty(o.ChannelCode))?.ChannelCode;
         if (string.IsNullOrEmpty(channelCode))
         {
-            MessageBox.Show("먼저 발주 파일을 로드하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("먼저 발주 파일을 로드하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -604,7 +604,7 @@ public class OfsForm : Form
         var selected = GetSelectedOrderItems();
         if (selected.Count == 0)
         {
-            MessageBox.Show(
+            LoggedMessageBox.Show(
                 "내보낼 줄을 먼저 선택하세요(행 머리글을 클릭하거나 셀을 드래그해 선택할 수 있습니다).\n" +
                 "전체를 내보내려면 '전체 택배양식 내보내기' 버튼을 사용하세요.",
                 "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -626,14 +626,14 @@ public class OfsForm : Form
             var message = isPartialSelection
                 ? "선택한 줄 중 매핑 성공된 주문이 없습니다."
                 : "내보낼 (매핑 성공된) 주문이 없습니다.";
-            MessageBox.Show(message, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show(message, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         // 내보내기 전에 발주확정 여부를 물어본다. "선택건 내보내기"면 방금 선택한(=ordersToExport)
         // 건에만, "전체 내보내기"면 전체 대상에만 적용된다(ordersToExport가 이미 그 범위로 필터됨).
         var scopeLabelForConfirm = isPartialSelection ? "선택한" : "전체";
-        var confirmResult = MessageBox.Show(
+        var confirmResult = LoggedMessageBox.Show(
             $"{scopeLabelForConfirm} {ordersToExport.Count}건을 내보내기 전에 발주확정 처리를 하시겠습니까?\n\n" +
             "예: 발주확정 처리 후 파일 내보내기\n아니오: 발주확정 없이 파일만 내보내기",
             "발주확정 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -683,7 +683,7 @@ public class OfsForm : Form
 
             if (overflowGroups.Count > 0)
             {
-                MessageBox.Show(
+                LoggedMessageBox.Show(
                     $"다음 묶음은 품목이 4줄을 초과해 송장에 다 표시되지 못할 수 있습니다:\n{string.Join(", ", overflowGroups)}\n\n" +
                     "그리드에서 일부 줄을 합쳐 4줄 이하로 줄여주세요. (내보내기는 그대로 완료되었습니다.)",
                     "품목 줄 수 초과 안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -693,7 +693,7 @@ public class OfsForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            LoggedMessageBox.Show($"파일을 내보내는 중 오류가 발생했습니다.\n{ExportHelper.DescribeSaveError(ex)}", "내보내기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _statusLabel.Text = "내보내기 오류 발생";
         }
         finally
@@ -713,7 +713,7 @@ public class OfsForm : Form
 
         if (ordersToSave.Count == 0)
         {
-            MessageBox.Show("저장할 (매핑 성공된) 주문이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("저장할 (매핑 성공된) 주문이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -725,7 +725,7 @@ public class OfsForm : Form
             .Select(x => $"{x.Kind} {x.Count}"));
         var nonSaleTotal = ordersToSave.Count(o => !string.IsNullOrEmpty(o.LineKind));
         var nonSaleNote = nonSaleTotal > 0 ? $"\n(이 중 비매출 {nonSaleTotal}건 — {nonSaleBreakdown})" : "";
-        var result = MessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.){nonSaleNote}", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        var result = LoggedMessageBox.Show($"{ordersToSave.Count}개의 주문을 발주확정하고 저장하시겠습니까?\n(운송장번호가 아직 없는 건은 '발주확정' 상태로 저장되고, 운송장번호 등록 시 '출고확정'으로 바뀝니다.){nonSaleNote}", "저장 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result != DialogResult.Yes) return;
 
         await SaveOrdersInternalAsync(ordersToSave);
@@ -800,7 +800,7 @@ public class OfsForm : Form
                 var preview = string.Join("\n", saveConflicts.Take(5).Select(c =>
                     $"- 품목 {c.MskuCode}: 기존 주문 '{c.ExistingOrderNo}' → 새 주문 '{c.NewOrderNo}'"));
                 var more = saveConflicts.Count > 5 ? $"\n... 외 {saveConflicts.Count - 5}건" : string.Empty;
-                MessageBox.Show(
+                LoggedMessageBox.Show(
                     $"{saveConflicts.Count}건의 이력이 다른 주문과 같은 키로 겹쳐 기존 이력을 덮어썼습니다.\n" +
                     $"발주/출고 이력 관리창에서 확인하세요.\n\n{preview}{more}",
                     "이력 덮어쓰기 경고", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -817,7 +817,7 @@ public class OfsForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "저장 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            LoggedMessageBox.Show($"저장 중 오류가 발생했습니다.\n{ex.Message}", "저장 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _statusLabel.Text = "저장 오류 발생";
             return false;
         }
@@ -926,7 +926,7 @@ public class OfsForm : Form
         var diffNote = diff == 0
             ? "숫자가 일치합니다."
             : $"{diff}건 차이가 있습니다. 품절 등으로 의도한 제외가 맞는지 한 번 확인해주세요.";
-        MessageBox.Show(
+        LoggedMessageBox.Show(
             $"불러온 발주건수(엑셀 행 기준): {_totalLoadedRowCount}건\n발주확정 건수: {confirmedCount}건\n\n{diffNote}",
             "발주확정 결과 확인", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -1004,7 +1004,7 @@ public class OfsForm : Form
     {
         if (_selectedChannel is not { } selectedChannel)
         {
-            MessageBox.Show(
+            LoggedMessageBox.Show(
                 "먼저 채널을 선택하세요.\n(툴바의 [채널 선택...] 버튼으로 고르거나, 발주 파일을 먼저 로드하세요.)",
                 "채널 미선택",
                 MessageBoxButtons.OK,
@@ -1093,7 +1093,7 @@ public class OfsForm : Form
         if (liveTargets.Count == 0 || slots.Count == 0) return;
         if (MultiProductAssigner.Validate(slots) is { } error)
         {
-            MessageBox.Show(error, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show(error, "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -1111,7 +1111,7 @@ public class OfsForm : Form
             }).ToList();
             if (tooBig.Count > 0)
             {
-                MessageBox.Show(
+                LoggedMessageBox.Show(
                     $"{tooBig.Count}건은 이미 다른 줄과 합포장돼 있어 합치면 한 송장에 {MultiProductAssigner.MaxProductsPerShipment}품목을 넘습니다.\n" +
                     "그 줄들은 \"묶음 해제\" 후 다시 배정하거나 주문을 나눠 직접 입력하세요. (나머지 줄만 배정합니다)",
                     "품목 수 초과", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1146,14 +1146,14 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("품목을 배정할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("품목을 배정할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             var channelCodes = selected.Select(o => o.ChannelCode ?? _lastChannelCode ?? "").Distinct().ToList();
             if (channelCodes.Count > 1 || string.IsNullOrEmpty(channelCodes[0]))
             {
-                MessageBox.Show("한 채널의 줄만 선택해서 배정하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("한 채널의 줄만 선택해서 배정하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -1176,7 +1176,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("입력할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("입력할 줄을 먼저 선택하세요(셀을 드래그하면 여러 줄을 한 번에 고를 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -1412,7 +1412,7 @@ public class OfsForm : Form
         var order = GetSelectedOrderItems().FirstOrDefault();
         if (order == null) return;
 
-        MessageBox.Show(
+        LoggedMessageBox.Show(
             string.IsNullOrWhiteSpace(order.Remark) ? "메모가 없습니다." : order.Remark,
             "메모", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -1443,7 +1443,7 @@ public class OfsForm : Form
         var selected = GetSelectedOrderItems();
         if (selected.Count == 0)
         {
-            MessageBox.Show("구분을 지정할 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("구분을 지정할 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -1507,11 +1507,11 @@ public class OfsForm : Form
         var selected = GetSelectedOrderItems();
         if (selected.Count == 0)
         {
-            MessageBox.Show("삭제할 줄을 먼저 선택하세요(행 머리글을 클릭하거나 셀을 드래그해 선택할 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("삭제할 줄을 먼저 선택하세요(행 머리글을 클릭하거나 셀을 드래그해 선택할 수 있습니다).", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        var confirm = MessageBox.Show($"선택한 {selected.Count}건을 목록에서 삭제하시겠습니까?", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        var confirm = LoggedMessageBox.Show($"선택한 {selected.Count}건을 목록에서 삭제하시겠습니까?", "삭제 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (confirm != DialogResult.Yes) return;
 
         foreach (var item in selected) _orders.Remove(item);
@@ -1532,7 +1532,7 @@ public class OfsForm : Form
         var selected = GetSelectedOrderItems();
         if (selected.Count == 0)
         {
-            MessageBox.Show("배송지를 채울 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoggedMessageBox.Show("배송지를 채울 행을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -1777,13 +1777,13 @@ public class OfsForm : Form
         {
             if (selected.Count < 2)
             {
-                MessageBox.Show("합포장으로 묶을 줄을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("합포장으로 묶을 줄을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             if (selected.Select(o => o.Recipient).Distinct().Count() > 1)
             {
-                var confirm = MessageBox.Show(
+                var confirm = LoggedMessageBox.Show(
                     "선택한 줄들의 수취인이 서로 다릅니다. 그래도 한 송장으로 합포장하시겠습니까?",
                     "수취인 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (confirm != DialogResult.Yes) return;
@@ -1811,7 +1811,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("분리배송으로 분리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("분리배송으로 분리할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -1840,7 +1840,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("묶음을 해제할 줄을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2174,7 +2174,7 @@ public class OfsForm : Form
             if (FormManager.ShowDialogSafe(dlg, this) != DialogResult.OK) return;
             if (!decimal.TryParse(dlg.Value.Replace(",", "").Replace("원", "").Trim(), out var typed) || typed <= 0)
             {
-                MessageBox.Show("0보다 큰 금액을 숫자로 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("0보다 큰 금액을 숫자로 입력하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             SetSelectedPreviewShippingFee(true, typed);
@@ -2189,7 +2189,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("배송비 청구를 바꿀 송장(행)을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("배송비 청구를 바꿀 송장(행)을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2267,7 +2267,7 @@ public class OfsForm : Form
         {
             if (selected.Count < 2)
             {
-                MessageBox.Show("합포장으로 합칠 묶음을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("합포장으로 합칠 묶음을 2개 이상 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2307,7 +2307,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("분리배송 처리할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("분리배송 처리할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2420,7 +2420,7 @@ public class OfsForm : Form
         {
             if (selected.Count != 1)
             {
-                MessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("복사할 묶음을 1개만 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2469,7 +2469,7 @@ public class OfsForm : Form
         {
             if (selected.Count == 0)
             {
-                MessageBox.Show("수령인 중복회피를 적용할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("수령인 중복회피를 적용할 묶음을 먼저 선택하세요.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -2712,7 +2712,7 @@ public class OfsForm : Form
         {
             if (_previewUndoStack.Count == 0)
             {
-                MessageBox.Show("실행취소할 변경 내용이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoggedMessageBox.Show("실행취소할 변경 내용이 없습니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 

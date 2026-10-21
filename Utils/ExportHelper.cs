@@ -88,7 +88,7 @@ public static class ExportHelper
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"요청을 처리하는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            LoggedMessageBox.Show($"요청을 처리하는 중 오류가 발생했습니다.\n{ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

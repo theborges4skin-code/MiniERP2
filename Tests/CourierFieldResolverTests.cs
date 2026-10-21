@@ -51,6 +51,26 @@ public class CourierFieldResolverTests
     }
 
     [TestMethod]
+    public void Resolve_AddressWithLineBreaks_IsFlattenedToSingleLine()
+    {
+        // 2026-10-21 실제 주문: 원본 주소에 줄바꿈이 섞여 택배양식에 그대로 나갔던 사례.
+        var entry = new HeaderMappingEntry("받는분주소(전체, 분할)", "Address");
+        var item = new OfsOrderItem { Address = "경기도 고양시 덕양구 보광로 43\n어울림관리사무소\n" };
+
+        var value = CourierFieldResolver.Resolve(entry, [item], BuildCourier("[]"), null);
+
+        Assert.AreEqual("경기도 고양시 덕양구 보광로 43 어울림관리사무소", value);
+    }
+
+    [TestMethod]
+    public void ToSingleLine_KeepsNormalTextAndCollapsesBreaksAndTabs()
+    {
+        Assert.AreEqual("서울시 강남구 1층", CourierFieldResolver.ToSingleLine("서울시 강남구 1층"));
+        Assert.AreEqual("a b c", CourierFieldResolver.ToSingleLine("a\r\n\tb \n c"));
+        Assert.IsNull(CourierFieldResolver.ToSingleLine(null));
+    }
+
+    [TestMethod]
     public void Resolve_FixedOverrideSet_TakesPriorityOverManualValueAndProperty()
     {
         var entry = new HeaderMappingEntry("도착지코드", "Phone");

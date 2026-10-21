@@ -108,7 +108,18 @@ public static class CourierFieldResolver
         }
 
         var property = typeof(OfsOrderItem).GetProperty(entry.PropertyName);
-        return property?.GetValue(representative)?.ToString();
+        return ToSingleLine(property?.GetValue(representative)?.ToString());
+    }
+
+    /// <summary>
+    /// 수령인·연락처·주소·배송메시지 등 한 줄이어야 하는 칸의 줄바꿈·탭을 공백 하나로 바꾼다. 주문 파일 원본 주소에
+    /// 줄바꿈이 섞여 오는 경우가 있어(예: "보광로 43⏎어울림관리사무소⏎", 2026-10-21) 택배사 프로그램 업로드 시
+    /// 주소가 잘리거나 오류가 날 수 있기 때문이다. 품목 칸은 여러 품목을 줄바꿈으로 잇는 칸이라 여기를 거치지 않는다.
+    /// </summary>
+    public static string? ToSingleLine(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.IndexOfAny(['\r', '\n', '\t']) < 0) return value;
+        return string.Join(' ', value.Split(['\r', '\n', '\t', ' '], StringSplitOptions.RemoveEmptyEntries));
     }
 
     /// <summary>
