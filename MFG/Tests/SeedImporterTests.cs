@@ -39,7 +39,8 @@ public class SeedImporterTests : TestDb
             var calc = snap.Recipe(snap.Recipes.Single(r => r.Id == id), showIncluded: false).KgCost;
             if (Math.Abs(calc - sheetKg) > 0.01) mismatches.Add($"{code} {name}: 시트 {sheetKg} / 계산 {calc}");
         }
-        // S04는 시트에 원료목록과 다른 단가(30000)가 직접 입력된 행이 있어 다를 수 있다(이관 경고로 보고됨).
+        // S04만 다를 수 있다: 원료목록에 단가 없는 원료(해바라기씨오일·라벤더오일)에 시트 단가를 직접 넣은 행이 있는데,
+        // 같은 원료를 S06은 단가 없이 계산하므로 원료 단가로 옮기지 않았다(이관 경고로 보고).
         Assert.IsTrue(mismatches.All(m => m.StartsWith("S04", StringComparison.Ordinal)), string.Join("\n", mismatches));
 
         var h14 = snap.Recipes.Single(r => r.Code == "H14");

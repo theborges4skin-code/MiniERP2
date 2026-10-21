@@ -148,6 +148,8 @@ public class MainHub : Form
             ("배송지 주소록 관리", (s, e) => FormManager.Show<AddressBookForm>(), null),
             ("간이 마진 계산기", (s, e) => FormManager.Show<MarginCalculatorForm>(), null),
             ("정산 마진 계산기", (s, e) => FormManager.Show<SimpleMarginCalculatorForm>(), null),
+            // 별도 단독 실행 프로그램(MiniERP2_MFG)을 띄운다 — MiniERP2 창이 아님(docs/MFG_PLAN.md).
+            ("제조원가관리(MFG)", (s, e) => Services.MfgLauncher.Launch(this), null),
         }),
         ("정산", new()
         {

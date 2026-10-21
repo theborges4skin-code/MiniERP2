@@ -273,7 +273,9 @@ public partial class SeedImporter
             if (string.IsNullOrEmpty(ws.Cells[r, 6].Formula) && Num(ws, r, 6) is { } sheetPrice)
             {
                 lineMemo = Join(lineMemo, $"원본 시트 단가 직접입력 {Fmt.Won(sheetPrice)}원/kg(VAT별도) — 원료목록 단가 대신 쓰였음");
-                Report.Warn($"{code}: '{matName}' 시트 단가 {Fmt.Won(sheetPrice)} 직접입력(원료목록 단가와 다를 수 있음)");
+                // 이 단가를 원료 단가로 기록하지는 않는다: 같은 원료를 다른 시트(예: S06)는 단가 없이 계산하고 있어,
+                // 기록하면 그 제조법들의 원가가 엑셀과 달라진다. 원료 탭에서 실제 단가를 확인해 입력하도록 경고만 남긴다.
+                Report.Warn($"{code}: '{matName}' 시트에 단가 {Fmt.Won(sheetPrice)}원 직접입력 — 원료 단가로 옮기지 않음(원료 탭에서 실제 단가 확인·입력 필요)");
             }
             recipe.Lines.Add(new RecipeLine { Stage = Text(ws, r, 2), MaterialId = m.Id, Percent = Num(ws, r, 5) ?? 0, Memo = lineMemo });
         }

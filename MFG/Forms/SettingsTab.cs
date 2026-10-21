@@ -101,15 +101,11 @@ public class SettingsTab : UserControl, IMfgTab
         if (!File.Exists(recipe)) { Ui.Warn(this, "신제조법 파일을 찾을 수 없습니다."); return; }
         if (pm.Length > 0 && !File.Exists(pm)) { Ui.Warn(this, "product_master 파일을 찾을 수 없습니다."); return; }
 
+        var clear = false;
         if (SeedImporter.HasData())
         {
             if (!Ui.Confirm(this, "mfgdb에 이미 원료·제조법·완제품 데이터가 있습니다.\n백업을 만든 뒤 모두 지우고 엑셀에서 다시 가져올까요?\n(그동안 입력한 단가·확정 표시도 모두 사라집니다 — 백업으로 되돌릴 수 있음)")) return;
-            _backup.CreateBackup("before_reimport");
-            SeedImporter.ClearAll();
-        }
-        else if (File.Exists(MfgPaths.DatabaseFilePath))
-        {
-            _backup.CreateBackup("before_import");
+            clear = true;
         }
 
         _state.Settings.LastRecipeWorkbookPath = recipe;
@@ -119,24 +115,7 @@ public class SettingsTab : UserControl, IMfgTab
         Cursor = Cursors.WaitCursor;
         try
         {
-            // 매입처를 먼저 MiniERP2에서 불러와야 부자재의 매입처 자동 연결이 된다.
-            var bridge = _state.Bridge;
-            var supplierNote = "";
-            if (bridge.IsAvailable)
-            {
-                var (added, _) = new SupplierRepository().Sync(bridge.GetPurchaseChannels());
-                supplierNote = $"매입처 동기화: MiniERP2 매입 채널 (신규 {added})";
-            }
-            else
-            {
-                supplierNote = "MiniERP2 DB가 없어 매입처를 불러오지 못했습니다(부자재 매입처 자동 연결 생략).";
-            }
-
-            var importer = new SeedImporter();
-            importer.Run(recipe, pm.Length > 0 ? pm : null, new SupplierRepository().GetAll());
-            var report = BuildReport(importer.Report, supplierNote);
-            var reportPath = Path.Combine(MfgPaths.AppDataFolder, $"import_report_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
-            File.WriteAllText(reportPath, report);
+            var (report, reportPath) = SeedRunner.Run(recipe, pm.Length > 0 ? pm : null, _state.Bridge, clear);
             _state.NotifyDataChanged();
             RefreshData();
             Ui.ShowText(this, "초기 데이터 가져오기 결과", report + $"\n\n(이 리포트는 {reportPath} 에도 저장했습니다.)");
@@ -144,48 +123,12 @@ public class SettingsTab : UserControl, IMfgTab
         catch (Exception ex)
         {
             Utils.Log.Write($"[Import] 실패: {ex}");
-            Ui.Warn(this, "가져오기 실패(아무것도 반영되지 않았습니다): " + ex.Message);
+            Ui.Warn(this, "가져오기 실패(엑셀 이관분은 반영되지 않았습니다): " + ex.Message);
         }
         finally
         {
             Cursor = Cursors.Default;
         }
-    }
-
-    private static string BuildReport(ImportReport r, string supplierNote)
-    {
-        var snap = CostSnapshot.Load();
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"[가져오기 완료 {DateTime.Now:yyyy-MM-dd HH:mm}]");
-        sb.AppendLine(supplierNote);
-        sb.AppendLine($"원료 {r.Materials} / 단가이력 {r.PriceHistory} / 혼합물 구성 {r.Mixtures} / 제조법 {r.Recipes} / 부자재 {r.Packs} / 완제품 {r.Products}");
-        sb.AppendLine("모든 제조법·완제품은 '미확정'입니다. 확인하면서 확정 버튼으로 표시하세요.");
-        sb.AppendLine("가격은 엑셀(VAT별도) × 1.1 = VAT포함으로 저장했습니다. VAT별도 보기로 바꾸면 엑셀 숫자와 같습니다.");
-        sb.AppendLine();
-        sb.AppendLine("[검증] 제조법 kg당 원료비(VAT별도): 엑셀 시트 F4 vs 이관 후 계산");
-        var mismatch = 0;
-        foreach (var (code, name, sheetKg, id) in r.RecipeChecks)
-        {
-            var recipe = snap.Recipes.FirstOrDefault(x => x.Id == id);
-            if (recipe is null) continue;
-            var calc = snap.Recipe(recipe, false).KgCost;
-            if (Math.Abs(calc - sheetKg) > 0.01)
-            {
-                mismatch++;
-                sb.AppendLine($"  ✗ {code} {name}: 시트 {Fmt.Won(sheetKg)} / 계산 {Fmt.Won(calc)}");
-            }
-        }
-        sb.AppendLine(mismatch == 0 ? "  모두 일치" : $"  불일치 {mismatch}건 (아래 경고 참고)");
-        sb.AppendLine();
-        if (r.PacksWithoutSupplier.Count > 0)
-        {
-            sb.AppendLine($"[매입처 자동 연결 못 한 부자재 {r.PacksWithoutSupplier.Count}개] — 부자재 탭에서 기본 매입처를 지정하세요");
-            foreach (var n in r.PacksWithoutSupplier) sb.AppendLine("  - " + n);
-            sb.AppendLine();
-        }
-        sb.AppendLine($"[경고 {r.Warnings.Count}건]");
-        foreach (var w in r.Warnings) sb.AppendLine("  - " + w);
-        return sb.ToString();
     }
 
     private void Restore()
