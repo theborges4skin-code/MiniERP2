@@ -33,7 +33,7 @@ public class ProductDialog : Form
     private readonly DataGridView _components = Ui.Grid(readOnly: false);
     private readonly TextBox _container = Ui.Text(100), _package = Ui.Text(100), _sticker = Ui.Text(100), _etc = Ui.Text(100), _shipping = Ui.Text(100);
     private readonly TextBox _notes = Ui.Text(360, multiline: true);
-    private readonly Label _suggestion = new() { AutoSize = false, Width = 600, Height = 40, ForeColor = Ui.LinkFore };
+    private readonly Label _suggestion = new() { AutoSize = false, Width = 600, Height = 40, ForeColor = Theme.LinkFore };
     private readonly Label _breakdown = new() { AutoSize = true, Font = new Font(Control.DefaultFont.FontFamily, 10f), Padding = new Padding(6) };
     private readonly Panel _sourcePanel = new() { Dock = DockStyle.Fill };
 
@@ -282,7 +282,7 @@ public class ProductDialog : Form
         if (_p.ConfirmedTotal is { } ct) lines.Add($"확정 원가(VAT포함): {Fmt.Won(ct)}  확정일 {_p.ConfirmedAt}" + (Math.Abs(ct - incl.Total) > 0.5 ? "  ← 지금 계산과 다름(재확정 필요)" : ""));
         if (r.Problem is not null) lines.Add("⚠ " + r.Problem);
         _breakdown.Text = string.Join(Environment.NewLine, lines);
-        _breakdown.ForeColor = r.Problem is null ? SystemColors.ControlText : Ui.WarnFore;
+        _breakdown.ForeColor = r.Problem is null ? Theme.TextFore : Theme.WarnFore;
     }
 
     private void SaveAndClose(bool confirm)

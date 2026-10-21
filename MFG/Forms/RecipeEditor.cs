@@ -68,8 +68,8 @@ public class RecipeEditor : UserControl
             Ui.Col("code", "코드", 60, readOnly: true), Ui.Col("cas", "CAS", 90, readOnly: true), Ui.Col("pct", "투입량(%)", 80, right: true),
             Ui.Col("price", "단가(원/kg)", 90, right: true, readOnly: true), Ui.Col("cost", "원료비(원/kg 제품)", 110, right: true, readOnly: true),
             Ui.Col("density", "비중", 55, right: true, readOnly: true), Ui.Col("memo", "공정 메모", 220));
-        foreach (var c in new[] { "stage", "pct", "memo" }) _lines.Columns[c]!.DefaultCellStyle.BackColor = Ui.InputBack;
-        _lines.Columns["material"]!.DefaultCellStyle.BackColor = Ui.InputBack;
+        foreach (var c in new[] { "stage", "pct", "memo", "material" }) Theme.ApplyInput(_lines.Columns[c]!.DefaultCellStyle);
+        foreach (var c in new[] { "no", "code", "cas", "price", "cost", "density" }) Theme.ApplyReadOnly(_lines.Columns[c]!.DefaultCellStyle);
         foreach (DataGridViewColumn c in _lines.Columns) c.SortMode = DataGridViewColumnSortMode.NotSortable;
         _lines.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && _lines.Columns[e.ColumnIndex].Name == "material") PickMaterial(e.RowIndex); };
         _lines.KeyDown += (_, e) =>
@@ -212,7 +212,7 @@ public class RecipeEditor : UserControl
         _repo.Save(_work);
         _dirty = false;
         _dirtyLabel.Text = silent ? "" : "저장됨";
-        _dirtyLabel.ForeColor = Ui.MutedFore;
+        _dirtyLabel.ForeColor = Theme.MutedFore;
         _state.NotifyDataChanged();
         Saved?.Invoke();
         LoadRecipe(_work.Id);
@@ -254,7 +254,7 @@ public class RecipeEditor : UserControl
     {
         if (_work is null) return;
         _status.Text = _work.IsConfirmed ? $"확정 {(_work.ConfirmedAt ?? "")[..Math.Min(10, (_work.ConfirmedAt ?? "").Length)]}" : "미확정";
-        _status.BackColor = _work.IsConfirmed ? Ui.ConfirmedBack : Color.FromArgb(255, 235, 205);
+        if (_work.IsConfirmed) Theme.ApplyConfirmed(_status); else Theme.ApplyDraft(_status);
     }
 
     private void MarkDirty()
@@ -262,7 +262,7 @@ public class RecipeEditor : UserControl
         if (_loading || _work is null) return;
         _dirty = true;
         _dirtyLabel.Text = "● 저장 안 됨";
-        _dirtyLabel.ForeColor = Ui.WarnFore;
+        _dirtyLabel.ForeColor = Theme.WarnFore;
     }
 
     private void ParseMeasuredDensity()
@@ -299,7 +299,7 @@ public class RecipeEditor : UserControl
             row.Cells["cas"].Value = m?.Cas;
             row.Cells["pct"].Value = Fmt.Num(lines[i].Percent * 100);
             row.Cells["price"].Value = lc?.PricePerKg is { } p ? Fmt.Won(p) : (m is null ? "" : "단가 없음");
-            row.Cells["price"].Style.ForeColor = lc?.PricePerKg is null ? Ui.WarnFore : (m?.CurrentPrice?.IsUncertain == true ? Ui.WarnFore : Color.Empty);
+            row.Cells["price"].Style.ForeColor = lc?.PricePerKg is null ? Theme.WarnFore : (m?.CurrentPrice?.IsUncertain == true ? Theme.WarnFore : Color.Empty);
             row.Cells["price"].ToolTipText = m?.CurrentPrice is { } cp ? $"적용일 {cp.EffectiveDate} / {cp.Source}{(cp.IsUncertain ? " / 단가 확실치 않음" : "")}" : "";
             row.Cells["cost"].Value = lc?.CostPerKgProduct is { } c ? Fmt.Won(c) : "";
             row.Cells["density"].Value = m?.Density is { } d ? Fmt.Num(d) : "";
@@ -321,7 +321,7 @@ public class RecipeEditor : UserControl
         if (res.MissingPriceCount > 0) sb.AppendLine($"⚠ 단가 없는 원료 {res.MissingPriceCount}개");
         if (res.UncertainPriceCount > 0) sb.AppendLine($"⚠ 단가 확실치 않음 {res.UncertainPriceCount}개");
         _summary.Text = sb.ToString();
-        _summary.ForeColor = res.TotalIsOk && res.MissingPriceCount == 0 ? SystemColors.ControlText : Ui.WarnFore;
+        _summary.ForeColor = res.TotalIsOk && res.MissingPriceCount == 0 ? Theme.TextFore : Theme.WarnFore;
 
         if (rebuildSizes || _sizes.Columns.Count != _work.Sizes.Count + 1) BuildSizesGrid();
         FillSizes(res);
@@ -349,8 +349,9 @@ public class RecipeEditor : UserControl
             var row = _sizes.Rows[idx];
             row.Tag = key;
             row.ReadOnly = !editable;
-            if (editable) for (var c = 1; c < _sizes.Columns.Count; c++) row.Cells[c].Style.BackColor = Ui.InputBack;
-            else row.DefaultCellStyle.BackColor = SystemColors.Control;
+            if (editable) for (var c = 1; c < _sizes.Columns.Count; c++) Theme.ApplyInput(row.Cells[c].Style);
+            else Theme.ApplyReadOnly(row.DefaultCellStyle);
+            Theme.ApplyReadOnly(row.Cells[0].Style); // 항목 이름 칸
         }
         AddRow(RowVolume, "용량(ml)", true);
         AddRow(RowFill, "충진중량(g)", false);
@@ -378,7 +379,9 @@ public class RecipeEditor : UserControl
                 var key = (string)row.Tag!;
                 var cell = row.Cells[col];
                 cell.ToolTipText = "";
-                cell.Style.ForeColor = Color.Empty;
+                // 글자색 초기화: 입력칸은 입력칸 글자색, 계산칸은 행 기본(읽기전용) 색으로 — Color.Empty로 비우면
+                // 다크 모드에서 흰 글자가 노란 입력칸 위에 나온다.
+                cell.Style.ForeColor = row.ReadOnly ? Color.Empty : Theme.InputFore;
                 switch (key)
                 {
                     case RowVolume: cell.Value = Fmt.Num(size.VolumeMl); break;
@@ -393,7 +396,7 @@ public class RecipeEditor : UserControl
                         cell.Value = Fmt.Won(calc.CostLineAmount(cost, show));
                         if (cost.PackMaterialId is { } pid)
                         {
-                            cell.Style.ForeColor = Ui.LinkFore;
+                            cell.Style.ForeColor = Theme.LinkFore;
                             var pack = _packs.GetValueOrDefault(pid);
                             cell.ToolTipText = pack is null ? "(삭제된 부자재)" : $"{pack.Code} {pack.Name} × {Fmt.Num(cost.Quantity)}" +
                                 (pack.CurrentPrice is null ? " — 단가 없음" : $" (단가 적용일 {pack.CurrentPrice.EffectiveDate})");

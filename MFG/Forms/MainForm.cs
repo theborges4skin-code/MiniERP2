@@ -34,7 +34,7 @@ public class MainForm : Form
         var title = Ui.Label("MiniERP2_MFG 제조원가관리", bold: true);
         title.Font = new Font(Font.FontFamily, 11f, FontStyle.Bold);
         var top = Ui.Bar(title, _vatIncl, _vatExcl, Ui.Button("지금 백업", (_, _) => BackupNow()), _status);
-        top.BackColor = SystemColors.ControlLight;
+        top.BackColor = Theme.BarBack;
 
         AddTab("원료", new MaterialsTab(_state));
         AddTab("부자재", new PacksTab(_state));
@@ -82,6 +82,26 @@ public class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// 화면 캡처(색 대비 확인용, 명령줄 "--screenshot 폴더 [--dark]"): 모든 탭을 차례로 열어 PNG로 저장한 뒤 닫는다.
+    /// 시험 데이터 폴더(MFG_DATA_DIR)와 함께 쓴다.
+    /// </summary>
+    internal void CaptureAllTabs(string folder)
+    {
+        Directory.CreateDirectory(folder);
+        var mode = Theme.IsDark ? "dark" : "light";
+        for (var i = 0; i < _tabs.TabPages.Count; i++)
+        {
+            _tabs.SelectedIndex = i;
+            RefreshSelected();
+            if (_tabs.SelectedTab?.Controls[0] is RecipesTab rt) rt.ShowRecipe("mfg_h14");
+            Application.DoEvents();
+            using var bmp = new Bitmap(Width, Height);
+            DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+            bmp.Save(Path.Combine(folder, $"{mode}_{i:00}_{_tabs.SelectedTab!.Text.Replace("·", "_").Replace(" ", "_")}.png"));
+        }
+    }
+
     private void OnFirstShown()
     {
         // 코드 체계 변경(2026-10-21, mfg_ 접두어 + master 차용) 이전에 만든 mfgdb면 한 번 자동 변환한다(백업 후).
@@ -126,7 +146,7 @@ public class MainForm : Form
             var reProducts = snap.Products.Values.Count(p => snap.ProductNeedsReconfirm(p, inclCalc));
             _status.Text = $"미확정 제조법 {draftRecipes} · 미확정 완제품 {draftProducts}" +
                            (reRecipes + reProducts > 0 ? $" · 재확인 필요 {reRecipes + reProducts}" : "") + $"   |   저장은 VAT포함, 지금 {_state.VatLabel} 보기";
-            _status.ForeColor = reRecipes + reProducts > 0 ? Ui.WarnFore : SystemColors.ControlText;
+            _status.ForeColor = reRecipes + reProducts > 0 ? Theme.WarnFore : Theme.TextFore;
         }
         catch (Exception ex)
         {

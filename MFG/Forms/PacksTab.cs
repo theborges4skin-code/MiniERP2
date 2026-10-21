@@ -92,7 +92,7 @@ public class PacksTab : UserControl, IMfgTab
                 cp?.EffectiveDate ?? "", p.DefaultSupplierCode is { } sc ? names.GetValueOrDefault(sc, sc) : "",
                 usage.TryGetValue(p.Id, out var u) ? u.Count : 0, p.Note.Split('\n')[0]);
             _grid.Rows[i].Tag = p.Id;
-            if (!p.IsActive) _grid.Rows[i].DefaultCellStyle.ForeColor = Ui.MutedFore;
+            if (!p.IsActive) _grid.Rows[i].DefaultCellStyle.ForeColor = Theme.MutedFore;
         }
         Ui.ApplyFilter(_grid, _search.Text);
         Ui.Reselect(_grid, keep);

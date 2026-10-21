@@ -57,7 +57,7 @@ public class PriceDialog : Form
             ("메모", _note));
         var hint = Ui.Label(taxFree ? "면세 품목은 VAT 보기와 관계없이 입력값 그대로 저장됩니다."
                                     : $"지금 {Vat.ModeLabel(showIncluded)} 보기입니다. 저장은 VAT포함 금액으로 됩니다.");
-        hint.ForeColor = Ui.MutedFore;
+        hint.ForeColor = Theme.MutedFore;
 
         var ok = new Button { Text = "추가", Width = 90 };
         ok.Click += (_, _) => OnOk();

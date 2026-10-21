@@ -1,13 +1,52 @@
 namespace MiniERP2.MFG.Forms;
 
 /// <summary>화면 구성 공용 헬퍼(디자이너 없이 코드로 화면을 만든다 — MiniERP2와 같은 방식).</summary>
+/// <summary>
+/// 화면 색 규칙(일반/다크 모드 공용). 원칙: <b>배경색을 칠하면 글자색도 반드시 짝으로 지정한다</b> — 배경만 칠하면 다크 모드에서
+/// 기본 글자색(흰색)이 밝은 배경 위에 나와 안 보인다(2026-10-21 사용자 지적). 그래서 배경은 아래 Apply* 메서드로만 칠한다.
+/// 글자색만 바꾸는 경고/연결/흐림 색도 모드별로 대비가 충분한 값을 쓴다.
+/// </summary>
+internal static class Theme
+{
+    public static bool IsDark => Application.IsDarkModeEnabled;
+
+    private static Color Pick(int light, int dark) => Color.FromArgb(unchecked((int)0xFF000000) | (IsDark ? dark : light));
+
+    // 입력칸(엑셀 노란 셀과 같은 의미)
+    public static Color InputBack => Pick(0xFFF9D6, 0x3D3720);
+    public static Color InputFore => Pick(0x1A1A1A, 0xF5EED2);
+    // 확정 표시
+    public static Color ConfirmedBack => Pick(0xDCF2E0, 0x1E4029);
+    public static Color ConfirmedFore => Pick(0x14532D, 0xC6EFD1);
+    // 미확정 표시
+    public static Color DraftBack => Pick(0xFFEBCD, 0x4A3417);
+    public static Color DraftFore => Pick(0x7A4A00, 0xFFDDB0);
+    // 읽기전용·계산칸
+    public static Color ReadOnlyBack => Pick(0xF0F0F0, 0x2B2B2E);
+    public static Color ReadOnlyFore => Pick(0x4D4D4D, 0xBDBDBD);
+    // 상단 막대
+    public static Color BarBack => Pick(0xE6E6E6, 0x2D2D30);
+
+    // 글자색만 바꾸는 표시(배경은 기본)
+    public static Color WarnFore => Pick(0xB03A2E, 0xFF8C7C);
+    public static Color LinkFore => Pick(0x1F5F8B, 0x80C2F7);
+    public static Color MutedFore => Pick(0x6B6B6B, 0x9E9E9E);
+    public static Color OkFore => Pick(0x1E7B45, 0x72D79C);
+    public static Color TextFore => SystemColors.ControlText;
+
+    public static void ApplyInput(DataGridViewCellStyle s) { s.BackColor = InputBack; s.ForeColor = InputFore; }
+    public static void ApplyInput(Control c) { c.BackColor = InputBack; c.ForeColor = InputFore; }
+    public static void ApplyConfirmed(DataGridViewCellStyle s) { s.BackColor = ConfirmedBack; s.ForeColor = ConfirmedFore; }
+    public static void ApplyConfirmed(Control c) { c.BackColor = ConfirmedBack; c.ForeColor = ConfirmedFore; }
+    public static void ApplyDraft(Control c) { c.BackColor = DraftBack; c.ForeColor = DraftFore; }
+    public static void ApplyReadOnly(DataGridViewCellStyle s) { s.BackColor = ReadOnlyBack; s.ForeColor = ReadOnlyFore; }
+
+    /// <summary>칠한 배경·글자색을 지우고 기본(그리드/시스템 색)으로 되돌린다.</summary>
+    public static void ClearColors(DataGridViewCellStyle s) { s.BackColor = Color.Empty; s.ForeColor = Color.Empty; }
+}
+
 internal static class Ui
 {
-    public static readonly Color InputBack = Color.FromArgb(255, 249, 214);   // 노란 입력칸(엑셀 노란 셀과 같은 의미)
-    public static readonly Color ConfirmedBack = Color.FromArgb(220, 242, 224);
-    public static readonly Color WarnFore = Color.FromArgb(192, 57, 43);
-    public static readonly Color LinkFore = Color.FromArgb(31, 97, 141);
-    public static readonly Color MutedFore = Color.Gray;
 
     public static DataGridView Grid(bool readOnly = true)
     {
@@ -65,7 +104,7 @@ internal static class Ui
     {
         var t = new TextBox { Width = width, Multiline = multiline, Margin = new Padding(2, 4, 2, 2) };
         if (multiline) { t.Height = 60; t.ScrollBars = ScrollBars.Vertical; }
-        if (input) t.BackColor = InputBack;
+        if (input) Theme.ApplyInput(t);
         return t;
     }
 

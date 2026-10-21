@@ -86,9 +86,9 @@ public class RecipesTab : UserControl, IMfgTab
                 string.Join(", ", r.Sizes.Select(s => Fmt.Num(s.VolumeMl))), string.Join(" ", flags), r.SourceSheet);
             var row = _grid.Rows[i];
             row.Tag = r.Id;
-            if (r.IsConfirmed) row.Cells["status"].Style.BackColor = Ui.ConfirmedBack;
-            if (flags.Count > 0) row.Cells["flag"].Style.ForeColor = Ui.WarnFore;
-            if (r.IsArchived) row.DefaultCellStyle.ForeColor = Ui.MutedFore;
+            if (r.IsConfirmed) Theme.ApplyConfirmed(row.Cells["status"].Style);
+            if (flags.Count > 0) row.Cells["flag"].Style.ForeColor = Theme.WarnFore;
+            if (r.IsArchived) row.DefaultCellStyle.ForeColor = Theme.MutedFore;
         }
         Ui.ApplyFilter(_grid, _search.Text);
         Ui.Reselect(_grid, _shownId);
@@ -116,6 +116,16 @@ public class RecipesTab : UserControl, IMfgTab
     }
 
     /// <summary>닫기 전 확인용: 편집 중 변경이 있으면 저장 여부를 묻는다. 계속 진행해도 되면 true.</summary>
+    /// <summary>코드로 제조법을 골라 편집기에 연다(화면 캡처 확인용).</summary>
+    internal void ShowRecipe(string code)
+    {
+        var r = new RecipeRepository().GetAll(withDetails: false).FirstOrDefault(x => x.Code == code);
+        if (r is null) return;
+        _shownId = r.Id;
+        RefreshList();
+        _editor.LoadRecipe(r.Id);
+    }
+
     public bool ConfirmLeave()
     {
         if (!_editor.IsDirty) return true;

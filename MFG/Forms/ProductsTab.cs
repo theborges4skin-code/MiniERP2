@@ -105,7 +105,7 @@ public class ProductsTab : UserControl, IMfgTab
             if (reconfirm) flags.Add("재확인 필요");
             if (r.Problem is not null) flags.Add(r.Problem);
             var inclTotal = show ? r.Total : inclCalc.Calculate(p, true).Total;
-            var margin = p.ConsumerPrice is > 0 && inclTotal > 0 ? Fmt.Pct(1 - inclTotal / p.ConsumerPrice.Value) : "";
+            var margin = p.ConsumerPrice is > 0 && inclTotal > 0 ? (1 - inclTotal / p.ConsumerPrice.Value).ToString("0.0%", System.Globalization.CultureInfo.InvariantCulture) : "";
 
             var i = _grid.Rows.Add(p.Category, p.ProductGroup, p.Name, p.Sku ?? "", ProductSourceType.Label(p.SourceType), target,
                 Fmt.Won(r.Raw), Zero(r.Container), Zero(r.Package), Zero(r.Sticker), Zero(r.Etc), Zero(r.Shipping), Fmt.Won(r.Total),
@@ -113,9 +113,9 @@ public class ProductsTab : UserControl, IMfgTab
                 p.SuggestedLink, p.Notes.Replace("\n", " / "));
             var row = _grid.Rows[i];
             row.Tag = p.Id;
-            if (p.IsConfirmed) row.Cells["status"].Style.BackColor = Ui.ConfirmedBack;
-            if (flags.Count > 0) row.Cells["flag"].Style.ForeColor = Ui.WarnFore;
-            if (p.SourceType != ProductSourceType.Manual) row.Cells["raw"].Style.ForeColor = Ui.LinkFore;
+            if (p.IsConfirmed) Theme.ApplyConfirmed(row.Cells["status"].Style);
+            if (flags.Count > 0) row.Cells["flag"].Style.ForeColor = Theme.WarnFore;
+            if (p.SourceType != ProductSourceType.Manual) row.Cells["raw"].Style.ForeColor = Theme.LinkFore;
         }
         Ui.ApplyFilter(_grid, _search.Text);
         Ui.Reselect(_grid, keep);

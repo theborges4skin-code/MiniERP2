@@ -40,13 +40,13 @@ public class PushTab : UserControl, IMfgTab
         if (!bridge.IsAvailable)
         {
             _info.Text = $"MiniERP2 DB를 찾을 수 없습니다: {bridge.DatabasePath} (설정 탭에서 경로 지정)";
-            _info.ForeColor = Ui.WarnFore;
+            _info.ForeColor = Theme.WarnFore;
             return;
         }
 
         Dictionary<string, (string Name, double Cost)> erp;
         try { erp = bridge.GetItemCosts(); }
-        catch (Exception ex) { _info.Text = "MiniERP2 DB 읽기 실패: " + ex.Message; _info.ForeColor = Ui.WarnFore; return; }
+        catch (Exception ex) { _info.Text = "MiniERP2 DB 읽기 실패: " + ex.Message; _info.ForeColor = Theme.WarnFore; return; }
 
         var snap = CostSnapshot.Load();
         var inclCalc = snap.ProductCalculator(true);
@@ -70,7 +70,7 @@ public class PushTab : UserControl, IMfgTab
             AddRow(p, item, mfgCost, string.Join(" ", notes), Math.Abs(diff) >= 0.005);
         }
         _info.Text = $"확정 품목 {confirmed} / 원가 같음 {same} / MiniERP2에 없음·SKU 없음 {missing} / 표시 {_grid.Rows.Count}";
-        _info.ForeColor = Ui.MutedFore;
+        _info.ForeColor = Theme.MutedFore;
     }
 
     private void AddRow(FinishedProduct p, (string Name, double Cost)? erp, double mfgCost, string note, bool canPush)
@@ -81,8 +81,8 @@ public class PushTab : UserControl, IMfgTab
             p.LastPushedAt is null ? "" : $"{p.LastPushedAt} ({Fmt.Won(p.LastPushedCost)})", note);
         var row = _grid.Rows[i];
         row.Tag = p.Id;
-        if (!canPush) { row.Cells["check"].ReadOnly = true; row.DefaultCellStyle.ForeColor = Ui.MutedFore; }
-        if (note.Length > 0) row.Cells["note"].Style.ForeColor = Ui.WarnFore;
+        if (!canPush) { row.Cells["check"].ReadOnly = true; row.DefaultCellStyle.ForeColor = Theme.MutedFore; }
+        if (note.Length > 0) row.Cells["note"].Style.ForeColor = Theme.WarnFore;
     }
 
     private void SetAll(bool value)

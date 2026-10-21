@@ -35,6 +35,18 @@ internal static class Program
                 return 1;
             }
         }
+        // 색 대비 확인용 화면 캡처: MiniERP2_MFG.exe --screenshot <폴더> [--dark]  (MFG_DATA_DIR로 시험 데이터 폴더 지정 권장)
+        var shotIndex = Array.FindIndex(args, a => a.Equals("--screenshot", StringComparison.OrdinalIgnoreCase));
+        if (shotIndex >= 0 && shotIndex + 1 < args.Length)
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetColorMode(args.Contains("--dark", StringComparer.OrdinalIgnoreCase) ? SystemColorMode.Dark : SystemColorMode.Classic);
+            using var form = new MainForm { StartPosition = FormStartPosition.Manual, Location = new Point(0, 0) };
+            form.Shown += (_, _) => { form.CaptureAllTabs(args[shotIndex + 1]); form.Close(); };
+            Application.Run(form);
+            return 0;
+        }
+
         // 단일 실행: MiniERP2의 "제조원가(MFG)" 버튼을 여러 번 눌러도 창이 하나만 뜨고, 이미 떠 있으면 앞으로 가져온다.
         using var mutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
         if (!createdNew)

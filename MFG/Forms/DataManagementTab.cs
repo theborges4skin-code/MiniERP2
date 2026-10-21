@@ -68,7 +68,7 @@ public class DataManagementTab : UserControl, IMfgTab
         save.Font = new Font(save.Font, FontStyle.Bold);
         var bar = Ui.Bar(Ui.Button("엑셀 내보내기", (_, _) => Export(ctx)), Ui.Button("엑셀 불러오기", (_, _) => Import(ctx)), save,
             Ui.Button("변경내역 취소", (_, _) => Discard(ctx)), Ui.Button("새로고침", (_, _) => Discard(ctx)), Ui.Label("검색:"), ctx.Search);
-        var desc = new Label { Text = adapter.Description, Dock = DockStyle.Top, AutoSize = false, Height = 36, ForeColor = Ui.MutedFore, Padding = new Padding(6, 2, 6, 2) };
+        var desc = new Label { Text = adapter.Description, Dock = DockStyle.Top, AutoSize = false, Height = 36, ForeColor = Theme.MutedFore, Padding = new Padding(6, 2, 6, 2) };
         ctx.Search.TextChanged += (_, _) => ApplySearch(ctx);
         ctx.Grid.AllowUserToAddRows = adapter.AllowInsert;
         ctx.Grid.AllowUserToDeleteRows = adapter.AllowDelete;
@@ -103,8 +103,8 @@ public class DataManagementTab : UserControl, IMfgTab
             var info = ctx.Adapter.InfoColumns.Contains(col.DataPropertyName) || (col.DataPropertyName == ManagedTable.IdColumn) ||
                        (!ctx.Adapter.AllowInsert && ctx.Adapter.KeyColumns.Contains(col.DataPropertyName));
             col.ReadOnly = info;
-            col.DefaultCellStyle.ForeColor = info ? Ui.MutedFore : Color.Empty;
-            col.DefaultCellStyle.BackColor = info ? SystemColors.Control : Color.Empty;
+            if (info) Theme.ApplyReadOnly(col.DefaultCellStyle);
+            else Theme.ClearColors(col.DefaultCellStyle);
             if (col.ValueType == typeof(double)) col.DefaultCellStyle.Format = "#,##0.####";
         }
         ApplySearch(ctx);
@@ -127,7 +127,7 @@ public class DataManagementTab : UserControl, IMfgTab
         ctx.Status.Text = changes is null
             ? $"{count}건 로드됨. 변경사항 없음."
             : $"{count}건 로드됨. 저장하지 않은 변경 {changes.Rows.Count}건 — '변경내역 저장'을 눌러야 DB에 반영됩니다.";
-        ctx.Status.ForeColor = changes is null ? SystemColors.ControlText : Ui.WarnFore;
+        ctx.Status.ForeColor = changes is null ? Theme.TextFore : Theme.WarnFore;
     }
 
     private void Export(TableContext ctx)

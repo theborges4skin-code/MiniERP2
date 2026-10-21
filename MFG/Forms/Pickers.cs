@@ -171,7 +171,7 @@ public class PackPicker : Form
         {
             var i = _grid.Rows.Add(p.Code, p.Category, p.Name, p.CurrentPrice is { } cp ? Fmt.Won(Vat.ToView(cp.UnitPrice, state.ShowVatIncluded, p.IsTaxFree)) : "(없음)");
             _grid.Rows[i].Tag = p.Id;
-            if (p.Category != category) _grid.Rows[i].DefaultCellStyle.ForeColor = Ui.MutedFore;
+            if (p.Category != category) _grid.Rows[i].DefaultCellStyle.ForeColor = Theme.MutedFore;
         }
         _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) Accept(); };
         _search.TextChanged += (_, _) => Ui.ApplyFilter(_grid, _search.Text);

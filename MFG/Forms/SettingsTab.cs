@@ -58,7 +58,7 @@ public class SettingsTab : UserControl, IMfgTab
         _erpPath.PlaceholderText = MfgPaths.DefaultMiniErp2DatabasePath + " (기본값)";
         var bridge = _state.Bridge;
         _erpStatus.Text = bridge.IsAvailable ? "연결됨" : "파일 없음";
-        _erpStatus.ForeColor = bridge.IsAvailable ? Color.SeaGreen : Ui.WarnFore;
+        _erpStatus.ForeColor = bridge.IsAvailable ? Theme.OkFore : Theme.WarnFore;
         _recipePath.Text = _state.Settings.LastRecipeWorkbookPath;
         _pmPath.Text = _state.Settings.LastProductMasterPath;
 

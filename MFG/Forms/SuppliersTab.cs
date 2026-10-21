@@ -25,7 +25,7 @@ public class SuppliersTab : UserControl, IMfgTab
             Ui.Col("code", "채널코드", 100, readOnly: true), Ui.Col("name", "매입처명(MiniERP2)", 200, readOnly: true),
             Ui.Col("mat", "원료 수", 70, right: true, readOnly: true), Ui.Col("pack", "부자재 수", 70, right: true, readOnly: true),
             Ui.Col("synced", "마지막 동기화", 140, readOnly: true), Ui.Col("memo", "MFG 메모(직접 입력)", 300));
-        _grid.Columns["memo"]!.DefaultCellStyle.BackColor = Ui.InputBack;
+        Theme.ApplyInput(_grid.Columns["memo"]!.DefaultCellStyle);
         _grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
         _grid.CellEndEdit += (_, e) =>
         {
@@ -55,7 +55,7 @@ public class SuppliersTab : UserControl, IMfgTab
     {
         var bridge = _state.Bridge;
         _dbInfo.Text = bridge.IsAvailable ? $"MiniERP2 DB: {bridge.DatabasePath}" : $"MiniERP2 DB 없음: {bridge.DatabasePath} (설정 탭에서 경로 지정)";
-        _dbInfo.ForeColor = bridge.IsAvailable ? Ui.MutedFore : Ui.WarnFore;
+        _dbInfo.ForeColor = bridge.IsAvailable ? Theme.MutedFore : Theme.WarnFore;
 
         var mats = new MaterialRepository().GetAll();
         var packs = new PackMaterialRepository().GetAll();

@@ -115,9 +115,9 @@ public class MaterialsTab : UserControl, IMfgTab
                 p?.IsUncertain == true ? "불확실" : "", usage.TryGetValue(m.Id, out var u) ? u.Count : 0, FirstLine(m.Note));
             var row = _grid.Rows[i];
             row.Tag = m.Id;
-            if (!m.IsActive) row.DefaultCellStyle.ForeColor = Ui.MutedFore;
-            if (p is null) row.Cells["price"].Style.ForeColor = Ui.WarnFore;
-            if (p?.IsUncertain == true) row.Cells["uncertain"].Style.ForeColor = Ui.WarnFore;
+            if (!m.IsActive) row.DefaultCellStyle.ForeColor = Theme.MutedFore;
+            if (p is null) row.Cells["price"].Style.ForeColor = Theme.WarnFore;
+            if (p?.IsUncertain == true) row.Cells["uncertain"].Style.ForeColor = Theme.WarnFore;
         }
         Ui.ApplyFilter(_grid, _search.Text);
         Ui.Reselect(_grid, keep);
