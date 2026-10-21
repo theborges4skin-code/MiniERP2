@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/Tests/">
     <Project Path="Tests/MiniERP2.Tests.csproj" />
+    <Project Path="MFG/Tests/MiniERP2_MFG.Tests.csproj" />
   </Folder>
   <Project Path="MiniERP2.csproj" />
+  <Project Path="MFG/MiniERP2_MFG.csproj" />
 </Solution>

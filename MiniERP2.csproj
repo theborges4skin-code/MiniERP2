@@ -15,6 +15,10 @@
     <Compile Remove="Tests/**" />
     <EmbeddedResource Remove="Tests/**" />
     <None Remove="Tests/**" />
+    <!-- MFG/ = 별도 단독 실행 프로젝트 MiniERP2_MFG(제조원가관리). 이 프로젝트에 섞여 컴파일되지 않게 제외한다. -->
+    <Compile Remove="MFG/**" />
+    <EmbeddedResource Remove="MFG/**" />
+    <None Remove="MFG/**" />
     <Compile Remove="ScrollCapture/**" />
     <EmbeddedResource Remove="ScrollCapture/**" />
     <None Remove="ScrollCapture/**" />
