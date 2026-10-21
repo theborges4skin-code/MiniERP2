@@ -43,7 +43,7 @@ public class SeedImporterTests : TestDb
         // 같은 원료를 S06은 단가 없이 계산하므로 원료 단가로 옮기지 않았다(이관 경고로 보고).
         Assert.IsTrue(mismatches.All(m => m.StartsWith("S04", StringComparison.Ordinal)), string.Join("\n", mismatches));
 
-        var h14 = snap.Recipes.Single(r => r.Code == "H14");
+        var h14 = snap.Recipes.Single(r => r.Code == "mfg_h14");
         Assert.AreEqual(RecipeStatus.Draft, h14.Status);
         var sizes = snap.Recipe(h14, false).Sizes;
         Assert.AreEqual(1149.3963, sizes.Single(s => s.Size.VolumeMl == 300).UnitCost, 1e-3);

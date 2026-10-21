@@ -15,7 +15,7 @@ public class SettingsTab : UserControl, IMfgTab
     private readonly Label _erpStatus = Ui.Label("");
     private readonly TextBox _recipePath = Ui.Text(520);
     private readonly TextBox _pmPath = Ui.Text(520);
-    private readonly DataGridView _backups = Ui.Grid();
+    private readonly BackupPanel _backupPanel;
 
     public SettingsTab(AppState state)
     {
@@ -32,16 +32,13 @@ public class SettingsTab : UserControl, IMfgTab
             ("신제조법(제조법관련(신규).xlsx)", Row(_recipePath, Ui.Button("찾아보기", (_, _) => Browse(_recipePath)))),
             ("product_master.xlsx", Row(_pmPath, Ui.Button("찾아보기", (_, _) => Browse(_pmPath)))));
         importBox.Controls.Add(importForm);
-        importBox.Controls.Add(Ui.Bar(Ui.Button("초기 데이터 가져오기", (_, _) => RunImport()),
+        importBox.Controls.Add(Ui.Bar(Ui.Button("초기 데이터 가져오기", (_, _) => RunImport()), Ui.Button("원료 코드 master 차용", (_, _) => BorrowCodes()),
             Ui.Label("이미 데이터가 있으면 백업 후 지우고 다시 가져옵니다(매입처 목록은 유지).")));
         foreach (Control c in importBox.Controls) if (c is FlowLayoutPanel f) f.Dock = DockStyle.Bottom;
 
-        _backups.Columns.AddRange(Ui.Col("kind", "종류", 90), Ui.Col("time", "시각", 150), Ui.Col("size", "크기", 80, right: true), Ui.Col("file", "파일", 420));
-        var backupBox = new GroupBox { Text = "mfgdb 백업 (수동·작업 전 3개 / 일일 2개월 / 월간 보관 — MiniERP2와 같은 규칙)", Dock = DockStyle.Fill, MinimumSize = new Size(0, 260) };
-        backupBox.Controls.Add(_backups);
-        backupBox.Controls.Add(Ui.Bar(Ui.Button("지금 백업", (_, _) => { _backup.CreateBackup("manual"); RefreshData(); }),
-            Ui.Button("선택 백업으로 복원", (_, _) => Restore()), Ui.Button("백업 폴더 열기", (_, _) => OpenFolder(MfgPaths.BackupsFolder)),
-            Ui.Button("데이터 폴더 열기", (_, _) => OpenFolder(MfgPaths.AppDataFolder)), Ui.Label($"mfgdb: {MfgPaths.DatabaseFilePath}")));
+        _backupPanel = new BackupPanel(state);
+        var backupBox = new GroupBox { Text = $"mfgdb 백업 — {MfgPaths.DatabaseFilePath}", Dock = DockStyle.Fill, MinimumSize = new Size(0, 260) };
+        backupBox.Controls.Add(_backupPanel);
 
         Controls.Add(backupBox);
         Controls.Add(importBox);
@@ -65,13 +62,7 @@ public class SettingsTab : UserControl, IMfgTab
         _recipePath.Text = _state.Settings.LastRecipeWorkbookPath;
         _pmPath.Text = _state.Settings.LastProductMasterPath;
 
-        _backups.Rows.Clear();
-        foreach (var f in _backup.GetAllBackups())
-        {
-            var kind = f.Name.Contains("_DailyBackup_") ? "일일" : f.Name.Contains("_MonthlyBackup_") ? "월간" : "수동/작업 전";
-            var i = _backups.Rows.Add(kind, f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"), $"{f.Length / 1024:N0} KB", f.Name);
-            _backups.Rows[i].Tag = f.FullName;
-        }
+        _backupPanel.RefreshList();
     }
 
     private void BrowseErp()
@@ -131,19 +122,16 @@ public class SettingsTab : UserControl, IMfgTab
         }
     }
 
-    private void Restore()
+    /// <summary>번호 코드(mfg_rm###)로 남은 원료 중 master DB에 소분 판매 SKU 계열이 생긴 것에 코드를 차용한다(직접 고친 코드는 그대로).</summary>
+    private void BorrowCodes()
     {
-        if (_backups.CurrentRow?.Tag is not string path) return;
-        if (!Ui.Confirm(this, $"선택한 백업으로 mfgdb를 되돌릴까요?\n{Path.GetFileName(path)}\n\n현재 상태도 'before_restore' 백업으로 남깁니다.")) return;
-        _backup.Restore(path);
+        var bridge = _state.Bridge;
+        if (!bridge.IsAvailable) { Ui.Warn(this, "MiniERP2 DB를 찾을 수 없습니다. 경로를 먼저 지정하세요."); return; }
+        if (!Ui.Confirm(this, "번호 코드(mfg_rm###)로 남은 원료에 master DB SKU를 차용해 코드를 바꿉니다(예: mfg_cocog).\n직접 고친 코드는 건드리지 않습니다. 진행할까요?")) return;
+        _backup.CreateBackup("before_code_borrow");
+        var (_, report) = CodeBorrowService.ApplyBorrowedMaterialCodes(SeedRunner.MasterItems(bridge));
         _state.NotifyDataChanged();
         RefreshData();
-        Ui.Info(this, "복원했습니다. 열려 있는 화면은 다시 읽습니다.");
-    }
-
-    private static void OpenFolder(string path)
-    {
-        Directory.CreateDirectory(path);
-        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        Ui.ShowText(this, "원료 코드 master 차용 결과", report);
     }
 }

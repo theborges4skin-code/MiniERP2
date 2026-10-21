@@ -62,7 +62,7 @@ public class UiSmokeTests : TestDb
             Assert.IsFalse(editor.IsDirty, $"{r.Code} 불러오기만 했는데 변경 상태가 됨");
         }
 
-        var h14 = new RecipeRepository().GetAll(false).Single(r => r.Code == "H14");
+        var h14 = new RecipeRepository().GetAll(false).Single(r => r.Code == "mfg_h14");
         editor.LoadRecipe(h14.Id);
         var sizes = FindGrid(editor, g => g.Columns.Contains("item"));
         var unitRow = sizes.Rows.Cast<DataGridViewRow>().Single(row => (string)row.Tag! == "unit");
@@ -85,7 +85,7 @@ public class UiSmokeTests : TestDb
         // 수동값 그대로 + 제조법 연결(H14 300ml) + 묶음(foam300 ×2) 세 경우.
         var foam = snap.Products.Values.Single(p => p.Sku == "foam300");
         var foam2 = snap.Products.Values.Single(p => p.Sku == "foam300x2");
-        var h14 = snap.Recipes.Single(r => r.Code == "H14");
+        var h14 = snap.Recipes.Single(r => r.Code == "mfg_h14");
         foam.SourceType = ProductSourceType.RecipeSize;
         foam.RecipeSizeId = h14.Sizes.Single(s => s.VolumeMl == 300).Id;
         new ProductRepository().Save(foam);

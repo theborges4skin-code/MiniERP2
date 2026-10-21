@@ -43,9 +43,36 @@ public static class SeedRunner
         var importer = new SeedImporter();
         importer.Run(recipePath, productMasterPath, new SupplierRepository().GetAll());
         var report = BuildReport(importer.Report, supplierNote, recipePath, productMasterPath);
+
+        // 원료 코드: master DB에 같은 원료를 소분 판매하는 SKU 계열이 있으면 그 기본 SKU를 차용(mfg_cocog 등).
+        report += "\n\n" + (bridge.IsAvailable
+            ? CodeBorrowService.ApplyBorrowedMaterialCodes(MasterItems(bridge)).Report
+            : "[원료 코드 master 차용] MiniERP2 DB가 없어 생략 — 모든 원료가 mfg_rm### 번호 코드입니다.");
         var reportPath = Path.Combine(MfgPaths.AppDataFolder, $"import_report_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
         File.WriteAllText(reportPath, report, Encoding.UTF8);
         return (report, reportPath);
+    }
+
+    public static IEnumerable<(string Sku, string Name)> MasterItems(MiniErp2Bridge bridge) =>
+        bridge.GetItemCosts().Select(kv => (kv.Key, kv.Value.Name));
+
+    /// <summary>
+    /// 옛 형식 코드(RM###/PK###/H14)가 남은 mfgdb를 mfg_ 체계로 바꾸고 원료 코드를 master에서 차용한다(시작 시 1회 자동).
+    /// 변환 전에 백업한다. 리포트 파일 경로를 돌려준다.
+    /// </summary>
+    public static string MigrateCodesWithBackup(MiniErp2Bridge bridge)
+    {
+        new MfgBackupService().CreateBackup("before_code_scheme");
+        var (m, p, r) = CodeBorrowService.MigrateLegacyCodes();
+        var report = $"[코드 체계 변환 {DateTime.Now:yyyy-MM-dd HH:mm}] 모든 MFG 코드에 mfg_ 접두어\n" +
+                     $"원료 {m}개 → mfg_rm###(번호 유지) / 부자재 {p}개 → mfg_pk### / 제조법 {r}개 → mfg_ + 기존 코드(예: mfg_h14)\n" +
+                     "완제품 SKU는 MiniERP2 SKU 그대로입니다(원가 전송 연결 키).\n\n" +
+                     (bridge.IsAvailable
+                         ? CodeBorrowService.ApplyBorrowedMaterialCodes(MasterItems(bridge)).Report
+                         : "[원료 코드 master 차용] MiniERP2 DB가 없어 생략했습니다. 설정 탭에서 경로를 지정한 뒤 '원료 코드 master 차용'을 누르세요.");
+        var path = Path.Combine(MfgPaths.AppDataFolder, $"code_scheme_report_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+        File.WriteAllText(path, report, Encoding.UTF8);
+        return path;
     }
 
     public static string BuildReport(ImportReport r, string supplierNote, string recipePath, string? pmPath)

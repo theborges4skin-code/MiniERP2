@@ -14,8 +14,8 @@ public class RepositoryTests : TestDb
         repo.Save(a);
         var b = new Material { Name = "에탄올" };
         repo.Save(b);
-        Assert.AreEqual("RM001", a.Code);
-        Assert.AreEqual("RM002", b.Code);
+        Assert.AreEqual("mfg_rm001", a.Code);
+        Assert.AreEqual("mfg_rm002", b.Code);
 
         repo.AddPrice(new MaterialPrice { MaterialId = a.Id, PricePerKg = 3080, EffectiveDate = "2026-04-30" });
         repo.AddPrice(new MaterialPrice { MaterialId = a.Id, PricePerKg = 3300, EffectiveDate = "2026-10-01" });

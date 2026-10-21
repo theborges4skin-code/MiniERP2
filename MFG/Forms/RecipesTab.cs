@@ -71,7 +71,7 @@ public class RecipesTab : UserControl, IMfgTab
         foreach (var r in snap.Recipes)
         {
             if (!_showArchived.Checked && r.IsArchived) continue;
-            if (prefix is not null && !r.Code.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (prefix is not null && MfgCodes.RecipeCategory(r.Code) != prefix) continue;
             var res = snap.Recipe(r, show);
             var reconfirm = snap.RecipeNeedsReconfirm(r);
             if (status == 1 && r.IsConfirmed) continue;
@@ -155,7 +155,7 @@ public class RecipesTab : UserControl, IMfgTab
         if (src is null) return;
         var copy = new Recipe
         {
-            Code = _repo.NextCode(src.Code[..1]), Name = src.Name, Version = $"{src.Code} 복사({MfgDb.Today()})", SourceSheet = src.SourceSheet,
+            Code = _repo.NextCode(MfgCodes.RecipeCategory(src.Code)), Name = src.Name, Version = $"{src.Code} 복사({MfgDb.Today()})", SourceSheet = src.SourceSheet,
             Status = RecipeStatus.Draft, MeasuredDensity = src.MeasuredDensity, BatchKg = src.BatchKg, ProcessMemo = src.ProcessMemo,
             Lines = src.Lines.Select(l => new RecipeLine { Stage = l.Stage, MaterialId = l.MaterialId, Percent = l.Percent, Memo = l.Memo, SortOrder = l.SortOrder }).ToList(),
             Sizes = src.Sizes.Select(s => new RecipeSize

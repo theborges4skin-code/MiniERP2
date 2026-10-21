@@ -102,7 +102,8 @@ public partial class SeedImporter
             var note = Text(ws, r, 11);
             var m = new Material
             {
-                Code = Text(ws, r, 1), Name = name, Inci = Text(ws, r, 3), Cas = Text(ws, r, 4), Role = Text(ws, r, 7),
+                // 원료목록 코드 RM001 → mfg_rm001(번호 유지). master SKU 차용은 이관 뒤 CodeBorrowService가 따로 적용한다.
+                Code = MfgCodes.MaterialAutoPrefix + Regex.Match(Text(ws, r, 1), @"\d+$").Value.PadLeft(3, '0'), Name = name, Inci = Text(ws, r, 3), Cas = Text(ws, r, 4), Role = Text(ws, r, 7),
                 IsMixture = Text(ws, r, 8).Equals("Y", StringComparison.OrdinalIgnoreCase), Density = Num(ws, r, 9), Note = note,
             };
             var supplierText = Text(ws, r, 10);
@@ -249,7 +250,7 @@ public partial class SeedImporter
 
         var recipe = new Recipe
         {
-            Code = code, Name = Text(ws, 3, 3), SourceSheet = Text(ws, 4, 3), Version = "", Status = RecipeStatus.Draft,
+            Code = MfgCodes.Prefix + code.ToLowerInvariant(), Name = Text(ws, 3, 3), SourceSheet = Text(ws, 4, 3), Version = "", Status = RecipeStatus.Draft,
             BatchKg = Num(ws, 5, 3) ?? 10,
             // 적용 비중 칸(C6)이 수식(=C7, 계산 비중)이 아니라 숫자로 직접 입력되어 있으면 실측 비중으로 본다.
             MeasuredDensity = string.IsNullOrEmpty(ws.Cells[6, 3].Formula) ? Num(ws, 6, 3) : null,

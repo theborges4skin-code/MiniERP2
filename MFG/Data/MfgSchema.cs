@@ -188,6 +188,16 @@ public static class MfgSchema
                 Quantity REAL NOT NULL DEFAULT 1
             );
 
+            -- [데이터 관리] 엑셀 내보내기 기록(MiniERP2 ExportLogTable과 같은 용도).
+            CREATE TABLE IF NOT EXISTS ExportLog (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ExportedAt TEXT NOT NULL,
+                TableName TEXT NOT NULL,
+                FilePath TEXT NOT NULL,
+                RowCount INTEGER NOT NULL,
+                Headers TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS AppMeta (
                 Key TEXT PRIMARY KEY,
                 Value TEXT NOT NULL

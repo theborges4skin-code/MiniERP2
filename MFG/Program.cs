@@ -19,6 +19,22 @@ internal static class Program
         {
             return RunSeedHeadless(args.Contains("--force", StringComparer.OrdinalIgnoreCase));
         }
+        // 화면 없이 코드 체계 변환(옛 RM###/PK###/H14 → mfg_ + 원료 코드 master 차용). 결과는 code_scheme_report_*.txt.
+        if (args.Contains("--migrate-codes", StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var settings = MfgSettings.Load();
+                var path = Import.SeedRunner.MigrateCodesWithBackup(new Integration.MiniErp2Bridge(settings.ResolvedMiniErp2DatabasePath));
+                Log.Write($"[CodeScheme] 완료 — 리포트 {path}");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"[CodeScheme] 실패: {ex}");
+                return 1;
+            }
+        }
         // 단일 실행: MiniERP2의 "제조원가(MFG)" 버튼을 여러 번 눌러도 창이 하나만 뜨고, 이미 떠 있으면 앞으로 가져온다.
         using var mutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
         if (!createdNew)

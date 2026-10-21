@@ -5,7 +5,7 @@ namespace MiniERP2.MFG.Data;
 
 public class PackMaterialRepository
 {
-    public const string CodePrefix = "PK";
+    public static string CodePrefix => MfgCodes.PackAutoPrefix;
     public const int CodeDigits = 3;
 
     public List<PackMaterial> GetAll(bool includeInactive = true)

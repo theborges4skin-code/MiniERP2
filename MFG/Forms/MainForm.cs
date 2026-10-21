@@ -17,6 +17,7 @@ public class MainForm : Form
     private readonly Label _status = Ui.Label("");
     private readonly HashSet<TabPage> _stale = [];
     private RecipesTab? _recipesTab;
+    private DataManagementTab? _dataTab;
 
     public MainForm()
     {
@@ -42,6 +43,8 @@ public class MainForm : Form
         AddTab("제조법", _recipesTab);
         AddTab("완제품 원가", new ProductsTab(_state));
         AddTab("MiniERP2 전송", new PushTab(_state));
+        _dataTab = new DataManagementTab(_state);
+        AddTab("데이터 관리", _dataTab);
         AddTab("설정·백업", new SettingsTab(_state));
 
         Controls.Add(_tabs);
@@ -81,6 +84,22 @@ public class MainForm : Form
 
     private void OnFirstShown()
     {
+        // 코드 체계 변경(2026-10-21, mfg_ 접두어 + master 차용) 이전에 만든 mfgdb면 한 번 자동 변환한다(백업 후).
+        if (SeedImporter.HasData() && CodeBorrowService.NeedsLegacyMigration())
+        {
+            try
+            {
+                var reportPath = SeedRunner.MigrateCodesWithBackup(_state.Bridge);
+                Ui.ShowText(this, "코드 체계 변환 결과", File.ReadAllText(reportPath) + $"\n\n(리포트: {reportPath})");
+                _state.NotifyDataChanged();
+            }
+            catch (Exception ex)
+            {
+                Utils.Log.Write($"[CodeScheme] 변환 실패: {ex}");
+                Ui.Warn(this, "코드 체계 변환 실패(변경 없음): " + ex.Message);
+            }
+        }
+
         if (!SeedImporter.HasData())
         {
             _tabs.SelectedTab = _tabs.TabPages[^1];
@@ -125,6 +144,12 @@ public class MainForm : Form
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (_recipesTab is not null && !_recipesTab.ConfirmLeave()) { e.Cancel = true; return; }
+        if (_dataTab?.DirtyTables is { Count: > 0 } dirty &&
+            !Ui.Confirm(this, $"[데이터 관리]에 저장하지 않은 변경이 있습니다({string.Join(", ", dirty)}). 저장하지 않고 닫을까요?", "저장되지 않은 변경사항"))
+        {
+            e.Cancel = true;
+            return;
+        }
         var backup = new MfgBackupService();
         try
         {

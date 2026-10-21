@@ -85,10 +85,11 @@ public class RecipeRepository
 
     public Recipe? Get(long id) => GetAll().FirstOrDefault(r => r.Id == id);
 
+    /// <param name="prefix">분류 글자(C/S/H/D) — 코드는 "mfg_" + 소문자 분류 + 번호.</param>
     public string NextCode(string prefix)
     {
         using var c = MfgDb.Open();
-        return CodeGenerator.Next(c, "Recipe", prefix, 2);
+        return CodeGenerator.Next(c, "Recipe", MfgCodes.RecipePrefix(prefix), 2);
     }
 
     /// <summary>
@@ -108,7 +109,7 @@ public class RecipeRepository
     internal void Save(SqliteConnection c, Recipe recipe, SqliteTransaction? tx)
     {
         var now = MfgDb.Now();
-        if (recipe.Id == 0 && string.IsNullOrWhiteSpace(recipe.Code)) recipe.Code = CodeGenerator.Next(c, "Recipe", "C", 2, tx);
+        if (recipe.Id == 0 && string.IsNullOrWhiteSpace(recipe.Code)) recipe.Code = CodeGenerator.Next(c, "Recipe", MfgCodes.RecipePrefix("C"), 2, tx);
         var args = new (string, object?)[]
         {
             ("$code", recipe.Code), ("$name", recipe.Name.Trim()), ("$ver", recipe.Version), ("$src", recipe.SourceSheet), ("$st", recipe.Status),

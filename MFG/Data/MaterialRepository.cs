@@ -5,7 +5,7 @@ namespace MiniERP2.MFG.Data;
 
 public class MaterialRepository
 {
-    public const string CodePrefix = "RM";
+    public static string CodePrefix => MfgCodes.MaterialAutoPrefix;
     public const int CodeDigits = 3;
 
     /// <summary>원료 전체 + 현재 단가. <paramref name="includeInactive"/>가 false면 사용중인 원료만.</summary>

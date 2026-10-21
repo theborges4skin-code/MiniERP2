@@ -57,7 +57,12 @@ public class ProductRepository
         return p.Id;
     }
 
-    internal void Save(SqliteConnection c, FinishedProduct p, SqliteTransaction? tx)
+    internal void Save(SqliteConnection c, FinishedProduct p, SqliteTransaction? tx) => Save(c, p, tx, includeComponents: true);
+
+    /// <summary>묶음 구성은 그대로 두고 품목 정보만 저장(데이터 관리 '완제품' 표 — 구성은 '묶음구성' 표가 따로 관리).</summary>
+    internal void SaveHeaderOnly(SqliteConnection c, FinishedProduct p, SqliteTransaction? tx) => Save(c, p, tx, includeComponents: false);
+
+    private void Save(SqliteConnection c, FinishedProduct p, SqliteTransaction? tx, bool includeComponents)
     {
         var now = MfgDb.Now();
         var args = new (string, object?)[]
@@ -88,6 +93,7 @@ public class ProductRepository
                 """, tx, args);
         }
 
+        if (!includeComponents) return;
         MfgDb.Exec(c, "DELETE FROM FinishedProductComponent WHERE ProductId=$p", tx, ("$p", p.Id));
         foreach (var comp in p.Components)
         {

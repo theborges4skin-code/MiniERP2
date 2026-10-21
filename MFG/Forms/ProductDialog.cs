@@ -149,7 +149,7 @@ public class ProductDialog : Form
         else if (MappingHints.FirstRecipeCode(_p.SuggestedLink) is { } code)
         {
             // 연결 전이면 연결 후보 제조법을 미리 골라 둔다(유형은 바꾸지 않음).
-            _recipe.SelectedItem = _recipe.Items.Cast<object>().OfType<Recipe>().FirstOrDefault(r => r.Code == code);
+            _recipe.SelectedItem = _recipe.Items.Cast<object>().OfType<Recipe>().FirstOrDefault(r => MfgCodes.RecipeShort(r.Code) == code);
             FillSizes();
         }
 
