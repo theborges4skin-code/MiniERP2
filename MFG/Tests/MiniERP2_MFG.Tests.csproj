@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>MiniERP2.MFG.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <UseWindowsForms>true</UseWindowsForms>
     <NoWarn>$(NoWarn);MSTEST0037</NoWarn>
   </PropertyGroup>
 

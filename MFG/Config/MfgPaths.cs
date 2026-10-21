@@ -7,8 +7,11 @@ namespace MiniERP2.MFG.Config;
 /// </summary>
 public static class MfgPaths
 {
+    /// <summary>환경변수 MFG_DATA_DIR이 있으면 그 폴더를 쓴다(시험 실행용 — 실사용 mfgdb를 건드리지 않고 돌려 볼 때).</summary>
     public static string AppDataFolder { get; set; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MiniERP2_MFG");
+        Environment.GetEnvironmentVariable("MFG_DATA_DIR") is { Length: > 0 } custom
+            ? custom
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MiniERP2_MFG");
 
     /// <summary>mfgdb — MFG 전용 DB. MiniERP2 DB와는 별개 파일이다.</summary>
     public static string DatabaseFilePath => Path.Combine(AppDataFolder, "mfgdb.sqlite");
